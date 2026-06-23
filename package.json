@@ -1,0 +1,17 @@
+{
+  "name": "hanabi-room",
+  "version": "0.1.0",
+  "description": "Self-hosted Hanabi card game for small groups, served over Tailscale.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test server/*.test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

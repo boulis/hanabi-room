@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>hanabi-room</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>hanabi-room</h1>
+      <span id="status">connecting…</span>
+    </header>
+    <main id="app">
+      <section id="join-screen" class="screen">
+        <h2>Join the game</h2>
+        <form id="join-form">
+          <label>
+            Your name
+            <input id="name-input" required maxlength="24" autocomplete="off" />
+          </label>
+          <button type="submit">Join</button>
+        </form>
+      </section>
+
+      <section id="lobby-screen" class="screen" hidden>
+        <h2>Lobby</h2>
+        <div id="lobby-players"></div>
+        <fieldset id="lobby-options">
+          <legend>Game options (host only)</legend>
+          <label>
+            Variant
+            <select id="opt-variant"></select>
+          </label>
+          <label>
+            End rule
+            <select id="opt-endRule">
+              <option value="standard">Standard (one final round after deck empties)</option>
+              <option value="lax">Lax (play until all hands are empty)</option>
+            </select>
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="opt-shareAnnotations" />
+            Share manual touches / notes with other players
+          </label>
+          <button id="start-button" type="button">Start game</button>
+        </fieldset>
+      </section>
+
+      <section id="game-screen" class="screen" hidden>
+        <div id="game-meta"></div>
+        <div id="game-piles"></div>
+        <div id="game-hands"></div>
+        <div id="game-log"></div>
+        <div id="game-discard"></div>
+        <button id="reset-button" type="button" hidden>End game and return to lobby</button>
+      </section>
+    </main>
+
+    <div id="annotate-modal" class="modal" hidden>
+      <div class="modal-body">
+        <h3>Annotate card</h3>
+        <div id="annotate-card-info"></div>
+        <fieldset>
+          <legend>I think it could be:</legend>
+          <div id="annotate-colors" class="chip-row"></div>
+          <div id="annotate-numbers" class="chip-row"></div>
+        </fieldset>
+        <label>
+          Note
+          <input id="annotate-note" maxlength="200" />
+        </label>
+        <div class="modal-actions">
+          <button type="button" id="annotate-save">Save</button>
+          <button type="button" id="annotate-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

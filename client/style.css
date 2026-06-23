@@ -1,0 +1,350 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, sans-serif;
+  --color-red: #d23a3a;
+  --color-yellow: #d6b51b;
+  --color-green: #2f9648;
+  --color-blue: #2b6ad1;
+  --color-white: #e8e8e8;
+  --color-rainbow: linear-gradient(135deg, #d23a3a, #d6b51b, #2f9648, #2b6ad1, #b14de0);
+  --color-black: #181818;
+  --card-text-light: #fff;
+  --card-text-dark: #111;
+  --border: rgba(127, 127, 127, 0.4);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+#status {
+  font-size: 0.8rem;
+  opacity: 0.6;
+}
+
+main {
+  padding: 1rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.screen { display: grid; gap: 1rem; }
+
+form, fieldset {
+  display: grid;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  padding: 0.75rem;
+  border-radius: 6px;
+}
+
+label { display: grid; gap: 0.25rem; font-size: 0.9rem; }
+label.checkbox { display: flex; gap: 0.5rem; align-items: center; }
+
+button {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+}
+button:hover:not(:disabled) { background: rgba(127,127,127,0.1); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+input, select {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  border-radius: 4px;
+  font: inherit;
+}
+
+#game-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  font-size: 0.9rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+#game-meta .meta-item strong { display: block; opacity: 0.7; font-weight: normal; font-size: 0.75rem; text-transform: uppercase; }
+
+#game-piles {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.pile {
+  width: 60px;
+  height: 90px;
+  border-radius: 8px;
+  border: 1px dashed var(--border);
+  display: grid;
+  place-items: center;
+  position: relative;
+  font-weight: bold;
+  font-size: 1.4rem;
+}
+
+.pile[data-direction="down"]::after {
+  content: '↓';
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.pile[data-color="red"]    { background: var(--color-red); color: var(--card-text-light); }
+.pile[data-color="yellow"] { background: var(--color-yellow); color: var(--card-text-dark); }
+.pile[data-color="green"]  { background: var(--color-green); color: var(--card-text-light); }
+.pile[data-color="blue"]   { background: var(--color-blue); color: var(--card-text-light); }
+.pile[data-color="white"]  { background: var(--color-white); color: var(--card-text-dark); }
+.pile[data-color="rainbow"]{ background: var(--color-rainbow); color: var(--card-text-light); }
+.pile[data-color="black"]  { background: var(--color-black); color: var(--card-text-light); }
+
+#game-hands {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.player-row {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.player-row.active { border-color: #2b6ad1; box-shadow: 0 0 0 2px rgba(43,106,209,0.25); }
+.player-row header { padding: 0; border: 0; display: flex; gap: 0.5rem; align-items: center; }
+.player-row .player-name { font-weight: bold; }
+.player-row .offline { opacity: 0.5; font-size: 0.8rem; }
+.player-row .turn-marker { font-size: 0.75rem; padding: 0.1rem 0.4rem; background: #2b6ad1; color: white; border-radius: 99px; }
+
+.hand {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.card {
+  width: 80px;
+  min-height: 120px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 0.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  position: relative;
+  background: rgba(127,127,127,0.06);
+  background-size: cover;
+  background-position: center;
+}
+
+.card .card-face {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  font-size: 1.8rem;
+  font-weight: bold;
+}
+.card[data-color="red"]    .card-face { background: var(--color-red); color: var(--card-text-light); }
+.card[data-color="yellow"] .card-face { background: var(--color-yellow); color: var(--card-text-dark); }
+.card[data-color="green"]  .card-face { background: var(--color-green); color: var(--card-text-light); }
+.card[data-color="blue"]   .card-face { background: var(--color-blue); color: var(--card-text-light); }
+.card[data-color="white"]  .card-face { background: var(--color-white); color: var(--card-text-dark); }
+.card[data-color="rainbow"].card .card-face { background: var(--color-rainbow); color: var(--card-text-light); }
+.card[data-color="black"]  .card-face { background: var(--color-black); color: var(--card-text-light); }
+.card.face-down .card-face { background: repeating-linear-gradient(45deg, #444, #444 6px, #555 6px, #555 12px); color: transparent; }
+
+.card.clued { border-color: #2b6ad1; }
+.card.clued-color::before {
+  content: '●';
+  position: absolute;
+  top: -6px;
+  left: -6px;
+  background: #2b6ad1;
+  color: white;
+  border-radius: 99px;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+}
+.card.clued-number::after {
+  content: '#';
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background: #2f9648;
+  color: white;
+  border-radius: 99px;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+}
+
+.possible {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  min-height: 14px;
+}
+.possible .swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 99px;
+  border: 1px solid rgba(127,127,127,0.3);
+}
+.possible .num {
+  font-size: 9px;
+  padding: 0 3px;
+  border: 1px solid rgba(127,127,127,0.3);
+  border-radius: 3px;
+  line-height: 1.2;
+}
+.possible.manual .swatch { border-style: dashed; }
+.possible.manual .num { border-style: dashed; }
+
+.swatch[data-color="red"]    { background: var(--color-red); }
+.swatch[data-color="yellow"] { background: var(--color-yellow); }
+.swatch[data-color="green"]  { background: var(--color-green); }
+.swatch[data-color="blue"]   { background: var(--color-blue); }
+.swatch[data-color="white"]  { background: var(--color-white); }
+.swatch[data-color="rainbow"]{ background: var(--color-rainbow); }
+.swatch[data-color="black"]  { background: var(--color-black); }
+
+.card-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+.card-actions button {
+  flex: 1;
+  font-size: 0.75rem;
+  padding: 2px 4px;
+}
+
+.card-note {
+  font-size: 0.7rem;
+  font-style: italic;
+  opacity: 0.8;
+  word-break: break-word;
+}
+
+.hint-controls {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 0.4rem;
+}
+.hint-controls .chip {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  background: transparent;
+}
+.hint-controls .chip.color { color: white; }
+.hint-controls .chip[data-color="yellow"], .hint-controls .chip[data-color="white"] { color: var(--card-text-dark); }
+
+#game-log {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+}
+.log-entry { padding: 0.15rem 0; border-bottom: 1px dotted rgba(127,127,127,0.2); }
+.log-entry:last-child { border-bottom: 0; }
+
+#game-discard {
+  display: grid;
+  gap: 0.25rem;
+}
+#game-discard h3 { margin: 0; font-size: 0.9rem; }
+.discard-pile {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.discard-card {
+  width: 28px;
+  height: 36px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  font-size: 0.85rem;
+  font-weight: bold;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: grid;
+  place-items: center;
+  z-index: 10;
+}
+.modal-body {
+  background: Canvas;
+  color: CanvasText;
+  padding: 1rem;
+  border-radius: 8px;
+  max-width: 360px;
+  width: 90%;
+  display: grid;
+  gap: 0.75rem;
+}
+.modal-body h3 { margin: 0; }
+.modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.chip-row .toggle {
+  padding: 4px 10px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  background: transparent;
+  font-size: 0.8rem;
+}
+.chip-row .toggle.on { background: #2b6ad1; color: white; border-color: #2b6ad1; }
+
+.banner {
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: #2b6ad1;
+  color: white;
+  font-size: 0.9rem;
+}
+.banner.win { background: #2f9648; }
+.banner.loss { background: #d23a3a; }
