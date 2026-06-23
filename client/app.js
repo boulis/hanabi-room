@@ -96,8 +96,8 @@ document.getElementById('opt-shareAnnotations').addEventListener('change', (e) =
 document.getElementById('start-button').addEventListener('click', () => {
   send({ type: 'start' });
 });
-document.getElementById('reset-button').addEventListener('click', () => {
-  if (confirm('End the current game and return to lobby?')) send({ type: 'reset' });
+document.getElementById('new-game-button').addEventListener('click', () => {
+  send({ type: 'start' });
 });
 
 function render() {
@@ -198,7 +198,7 @@ function renderGame() {
   }
 
   renderDiscard();
-  document.getElementById('reset-button').hidden = !(v.hostId === playerId && (v.status === 'finished' || v.status === 'playing'));
+  document.getElementById('new-game-button').hidden = !(v.hostId === playerId && v.status === 'finished');
 }
 
 function renderPlayerRow(player, index, isMyTurn) {

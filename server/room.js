@@ -91,7 +91,9 @@ export function configureRoom(room, playerId, partial) {
 }
 
 export function startGame(room, playerId, { seed } = {}) {
-  if (room.phase !== 'lobby') throw new GameError('Game already started', 'not_lobby');
+  const isLobby = room.phase === 'lobby';
+  const isFinished = room.phase === 'playing' && room.state?.status === 'finished';
+  if (!isLobby && !isFinished) throw new GameError('Game in progress', 'in_progress');
   if (room.hostId !== playerId) throw new GameError('Only the host can start', 'not_host');
   if (room.players.length < 2) throw new GameError('Need at least 2 players', 'too_few');
   room.state = createInitialState({
@@ -142,12 +144,6 @@ export async function applyAction(room, playerId, action) {
       throw new GameError(`Unknown action: ${action.type}`, 'bad_action');
   }
   await maybeWriteReplay(room);
-}
-
-export function resetRoom(room) {
-  room.phase = 'lobby';
-  room.state = null;
-  room.replayWritten = false;
 }
 
 export function viewFor(room, playerId) {

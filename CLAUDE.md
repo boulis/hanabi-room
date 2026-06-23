@@ -58,7 +58,9 @@ Both modes also end on the third fuse (immediate loss) or perfect score.
 ## WebSocket protocol
 
 Server → client: `hello` (variant list), `identity` (your assigned `playerId`), `sync` (filtered view), `error`.
-Client → server: `join`, `configure` (host), `start` (host), `reset` (host), `action` (`{type: 'play'|'discard'|'hint'|'annotate', ...}`).
+Client → server: `join`, `configure` (host), `start` (host — works in lobby OR when a finished game is on screen, to begin a new round), `action` (`{type: 'play'|'discard'|'hint'|'annotate', ...}`).
+
+There is intentionally **no reset action** — the only way for the host to transition to a new game is the "Start a new game" button that appears on the finished screen. This makes it impossible to accidentally wipe a game in progress.
 
 The server broadcasts a fresh `sync` to all connections after every state change. Each client renders from `sync.view` — no client-side game state apart from the latest view.
 

@@ -11,7 +11,6 @@ import {
   createRoom,
   joinRoom,
   leaveRoom,
-  resetRoom,
   startGame,
   viewFor,
 } from './room.js';
@@ -112,13 +111,6 @@ wss.on('connection', (ws) => {
         case 'start': {
           if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
           startGame(room, conn.playerId, { seed: msg.seed });
-          broadcastSync();
-          break;
-        }
-        case 'reset': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
-          if (room.hostId !== conn.playerId) throw new GameError('Only the host can reset', 'not_host');
-          resetRoom(room);
           broadcastSync();
           break;
         }
