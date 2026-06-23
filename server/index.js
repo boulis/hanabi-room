@@ -13,6 +13,7 @@ import {
   leaveRoom,
   startGame,
   viewFor,
+  voteAbandon,
 } from './room.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -117,6 +118,12 @@ wss.on('connection', (ws) => {
         case 'action': {
           if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
           await applyAction(room, conn.playerId, msg.action);
+          broadcastSync();
+          break;
+        }
+        case 'abandon': {
+          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          voteAbandon(room, conn.playerId);
           broadcastSync();
           break;
         }

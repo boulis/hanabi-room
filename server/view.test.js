@@ -58,6 +58,15 @@ test('viewState exposes pile direction, top, and hintable colors', () => {
   assert.ok(!v.hintableColors.includes('black'));
 });
 
+test('viewState hides seed during play and exposes it once finished', () => {
+  const s = fresh({ seed: 7777 });
+  const playingView = viewState(s, 0);
+  assert.equal(playingView.seed, null);
+  s.status = 'finished';
+  const finishedView = viewState(s, 0);
+  assert.equal(finishedView.seed, 7777);
+});
+
 test('viewState reflects hint constraints visible to the owner', () => {
   const s = fresh();
   hintAction(s, 0, 1, 'number', 1);

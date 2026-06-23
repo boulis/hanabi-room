@@ -22,6 +22,7 @@ export async function writeReplay(state) {
     variantId: state.variantId,
     endRule: state.endRule,
     shareAnnotations: state.shareAnnotations,
+    seed: state.seed,
     players: state.players.map((p) => ({ id: p.id, name: p.name })),
     log: state.log,
     finalScore: Object.values(state.playedPiles).reduce((s, p) => s + p.length, 0),

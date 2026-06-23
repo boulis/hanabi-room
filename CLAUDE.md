@@ -58,9 +58,20 @@ Both modes also end on the third fuse (immediate loss) or perfect score.
 ## WebSocket protocol
 
 Server → client: `hello` (variant list), `identity` (your assigned `playerId`), `sync` (filtered view), `error`.
-Client → server: `join`, `configure` (host), `start` (host — works in lobby OR when a finished game is on screen, to begin a new round), `action` (`{type: 'play'|'discard'|'hint'|'annotate', ...}`).
+Client → server:
+- `join { name, playerId? }`
+- `configure { options }` (host only)
+- `start { seed? }` (host only; works in lobby OR when a finished game is on screen)
+- `action { action: { type: 'play'|'discard'|'hint'|'annotate', ... } }`
+- `abandon` — cast a vote to abandon the current game; on the second distinct vote the room snaps back to the lobby. Voting twice toggles your own vote.
 
-There is intentionally **no reset action** — the only way for the host to transition to a new game is the "Start a new game" button that appears on the finished screen. This makes it impossible to accidentally wipe a game in progress.
+There is intentionally **no reset action**. To start over before a natural end, two players have to independently click "Abandon game" — that makes a single accidental click harmless. The host can also paste an old seed into the lobby's seed input to re-deal the same deck.
+
+## Seeds and replays
+
+- Every game has a 32-bit unsigned `seed`. If the host doesn't supply one, the server generates a random seed at game start. The seed is stored on the game state and embedded in the replay file under `replays/`.
+- The seed is NOT exposed in the live view while a game is in progress — it would leak the entire deck. It only appears in the view (and is shown on the game-over banner) once `status === 'finished'`.
+- To re-deal an identical starting hand, the host pastes the seed into the lobby's seed input before clicking Start. Replays today are static JSON dumps (no step-through viewer yet).
 
 The server broadcasts a fresh `sync` to all connections after every state change. Each client renders from `sync.view` — no client-side game state apart from the latest view.
 

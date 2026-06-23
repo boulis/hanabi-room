@@ -348,3 +348,14 @@ input, select {
 }
 .banner.win { background: #2f9648; }
 .banner.loss { background: #d23a3a; }
+
+.game-footer {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+#abandon-button.voted {
+  border-color: #d23a3a;
+  color: #d23a3a;
+}

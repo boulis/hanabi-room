@@ -56,8 +56,9 @@ export function createInitialState({
   if (players.length < 2 || players.length > 5) {
     throw new Error(`Player count must be 2-5, got ${players.length}`);
   }
+  const finalSeed = seed != null ? (seed >>> 0) : Math.floor(Math.random() * 0x100000000);
   const variant = getVariant(variantId);
-  const rng = seed != null ? mulberry32(seed) : Math.random;
+  const rng = mulberry32(finalSeed);
   const deck = shuffle(buildDeck(variantId), rng);
   const size = handSize(players.length);
   const hands = players.map(() => []);
@@ -72,6 +73,7 @@ export function createInitialState({
     variantId,
     endRule,
     shareAnnotations,
+    seed: finalSeed,
     players: players.map((p, i) => ({ id: p.id, name: p.name, hand: hands[i] })),
     deck,
     discard: [],

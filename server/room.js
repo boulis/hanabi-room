@@ -15,6 +15,8 @@ const DEFAULT_OPTIONS = {
   shareAnnotations: false,
 };
 
+const ABANDON_THRESHOLD = 2;
+
 export function createRoom() {
   return {
     phase: 'lobby',
@@ -24,6 +26,7 @@ export function createRoom() {
     state: null,
     sockets: new Map(),
     replayWritten: false,
+    abandonVotes: new Set(),
   };
 }
 
@@ -105,6 +108,26 @@ export function startGame(room, playerId, { seed } = {}) {
   });
   room.phase = 'playing';
   room.replayWritten = false;
+  room.abandonVotes.clear();
+}
+
+export function voteAbandon(room, playerId) {
+  if (room.phase !== 'playing') throw new GameError('No active game', 'no_game');
+  if (room.state.status !== 'playing') throw new GameError('Game is not in progress', 'not_playing');
+  if (!findPlayer(room, playerId)) throw new GameError('Not in this game', 'not_seated');
+  if (room.abandonVotes.has(playerId)) {
+    room.abandonVotes.delete(playerId);
+    return { abandoned: false };
+  }
+  room.abandonVotes.add(playerId);
+  if (room.abandonVotes.size >= ABANDON_THRESHOLD) {
+    room.phase = 'lobby';
+    room.state = null;
+    room.replayWritten = false;
+    room.abandonVotes.clear();
+    return { abandoned: true };
+  }
+  return { abandoned: false };
 }
 
 async function maybeWriteReplay(room) {
@@ -154,5 +177,10 @@ export function viewFor(room, playerId) {
   const v = viewState(room.state, idx);
   v.hostId = room.hostId;
   v.options = room.options;
+  v.abandonVotes = {
+    count: room.abandonVotes.size,
+    threshold: ABANDON_THRESHOLD,
+    me: playerId ? room.abandonVotes.has(playerId) : false,
+  };
   return v;
 }

@@ -93,11 +93,22 @@ document.getElementById('opt-endRule').addEventListener('change', (e) => {
 document.getElementById('opt-shareAnnotations').addEventListener('change', (e) => {
   send({ type: 'configure', options: { shareAnnotations: e.target.checked } });
 });
+function readSeedInput() {
+  const raw = document.getElementById('opt-seed').value.trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.floor(n) >>> 0;
+}
+
 document.getElementById('start-button').addEventListener('click', () => {
-  send({ type: 'start' });
+  send({ type: 'start', seed: readSeedInput() });
 });
 document.getElementById('new-game-button').addEventListener('click', () => {
-  send({ type: 'start' });
+  send({ type: 'start', seed: readSeedInput() });
+});
+document.getElementById('abandon-button').addEventListener('click', () => {
+  send({ type: 'abandon' });
 });
 
 function render() {
@@ -163,7 +174,8 @@ function renderGame() {
   if (v.status === 'finished') {
     const banner = document.createElement('div');
     banner.className = 'banner ' + (v.endReason === 'perfect' ? 'win' : v.endReason === 'fuses' ? 'loss' : '');
-    banner.textContent = `Game over — ${v.endReason}. Final score: ${v.score}/${v.maxScore}`;
+    const seedText = v.seed != null ? `  seed: ${v.seed}` : '';
+    banner.textContent = `Game over — ${v.endReason}. Final score: ${v.score}/${v.maxScore}.${seedText}`;
     meta.append(banner);
   }
 
@@ -198,7 +210,19 @@ function renderGame() {
   }
 
   renderDiscard();
-  document.getElementById('new-game-button').hidden = !(v.hostId === playerId && v.status === 'finished');
+  const newGameBtn = document.getElementById('new-game-button');
+  newGameBtn.hidden = !(v.hostId === playerId && v.status === 'finished');
+  const abandonBtn = document.getElementById('abandon-button');
+  if (v.status === 'playing' && v.abandonVotes) {
+    abandonBtn.hidden = false;
+    const { count, threshold, me } = v.abandonVotes;
+    abandonBtn.textContent = me
+      ? `Cancel my abandon vote (${count}/${threshold})`
+      : `Abandon game (${count}/${threshold})`;
+    abandonBtn.classList.toggle('voted', me);
+  } else {
+    abandonBtn.hidden = true;
+  }
 }
 
 function renderPlayerRow(player, index, isMyTurn) {

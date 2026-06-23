@@ -43,6 +43,10 @@
             <input type="checkbox" id="opt-shareAnnotations" />
             Share manual touches / notes with other players
           </label>
+          <label>
+            Seed (optional — paste from a previous game to re-deal the same deck)
+            <input id="opt-seed" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="random" />
+          </label>
           <button id="start-button" type="button">Start game</button>
         </fieldset>
       </section>
@@ -53,7 +57,10 @@
         <div id="game-hands"></div>
         <div id="game-log"></div>
         <div id="game-discard"></div>
-        <button id="new-game-button" type="button" hidden>Start a new game</button>
+        <div class="game-footer">
+          <button id="abandon-button" type="button" hidden>Abandon game</button>
+          <button id="new-game-button" type="button" hidden>Start a new game</button>
+        </div>
       </section>
     </main>
 

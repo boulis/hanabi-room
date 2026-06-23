@@ -97,6 +97,21 @@ test('pile helpers respect direction', () => {
   assert.equal(maxPossibleScore(s), 35);
 });
 
+test('createInitialState generates a seed when none is provided and stores it', () => {
+  const players = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }];
+  const s = createInitialState({ variantId: 'simple', players });
+  assert.equal(typeof s.seed, 'number');
+  assert.ok(s.seed >= 0 && s.seed < 0x100000000);
+});
+
+test('createInitialState reproduces the same deck for the same seed', () => {
+  const players = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }];
+  const s1 = createInitialState({ variantId: 'simple', players, seed: 12345 });
+  const s2 = createInitialState({ variantId: 'simple', players, seed: 12345 });
+  assert.equal(s1.seed, 12345);
+  assert.deepEqual(s1.deck.map((c) => c.id), s2.deck.map((c) => c.id));
+});
+
 test('createInitialState rejects bad endRule and player count', () => {
   const players = [{ id: 'a', name: 'A' }];
   assert.throws(() => createInitialState({ variantId: 'simple', players: [], seed: 1 }));
