@@ -47,6 +47,18 @@ This gives the receiving player both positive AND negative information automatic
 
 Hintable colors = suits with `hintMatches === 'self'`. Rainbow and black themselves are NOT hintable directly.
 
+Hints that touch zero cards are rejected by default. The host can enable the `allowEmptyHints` lobby option to allow them as a negative-information signal (the hint still costs a token and rules out that color/number across the receiver's hand).
+
+## Card display rules (client)
+
+For each card the client computes:
+- `faceColor` — for other players' cards: the actual color (already known to the viewer). For own cards: the color, if the owner's `possibleColors` has narrowed to a single non-black entry, OR to just `{black}`.
+- `faceNumber` — same idea: the actual number for others, or the owner's `possibleNumbers` if narrowed to a single entry.
+
+If neither is known, the card renders face-down. Black is treated as an *implicit* possibility: it's filtered out of the visible possible-color list, so a card narrowed to `{red, black}` is displayed as "red" on the face. The player accepts the convention that any narrowed result might silently also be black.
+
+The partial-information row (small swatches and number badges under the card) is only rendered when the owner has *some* information but not full information, separately on each axis. A card with no color info AND no number info shows nothing under the face. A card with only color info shows only color swatches, and vice versa.
+
 ## End-of-deck rules
 
 Configurable per game:

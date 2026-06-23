@@ -103,6 +103,34 @@ test('hint: rejected if no card matches', () => {
   assert.throws(() => hintAction(s, 0, 1, 'color', 'blue'), GameError);
 });
 
+test('hint: empty hint allowed when allowEmptyHints is true; still costs a token and rules out the value', () => {
+  const s = freshState({ allowEmptyHints: true });
+  rigHand(s, 1, [
+    { color: 'red', number: 1 },
+    { color: 'red', number: 2 },
+  ]);
+  hintAction(s, 0, 1, 'number', 5);
+  assert.equal(s.hintTokens, 7);
+  for (const card of s.players[1].hand) {
+    assert.ok(!card.possibleNumbers.includes(5));
+    assert.equal(card.numberClued, false);
+  }
+});
+
+test('hint: empty color hint allowed when allowEmptyHints is true; rules out that color', () => {
+  const s = freshState({ allowEmptyHints: true });
+  rigHand(s, 1, [
+    { color: 'red', number: 1 },
+    { color: 'red', number: 2 },
+  ]);
+  hintAction(s, 0, 1, 'color', 'blue');
+  assert.equal(s.hintTokens, 7);
+  for (const card of s.players[1].hand) {
+    assert.ok(!card.possibleColors.includes('blue'));
+    assert.equal(card.colorClued, false);
+  }
+});
+
 test('hint: number hint sets possibleNumbers and clears that number elsewhere', () => {
   const s = freshState();
   rigHand(s, 1, [

@@ -13,6 +13,7 @@ const DEFAULT_OPTIONS = {
   variantId: 'simple',
   endRule: 'standard',
   shareAnnotations: false,
+  allowEmptyHints: false,
 };
 
 const ABANDON_THRESHOLD = 2;
@@ -90,6 +91,9 @@ export function configureRoom(room, playerId, partial) {
   if (next.shareAnnotations !== undefined && typeof next.shareAnnotations !== 'boolean') {
     throw new GameError('shareAnnotations must be boolean', 'bad_share');
   }
+  if (next.allowEmptyHints !== undefined && typeof next.allowEmptyHints !== 'boolean') {
+    throw new GameError('allowEmptyHints must be boolean', 'bad_empty_hints');
+  }
   room.options = next;
 }
 
@@ -103,6 +107,7 @@ export function startGame(room, playerId, { seed } = {}) {
     variantId: room.options.variantId,
     endRule: room.options.endRule,
     shareAnnotations: room.options.shareAnnotations,
+    allowEmptyHints: room.options.allowEmptyHints,
     players: room.players.map((p) => ({ id: p.id, name: p.name })),
     seed,
   });

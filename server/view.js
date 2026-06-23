@@ -37,6 +37,7 @@ export function viewState(state, viewerIndex) {
     hintableColors: hintableColors(state.variantId),
     endRule: state.endRule,
     shareAnnotations: state.shareAnnotations,
+    allowEmptyHints: state.allowEmptyHints,
     viewerIndex,
     currentPlayer: state.currentPlayer,
     turn: state.turn,

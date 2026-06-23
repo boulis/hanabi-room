@@ -93,6 +93,9 @@ document.getElementById('opt-endRule').addEventListener('change', (e) => {
 document.getElementById('opt-shareAnnotations').addEventListener('change', (e) => {
   send({ type: 'configure', options: { shareAnnotations: e.target.checked } });
 });
+document.getElementById('opt-allowEmptyHints').addEventListener('change', (e) => {
+  send({ type: 'configure', options: { allowEmptyHints: e.target.checked } });
+});
 function readSeedInput() {
   const raw = document.getElementById('opt-seed').value.trim();
   if (!raw) return undefined;
@@ -144,10 +147,12 @@ function renderLobby() {
   document.getElementById('opt-variant').disabled = !isHost;
   document.getElementById('opt-endRule').disabled = !isHost;
   document.getElementById('opt-shareAnnotations').disabled = !isHost;
+  document.getElementById('opt-allowEmptyHints').disabled = !isHost;
   document.getElementById('start-button').disabled = !isHost || view.players.length < 2;
   document.getElementById('opt-variant').value = view.options.variantId;
   document.getElementById('opt-endRule').value = view.options.endRule;
   document.getElementById('opt-shareAnnotations').checked = view.options.shareAnnotations;
+  document.getElementById('opt-allowEmptyHints').checked = view.options.allowEmptyHints;
 }
 
 function renderGame() {
@@ -275,32 +280,59 @@ function renderPlayerRow(player, index, isMyTurn) {
   return row;
 }
 
+function deriveCardDisplay(card, view) {
+  const isMine = card.color === undefined;
+  const nonBlackColorCount = view.suits.filter((s) => s.color !== 'black').length;
+  const visibleColors = card.possibleColors.filter((c) => c !== 'black');
+
+  let knownColor = null;
+  if (card.possibleColors.length === 1 && card.possibleColors[0] === 'black') {
+    knownColor = 'black';
+  } else if (visibleColors.length === 1) {
+    knownColor = visibleColors[0];
+  }
+  const knownNumber = card.possibleNumbers.length === 1 ? card.possibleNumbers[0] : null;
+
+  const faceColor = isMine ? knownColor : card.color;
+  const faceNumber = isMine ? knownNumber : card.number;
+
+  let possibleColorList = null;
+  if (!knownColor && visibleColors.length < nonBlackColorCount) {
+    possibleColorList = visibleColors;
+  }
+  let possibleNumberList = null;
+  if (!knownNumber && card.possibleNumbers.length < 5) {
+    possibleNumberList = card.possibleNumbers;
+  }
+
+  return { faceColor, faceNumber, possibleColorList, possibleNumberList };
+}
+
 function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
   const isMine = ownerIndex === view.viewerIndex;
+  const { faceColor, faceNumber, possibleColorList, possibleNumberList } = deriveCardDisplay(card, view);
   const el = document.createElement('div');
   el.className = 'card';
-  if (isMine && card.color === undefined) el.classList.add('face-down');
-  if (card.color) el.dataset.color = card.color;
+  if (!faceColor && !faceNumber) el.classList.add('face-down');
+  if (faceColor) el.dataset.color = faceColor;
   if (card.colorClued || card.numberClued) el.classList.add('clued');
   if (card.colorClued) el.classList.add('clued-color');
   if (card.numberClued) el.classList.add('clued-number');
-  if (card.color && card.number) {
-    el.style.setProperty('--card-svg', `url('/cards/${card.color}-${card.number}.svg')`);
-    el.style.backgroundImage = `var(--card-svg)`;
+  if (faceColor && faceNumber) {
+    el.style.setProperty('--card-svg', `url('/cards/${faceColor}-${faceNumber}.svg')`);
+    el.style.backgroundImage = 'var(--card-svg)';
   }
 
   const face = document.createElement('div');
   face.className = 'card-face';
-  if (card.color !== undefined) {
-    face.textContent = card.number;
-  } else {
-    face.textContent = '?';
-  }
+  face.textContent = faceNumber != null ? String(faceNumber) : '';
   el.append(face);
 
-  el.append(renderPossible(card.possibleColors, card.possibleNumbers, false));
+  const possible = renderPossible(possibleColorList ?? [], possibleNumberList ?? [], false);
+  if (possible) el.append(possible);
   if (card.annotations && (card.annotations.manualColors.length || card.annotations.manualNumbers.length)) {
-    el.append(renderPossible(card.annotations.manualColors, card.annotations.manualNumbers, true));
+    const manual = renderPossible(card.annotations.manualColors, card.annotations.manualNumbers, true);
+    if (manual) el.append(manual);
   }
   if (card.annotations?.note) {
     const note = document.createElement('div');
@@ -345,6 +377,7 @@ function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
 }
 
 function renderPossible(colors, numbers, manual) {
+  if (colors.length === 0 && numbers.length === 0) return null;
   const div = document.createElement('div');
   div.className = 'possible' + (manual ? ' manual' : '');
   if (manual) div.title = 'Manual marks';

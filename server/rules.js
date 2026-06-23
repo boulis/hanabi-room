@@ -205,7 +205,7 @@ export function hintAction(state, fromIndex, toIndex, hintType, value) {
     throw new GameError(`Unknown hint type: ${hintType}`, 'bad_hint_type');
   }
 
-  if (touchedIndexes.length === 0) {
+  if (touchedIndexes.length === 0 && !state.allowEmptyHints) {
     throw new GameError('Hint must touch at least one card', 'empty_hint');
   }
 

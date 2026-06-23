@@ -47,6 +47,7 @@ export function createInitialState({
   variantId,
   endRule = 'standard',
   shareAnnotations = false,
+  allowEmptyHints = false,
   players,
   seed,
 }) {
@@ -73,6 +74,7 @@ export function createInitialState({
     variantId,
     endRule,
     shareAnnotations,
+    allowEmptyHints,
     seed: finalSeed,
     players: players.map((p, i) => ({ id: p.id, name: p.name, hand: hands[i] })),
     deck,
