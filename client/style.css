@@ -94,8 +94,18 @@ input, select {
 
 #game-piles {
   display: flex;
-  gap: 0.5rem;
+  gap: 1rem;
   flex-wrap: wrap;
+  justify-content: center;
+  padding: 0.5rem 0;
+}
+
+.pile-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 80px;
 }
 
 .pile {
@@ -108,6 +118,27 @@ input, select {
   position: relative;
   font-weight: bold;
   font-size: 1.4rem;
+}
+
+.discard-summary {
+  display: flex;
+  gap: 2px;
+  flex-wrap: nowrap;
+  justify-content: center;
+  min-height: 22px;
+  align-items: center;
+}
+
+.discard-summary .num {
+  width: 14px;
+  height: 20px;
+  border-radius: 3px;
+  background: rgba(127, 127, 127, 0.18);
+  display: grid;
+  place-items: center;
+  font-size: 0.72rem;
+  font-weight: bold;
+  font-variant-numeric: tabular-nums;
 }
 
 .pile[data-direction="down"]::after {
@@ -245,13 +276,23 @@ input, select {
 
 .card-actions {
   display: flex;
-  gap: 4px;
+  flex-direction: column;
+  gap: 3px;
   margin-top: 4px;
+}
+.card-actions .row {
+  display: flex;
+  gap: 3px;
 }
 .card-actions button {
   flex: 1;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   padding: 2px 4px;
+  min-width: 0;
+}
+.card-actions .row .edit-btn {
+  flex: 0 0 auto;
+  width: 24px;
 }
 
 .card-note {

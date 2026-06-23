@@ -181,16 +181,35 @@ function renderGame() {
 
   const piles = document.getElementById('game-piles');
   piles.innerHTML = '';
+  const discardsByColor = Object.fromEntries(v.suits.map((s) => [s.color, []]));
+  for (const c of v.discard) discardsByColor[c.color].push(c.number);
+  for (const color of Object.keys(discardsByColor)) {
+    discardsByColor[color].sort((a, b) => a - b);
+  }
   for (const suit of v.suits) {
     const p = v.playedPiles[suit.color];
-    const el = document.createElement('div');
-    el.className = 'pile';
-    el.dataset.color = suit.color;
-    el.dataset.direction = suit.direction;
-    el.textContent = suit.direction === 'up'
+    const column = document.createElement('div');
+    column.className = 'pile-column';
+
+    const pile = document.createElement('div');
+    pile.className = 'pile';
+    pile.dataset.color = suit.color;
+    pile.dataset.direction = suit.direction;
+    pile.textContent = suit.direction === 'up'
       ? (p.top > 0 ? p.top : '–')
       : (p.top < 6 ? p.top : '–');
-    piles.append(el);
+    column.append(pile);
+
+    const summary = document.createElement('div');
+    summary.className = 'discard-summary';
+    for (const n of discardsByColor[suit.color]) {
+      const num = document.createElement('span');
+      num.className = 'num';
+      num.textContent = n;
+      summary.append(num);
+    }
+    column.append(summary);
+    piles.append(column);
   }
 
   const hands = document.getElementById('game-hands');
@@ -293,23 +312,33 @@ function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
   if (isMine && view.status === 'playing') {
     const actions = document.createElement('div');
     actions.className = 'card-actions';
+
+    const row1 = document.createElement('div');
+    row1.className = 'row';
     if (isMyTurn) {
       const playBtn = document.createElement('button');
       playBtn.textContent = 'Play';
       playBtn.addEventListener('click', () => send({ type: 'action', action: { type: 'play', cardIndex } }));
-      actions.append(playBtn);
+      row1.append(playBtn);
+    }
+    const noteBtn = document.createElement('button');
+    noteBtn.className = 'edit-btn';
+    noteBtn.textContent = '✎';
+    noteBtn.title = 'Annotate';
+    noteBtn.addEventListener('click', () => openAnnotateModal(card));
+    row1.append(noteBtn);
+    actions.append(row1);
 
+    if (isMyTurn) {
+      const row2 = document.createElement('div');
+      row2.className = 'row';
       const discardBtn = document.createElement('button');
       discardBtn.textContent = 'Discard';
       discardBtn.disabled = view.hintTokens >= 8;
       discardBtn.addEventListener('click', () => send({ type: 'action', action: { type: 'discard', cardIndex } }));
-      actions.append(discardBtn);
+      row2.append(discardBtn);
+      actions.append(row2);
     }
-    const noteBtn = document.createElement('button');
-    noteBtn.textContent = '✎';
-    noteBtn.title = 'Annotate';
-    noteBtn.addEventListener('click', () => openAnnotateModal(card));
-    actions.append(noteBtn);
     el.append(actions);
   }
   return el;
@@ -368,24 +397,16 @@ function renderHintControls(targetIndex) {
 
 function renderDiscard() {
   const root = document.getElementById('game-discard');
-  root.innerHTML = '<h3>Discard pile</h3>';
-  const byColor = {};
-  for (const suit of view.suits) byColor[suit.color] = [];
-  for (const c of view.discard) byColor[c.color].push(c.number);
-  for (const color of Object.keys(byColor)) {
-    byColor[color].sort((a, b) => a - b);
-  }
+  root.innerHTML = '<h3>Discard Order</h3>';
   const pile = document.createElement('div');
   pile.className = 'discard-pile';
-  for (const color of Object.keys(byColor)) {
-    for (const n of byColor[color]) {
-      const c = document.createElement('div');
-      c.className = 'discard-card';
-      c.style.background = `var(--color-${color})`;
-      c.style.color = (color === 'yellow' || color === 'white') ? '#111' : '#fff';
-      c.textContent = n;
-      pile.append(c);
-    }
+  for (const c of view.discard) {
+    const el = document.createElement('div');
+    el.className = 'discard-card';
+    el.style.background = `var(--color-${c.color})`;
+    el.style.color = (c.color === 'yellow' || c.color === 'white') ? '#111' : '#fff';
+    el.textContent = c.number;
+    pile.append(el);
   }
   root.append(pile);
 }
