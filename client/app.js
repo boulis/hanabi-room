@@ -285,32 +285,46 @@ function deriveCardDisplay(card, view) {
   const nonBlackColorCount = view.suits.filter((s) => s.color !== 'black').length;
   const visibleColors = card.possibleColors.filter((c) => c !== 'black');
 
-  let knownColor = null;
-  if (card.possibleColors.length === 1 && card.possibleColors[0] === 'black') {
-    knownColor = 'black';
-  } else if (visibleColors.length === 1) {
-    knownColor = visibleColors[0];
+  if (isMine) {
+    let knownColor = null;
+    if (card.possibleColors.length === 1 && card.possibleColors[0] === 'black') {
+      knownColor = 'black';
+    } else if (visibleColors.length === 1) {
+      knownColor = visibleColors[0];
+    }
+    const knownNumber = card.possibleNumbers.length === 1 ? card.possibleNumbers[0] : null;
+    let possibleColorList = null;
+    if (!knownColor && visibleColors.length < nonBlackColorCount) {
+      possibleColorList = visibleColors;
+    }
+    let possibleNumberList = null;
+    if (!knownNumber && card.possibleNumbers.length < 5) {
+      possibleNumberList = card.possibleNumbers;
+    }
+    return {
+      faceColor: knownColor,
+      faceNumber: knownNumber,
+      possibleColorList,
+      possibleNumberList,
+      noInfo: false,
+    };
   }
-  const knownNumber = card.possibleNumbers.length === 1 ? card.possibleNumbers[0] : null;
 
-  const faceColor = isMine ? knownColor : card.color;
-  const faceNumber = isMine ? knownNumber : card.number;
-
-  let possibleColorList = null;
-  if (!knownColor && visibleColors.length < nonBlackColorCount) {
-    possibleColorList = visibleColors;
-  }
-  let possibleNumberList = null;
-  if (!knownNumber && card.possibleNumbers.length < 5) {
-    possibleNumberList = card.possibleNumbers;
-  }
-
-  return { faceColor, faceNumber, possibleColorList, possibleNumberList };
+  const colorsAllOpen = visibleColors.length === nonBlackColorCount;
+  const numbersAllOpen = card.possibleNumbers.length === 5;
+  const noInfo = colorsAllOpen && numbersAllOpen;
+  return {
+    faceColor: card.color,
+    faceNumber: card.number,
+    possibleColorList: noInfo ? null : visibleColors,
+    possibleNumberList: noInfo ? null : card.possibleNumbers,
+    noInfo,
+  };
 }
 
 function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
   const isMine = ownerIndex === view.viewerIndex;
-  const { faceColor, faceNumber, possibleColorList, possibleNumberList } = deriveCardDisplay(card, view);
+  const { faceColor, faceNumber, possibleColorList, possibleNumberList, noInfo } = deriveCardDisplay(card, view);
   const el = document.createElement('div');
   el.className = 'card';
   if (!faceColor && !faceNumber) el.classList.add('face-down');
@@ -328,8 +342,15 @@ function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
   face.textContent = faceNumber != null ? String(faceNumber) : '';
   el.append(face);
 
-  const possible = renderPossible(possibleColorList ?? [], possibleNumberList ?? [], false);
-  if (possible) el.append(possible);
+  if (noInfo) {
+    const tag = document.createElement('div');
+    tag.className = 'no-info';
+    tag.textContent = 'no info';
+    el.append(tag);
+  } else {
+    const possible = renderPossible(possibleColorList ?? [], possibleNumberList ?? [], false);
+    if (possible) el.append(possible);
+  }
   if (card.annotations && (card.annotations.manualColors.length || card.annotations.manualNumbers.length)) {
     const manual = renderPossible(card.annotations.manualColors, card.annotations.manualNumbers, true);
     if (manual) el.append(manual);

@@ -266,6 +266,16 @@ input, select {
 .possible.manual .swatch { border-style: dashed; }
 .possible.manual .num { border-style: dashed; }
 
+.no-info {
+  font-size: 0.65rem;
+  font-style: italic;
+  text-align: center;
+  color: rgba(127, 127, 127, 0.65);
+  letter-spacing: 0.05em;
+  min-height: 14px;
+  padding: 1px 0;
+}
+
 .swatch[data-color="red"]    { background: var(--color-red); }
 .swatch[data-color="yellow"] { background: var(--color-yellow); }
 .swatch[data-color="green"]  { background: var(--color-green); }
