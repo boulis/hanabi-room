@@ -327,7 +327,7 @@ function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
   const { faceColor, faceNumber, possibleColorList, possibleNumberList, noInfo } = deriveCardDisplay(card, view);
   const el = document.createElement('div');
   el.className = 'card';
-  if (!faceColor && !faceNumber) el.classList.add('face-down');
+  if (!faceColor) el.classList.add('face-down');
   if (faceColor) el.dataset.color = faceColor;
   if (card.colorClued || card.numberClued) el.classList.add('clued');
   if (card.colorClued) el.classList.add('clued-color');
