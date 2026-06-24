@@ -1,7 +1,7 @@
 import { getVariant, VARIANTS } from './variants.js';
 import { hintableColors, maxPossibleScore, pileTop, score } from './game.js';
 
-function viewCard(card, { revealIdentity, includeAnnotations }) {
+function viewCard(card, { revealIdentity, isOwner, shareGuarded }) {
   const out = {
     id: card.id,
     possibleColors: card.possibleColors.slice(),
@@ -13,12 +13,13 @@ function viewCard(card, { revealIdentity, includeAnnotations }) {
     out.color = card.color;
     out.number = card.number;
   }
-  if (includeAnnotations) {
+  if (isOwner) {
     out.annotations = {
-      manualColors: card.annotations.manualColors.slice(),
-      manualNumbers: card.annotations.manualNumbers.slice(),
       note: card.annotations.note,
+      guarded: card.annotations.guarded,
     };
+  } else if (shareGuarded) {
+    out.annotations = { guarded: card.annotations.guarded };
   }
   return out;
 }
@@ -36,7 +37,7 @@ export function viewState(state, viewerIndex) {
     })),
     hintableColors: hintableColors(state.variantId),
     endRule: state.endRule,
-    shareAnnotations: state.shareAnnotations,
+    shareGuarded: state.shareGuarded,
     allowEmptyHints: state.allowEmptyHints,
     viewerIndex,
     currentPlayer: state.currentPlayer,
@@ -62,7 +63,8 @@ export function viewState(state, viewerIndex) {
       hand: p.hand.map((c) =>
         viewCard(c, {
           revealIdentity: i !== viewerIndex,
-          includeAnnotations: i === viewerIndex || state.shareAnnotations,
+          isOwner: i === viewerIndex,
+          shareGuarded: state.shareGuarded,
         }),
       ),
     })),

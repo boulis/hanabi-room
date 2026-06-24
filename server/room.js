@@ -12,7 +12,7 @@ import { writeReplay } from './replay.js';
 const DEFAULT_OPTIONS = {
   variantId: 'simple',
   endRule: 'standard',
-  shareAnnotations: false,
+  shareGuarded: false,
   allowEmptyHints: false,
 };
 
@@ -88,8 +88,8 @@ export function configureRoom(room, playerId, partial) {
   if (next.endRule && !['standard', 'lax'].includes(next.endRule)) {
     throw new GameError(`Unknown endRule: ${next.endRule}`, 'bad_endRule');
   }
-  if (next.shareAnnotations !== undefined && typeof next.shareAnnotations !== 'boolean') {
-    throw new GameError('shareAnnotations must be boolean', 'bad_share');
+  if (next.shareGuarded !== undefined && typeof next.shareGuarded !== 'boolean') {
+    throw new GameError('shareGuarded must be boolean', 'bad_share');
   }
   if (next.allowEmptyHints !== undefined && typeof next.allowEmptyHints !== 'boolean') {
     throw new GameError('allowEmptyHints must be boolean', 'bad_empty_hints');
@@ -106,7 +106,7 @@ export function startGame(room, playerId, { seed } = {}) {
   room.state = createInitialState({
     variantId: room.options.variantId,
     endRule: room.options.endRule,
-    shareAnnotations: room.options.shareAnnotations,
+    shareGuarded: room.options.shareGuarded,
     allowEmptyHints: room.options.allowEmptyHints,
     players: room.players.map((p) => ({ id: p.id, name: p.name })),
     seed,
@@ -163,8 +163,7 @@ export async function applyAction(room, playerId, action) {
       break;
     case 'annotate':
       annotateAction(room.state, idx, action.cardId, {
-        manualColors: action.manualColors,
-        manualNumbers: action.manualNumbers,
+        guarded: action.guarded,
         note: action.note,
       });
       break;

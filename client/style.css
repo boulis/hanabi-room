@@ -267,8 +267,18 @@ input, select {
   border-radius: 3px;
   line-height: 1.2;
 }
-.possible.manual .swatch { border-style: dashed; }
-.possible.manual .num { border-style: dashed; }
+.guard-dot {
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 12px;
+  height: 12px;
+  border-radius: 99px;
+  background: #d23a3a;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+  z-index: 1;
+}
 
 .no-info {
   font-size: 0.65rem;

@@ -21,7 +21,7 @@ export async function writeReplay(state) {
   const payload = {
     variantId: state.variantId,
     endRule: state.endRule,
-    shareAnnotations: state.shareAnnotations,
+    shareGuarded: state.shareGuarded,
     seed: state.seed,
     players: state.players.map((p) => ({ id: p.id, name: p.name })),
     log: state.log,

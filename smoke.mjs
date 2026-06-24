@@ -73,7 +73,7 @@ async function main() {
 
   await recvSyncWhere(a, (v) => v.status === 'lobby' && v.players.length === 2);
 
-  send(a, { type: 'configure', options: { variantId: 'rainbow', endRule: 'standard', shareAnnotations: true } });
+  send(a, { type: 'configure', options: { variantId: 'rainbow', endRule: 'standard', shareGuarded: true } });
   send(a, { type: 'start', seed: 42 });
 
   const aView0 = await recvSyncWhere(a, (v) => v.status === 'playing');
@@ -101,16 +101,20 @@ async function main() {
   if (!aliceSeesBob.color) throw new Error('Alice should see Bob colors');
   console.log('Visibility check passed');
 
-  // Annotate Alice's first card; with shareAnnotations=true Bob should see it
+  // Annotate Alice's first card with guarded=true and a private note. With
+  // shareGuarded=true Bob should see the guarded flag, but the note stays private.
   console.log('viewer index:', v2a.viewerIndex, 'hand length:', v2a.players[v2a.viewerIndex].hand.length);
   const aliceCardId = v2a.players[v2a.viewerIndex].hand[0].id;
   send(a, {
     type: 'action',
-    action: { type: 'annotate', cardId: aliceCardId, manualColors: ['red'], manualNumbers: [3], note: 'guess' },
+    action: { type: 'annotate', cardId: aliceCardId, guarded: true, note: 'guess' },
   });
   await recvSyncWhere(a, (v) => v.players[v.viewerIndex].hand[0].annotations?.note === 'guess');
-  await recvSyncWhere(b, (v) => v.players[0].hand[0]?.annotations?.note === 'guess');
-  console.log('Shared annotations visible across players');
+  const bGuarded = await recvSyncWhere(b, (v) => v.players[0].hand[0]?.annotations?.guarded === true);
+  if (bGuarded.players[0].hand[0].annotations.note !== undefined) {
+    throw new Error('Bob should not see the private note');
+  }
+  console.log('Shared guarded flag visible across players; note remains private');
 
   console.log('\nALL SMOKE CHECKS PASSED');
   a.ws.close();

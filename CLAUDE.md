@@ -24,12 +24,12 @@ Requires Node ≥ 20 (uses ES modules and `node:test`).
   - `variants.js` — variant definitions (pure data)
   - `game.js` — deck building, initial state, pile/score helpers (pure)
   - `rules.js` — action handlers (play/discard/hint/annotate), turn rotation, end conditions (pure mutations on state)
-  - `view.js` — filters state into a per-viewer view (hides own card identities; gates annotations on the share flag)
+  - `view.js` — filters state into a per-viewer view (hides own card identities; gates the guarded-card flag on the share option; the note is owner-only and never shared)
   - `replay.js` — writes a JSON log file under `replays/` when a game finishes
   - `room.js` — lobby + game-room model: who's host, who's joined, action dispatch
   - `index.js` — HTTP static server + WebSocket transport; thin shell over `room.js`
   Keep game logic in `game.js` / `rules.js` and view filtering in `view.js`. The transport doesn't know game rules.
-- **Per-card hint state**: every card carries `possibleColors`, `possibleNumbers`, `colorClued`, `numberClued`, and `annotations`. Formal hints update these; annotations are owner-only metadata. Cards in your own hand are sent to you WITHOUT their `color`/`number` fields, but WITH the inferred constraints — that's how you see "this could be red or rainbow" without seeing what it actually is.
+- **Per-card hint state**: every card carries `possibleColors`, `possibleNumbers`, `colorClued`, `numberClued`, and `annotations` (a `{ note, guarded }` pair). Formal hints update the constraints; annotations are owner-controlled metadata. Cards in your own hand are sent to you WITHOUT their `color`/`number` fields, but WITH the inferred constraints — that's how you see "this could be red or rainbow" without seeing what it actually is. The `note` field is always private to the owner. The `guarded` boolean is visible to the owner; other players see it only when the lobby option `shareGuarded` is on.
 - **Replays**: finished games are written to `replays/` as JSON. Directory is gitignored; created at runtime.
 
 ## Hint mechanics

@@ -40,8 +40,8 @@
             </select>
           </label>
           <label class="checkbox">
-            <input type="checkbox" id="opt-shareAnnotations" />
-            Share manual touches / notes with other players
+            <input type="checkbox" id="opt-shareGuarded" />
+            Share guarded cards (other players see the red marker)
           </label>
           <label class="checkbox">
             <input type="checkbox" id="opt-allowEmptyHints" />
@@ -72,13 +72,12 @@
       <div class="modal-body">
         <h3>Annotate card</h3>
         <div id="annotate-card-info"></div>
-        <fieldset>
-          <legend>I think it could be:</legend>
-          <div id="annotate-colors" class="chip-row"></div>
-          <div id="annotate-numbers" class="chip-row"></div>
-        </fieldset>
+        <label class="checkbox">
+          <input type="checkbox" id="annotate-guarded" />
+          Guard this card (red marker on top)
+        </label>
         <label>
-          Note
+          Note (private to you)
           <input id="annotate-note" maxlength="200" />
         </label>
         <div class="modal-actions">

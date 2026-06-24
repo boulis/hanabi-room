@@ -222,31 +222,19 @@ export function hintAction(state, fromIndex, toIndex, hintType, value) {
   return state;
 }
 
-export function annotateAction(state, playerIndex, cardId, { manualColors, manualNumbers, note }) {
+export function annotateAction(state, playerIndex, cardId, { note, guarded }) {
   requirePlaying(state);
   const hand = state.players[playerIndex].hand;
   const card = hand.find((c) => c.id === cardId);
   if (!card) throw new GameError('Card not in your hand', 'no_card');
-  const variant = getVariant(state.variantId);
-  const allColors = new Set(variant.suits.map((s) => s.color));
 
-  if (manualColors !== undefined) {
-    if (!Array.isArray(manualColors)) throw new GameError('manualColors must be an array', 'bad_annotation');
-    for (const c of manualColors) {
-      if (!allColors.has(c)) throw new GameError(`Unknown color: ${c}`, 'bad_annotation');
-    }
-    card.annotations.manualColors = [...new Set(manualColors)];
-  }
-  if (manualNumbers !== undefined) {
-    if (!Array.isArray(manualNumbers)) throw new GameError('manualNumbers must be an array', 'bad_annotation');
-    for (const n of manualNumbers) {
-      if (!Number.isInteger(n) || n < 1 || n > 5) throw new GameError(`Bad number: ${n}`, 'bad_annotation');
-    }
-    card.annotations.manualNumbers = [...new Set(manualNumbers)];
-  }
   if (note !== undefined) {
     if (typeof note !== 'string') throw new GameError('note must be a string', 'bad_annotation');
     card.annotations.note = note.slice(0, 200);
+  }
+  if (guarded !== undefined) {
+    if (typeof guarded !== 'boolean') throw new GameError('guarded must be boolean', 'bad_annotation');
+    card.annotations.guarded = guarded;
   }
   return state;
 }

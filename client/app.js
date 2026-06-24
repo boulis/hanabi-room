@@ -90,8 +90,8 @@ document.getElementById('opt-variant').addEventListener('change', (e) => {
 document.getElementById('opt-endRule').addEventListener('change', (e) => {
   send({ type: 'configure', options: { endRule: e.target.value } });
 });
-document.getElementById('opt-shareAnnotations').addEventListener('change', (e) => {
-  send({ type: 'configure', options: { shareAnnotations: e.target.checked } });
+document.getElementById('opt-shareGuarded').addEventListener('change', (e) => {
+  send({ type: 'configure', options: { shareGuarded: e.target.checked } });
 });
 document.getElementById('opt-allowEmptyHints').addEventListener('change', (e) => {
   send({ type: 'configure', options: { allowEmptyHints: e.target.checked } });
@@ -146,12 +146,12 @@ function renderLobby() {
   const isHost = view.hostId === playerId;
   document.getElementById('opt-variant').disabled = !isHost;
   document.getElementById('opt-endRule').disabled = !isHost;
-  document.getElementById('opt-shareAnnotations').disabled = !isHost;
+  document.getElementById('opt-shareGuarded').disabled = !isHost;
   document.getElementById('opt-allowEmptyHints').disabled = !isHost;
   document.getElementById('start-button').disabled = !isHost || view.players.length < 2;
   document.getElementById('opt-variant').value = view.options.variantId;
   document.getElementById('opt-endRule').value = view.options.endRule;
-  document.getElementById('opt-shareAnnotations').checked = view.options.shareAnnotations;
+  document.getElementById('opt-shareGuarded').checked = view.options.shareGuarded;
   document.getElementById('opt-allowEmptyHints').checked = view.options.allowEmptyHints;
 }
 
@@ -167,7 +167,7 @@ function renderGame() {
     ['Fuse tokens', `${v.fuseTokens} / 3`],
     ['Deck', `${v.deckSize} cards`],
     ['End rule', v.endRule],
-    ['Annotations', v.shareAnnotations ? 'shared' : 'private'],
+    ['Guard marks', v.shareGuarded ? 'shared' : 'private'],
   ];
   for (const [k, val] of items) {
     const div = document.createElement('div');
@@ -351,9 +351,11 @@ function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
     const possible = renderPossible(possibleColorList ?? [], possibleNumberList ?? [], false);
     if (possible) el.append(possible);
   }
-  if (card.annotations && (card.annotations.manualColors.length || card.annotations.manualNumbers.length)) {
-    const manual = renderPossible(card.annotations.manualColors, card.annotations.manualNumbers, true);
-    if (manual) el.append(manual);
+  if (card.annotations?.guarded) {
+    const dot = document.createElement('div');
+    dot.className = 'guard-dot';
+    dot.title = 'Guarded';
+    el.append(dot);
   }
   if (card.annotations?.note) {
     const note = document.createElement('div');
@@ -483,46 +485,15 @@ function formatLog(e) {
 
 const annotateModal = document.getElementById('annotate-modal');
 const annotateCardInfo = document.getElementById('annotate-card-info');
-const annotateColorsRow = document.getElementById('annotate-colors');
-const annotateNumbersRow = document.getElementById('annotate-numbers');
+const annotateGuardedInput = document.getElementById('annotate-guarded');
 const annotateNoteInput = document.getElementById('annotate-note');
 let annotatingCardId = null;
-let annotatingColors = new Set();
-let annotatingNumbers = new Set();
 
 function openAnnotateModal(card) {
   annotatingCardId = card.id;
-  annotatingColors = new Set(card.annotations?.manualColors ?? []);
-  annotatingNumbers = new Set(card.annotations?.manualNumbers ?? []);
+  annotateGuardedInput.checked = !!card.annotations?.guarded;
   annotateNoteInput.value = card.annotations?.note ?? '';
   annotateCardInfo.textContent = `Card you can see as: ${card.colorClued ? 'colour-clued' : 'no colour clue'}, ${card.numberClued ? 'number-clued' : 'no number clue'}`;
-  annotateColorsRow.innerHTML = '';
-  for (const color of [...new Set(view.suits.map((s) => s.color))]) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'toggle' + (annotatingColors.has(color) ? ' on' : '');
-    b.style.borderColor = `var(--color-${color})`;
-    b.textContent = color;
-    b.addEventListener('click', () => {
-      if (annotatingColors.has(color)) annotatingColors.delete(color);
-      else annotatingColors.add(color);
-      b.classList.toggle('on');
-    });
-    annotateColorsRow.append(b);
-  }
-  annotateNumbersRow.innerHTML = '';
-  for (let n = 1; n <= 5; n++) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'toggle' + (annotatingNumbers.has(n) ? ' on' : '');
-    b.textContent = n;
-    b.addEventListener('click', () => {
-      if (annotatingNumbers.has(n)) annotatingNumbers.delete(n);
-      else annotatingNumbers.add(n);
-      b.classList.toggle('on');
-    });
-    annotateNumbersRow.append(b);
-  }
   annotateModal.hidden = false;
 }
 
@@ -536,8 +507,7 @@ document.getElementById('annotate-save').addEventListener('click', () => {
     action: {
       type: 'annotate',
       cardId: annotatingCardId,
-      manualColors: [...annotatingColors],
-      manualNumbers: [...annotatingNumbers],
+      guarded: annotateGuardedInput.checked,
       note: annotateNoteInput.value,
     },
   });

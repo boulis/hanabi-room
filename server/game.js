@@ -25,7 +25,7 @@ export function makeCard(id, color, number, variant) {
     possibleNumbers: [1, 2, 3, 4, 5],
     colorClued: false,
     numberClued: false,
-    annotations: { manualColors: [], manualNumbers: [], note: '' },
+    annotations: { note: '', guarded: false },
   };
 }
 
@@ -46,7 +46,7 @@ export function handSize(playerCount) {
 export function createInitialState({
   variantId,
   endRule = 'standard',
-  shareAnnotations = false,
+  shareGuarded = false,
   allowEmptyHints = false,
   players,
   seed,
@@ -73,7 +73,7 @@ export function createInitialState({
     status: 'playing',
     variantId,
     endRule,
-    shareAnnotations,
+    shareGuarded,
     allowEmptyHints,
     seed: finalSeed,
     players: players.map((p, i) => ({ id: p.id, name: p.name, hand: hands[i] })),

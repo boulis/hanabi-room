@@ -58,7 +58,7 @@ test('cards are built with full possible-color/number arrays for the variant', (
   assert.deepEqual(sample.possibleNumbers, [1, 2, 3, 4, 5]);
   assert.equal(sample.colorClued, false);
   assert.equal(sample.numberClued, false);
-  assert.deepEqual(sample.annotations, { manualColors: [], manualNumbers: [], note: '' });
+  assert.deepEqual(sample.annotations, { note: '', guarded: false });
 });
 
 test('hintable colors exclude rainbow and black', () => {
@@ -83,7 +83,7 @@ test('initial state deals correct hands and is deterministic with a seed', () =>
   assert.equal(s1.fuseTokens, 3);
   assert.equal(s1.status, 'playing');
   assert.equal(s1.endRule, 'standard');
-  assert.equal(s1.shareAnnotations, false);
+  assert.equal(s1.shareGuarded, false);
   assert.deepEqual(s1.deck.map((c) => c.id), s2.deck.map((c) => c.id));
 });
 

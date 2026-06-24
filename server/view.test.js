@@ -31,22 +31,24 @@ test('viewState reveals other players cards', () => {
   assert.ok(typeof other.number === 'number');
 });
 
-test('viewState shows annotations on own cards only by default', () => {
+test('viewState shows guarded + note on own cards; hides everything on others by default', () => {
   const s = fresh();
   const cardId = s.players[1].hand[0].id;
-  annotateAction(s, 1, cardId, { note: 'red two?' });
+  annotateAction(s, 1, cardId, { guarded: true, note: 'red two?' });
   const ownView = viewState(s, 1);
   assert.equal(ownView.players[1].hand[0].annotations.note, 'red two?');
+  assert.equal(ownView.players[1].hand[0].annotations.guarded, true);
   const otherView = viewState(s, 0);
   assert.equal(otherView.players[1].hand[0].annotations, undefined);
 });
 
-test('viewState shares annotations when shareAnnotations is true', () => {
-  const s = fresh({ shareAnnotations: true });
+test('viewState shares guarded flag when shareGuarded is true, but never shares the note', () => {
+  const s = fresh({ shareGuarded: true });
   const cardId = s.players[1].hand[0].id;
-  annotateAction(s, 1, cardId, { note: 'red two?' });
+  annotateAction(s, 1, cardId, { guarded: true, note: 'red two?' });
   const otherView = viewState(s, 0);
-  assert.equal(otherView.players[1].hand[0].annotations.note, 'red two?');
+  assert.equal(otherView.players[1].hand[0].annotations.guarded, true);
+  assert.equal(otherView.players[1].hand[0].annotations.note, undefined);
 });
 
 test('viewState exposes pile direction, top, and hintable colors', () => {

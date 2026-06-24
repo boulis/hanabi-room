@@ -26,7 +26,7 @@ function rigHand(state, playerIndex, cards) {
     possibleNumbers: [1, 2, 3, 4, 5],
     colorClued: false,
     numberClued: false,
-    annotations: { manualColors: [], manualNumbers: [], note: '' },
+    annotations: { note: '', guarded: false },
   }));
 }
 
@@ -173,7 +173,7 @@ test('hint: rainbow cards are touched by any color hint and resolve via two hint
       possibleNumbers: [1, 2, 3, 4, 5],
       colorClued: false,
       numberClued: false,
-      annotations: { manualColors: [], manualNumbers: [], note: '' },
+      annotations: { note: '', guarded: false },
     },
     {
       id: 2001,
@@ -183,7 +183,7 @@ test('hint: rainbow cards are touched by any color hint and resolve via two hint
       possibleNumbers: [1, 2, 3, 4, 5],
       colorClued: false,
       numberClued: false,
-      annotations: { manualColors: [], manualNumbers: [], note: '' },
+      annotations: { note: '', guarded: false },
     },
   ];
   hintAction(s, 0, 1, 'color', 'red');
@@ -213,7 +213,7 @@ test('hint: black cards are never touched by color hints; black itself is unhint
       possibleNumbers: [1, 2, 3, 4, 5],
       colorClued: false,
       numberClued: false,
-      annotations: { manualColors: [], manualNumbers: [], note: '' },
+      annotations: { note: '', guarded: false },
     },
     {
       id: 3001,
@@ -223,7 +223,7 @@ test('hint: black cards are never touched by color hints; black itself is unhint
       possibleNumbers: [1, 2, 3, 4, 5],
       colorClued: false,
       numberClued: false,
-      annotations: { manualColors: [], manualNumbers: [], note: '' },
+      annotations: { note: '', guarded: false },
     },
   ];
   hintAction(s, 0, 1, 'color', 'red');
@@ -249,7 +249,7 @@ test('reverse-direction stack: 5 is playable on empty pile, then 4, etc.', () =>
       possibleNumbers: [],
       colorClued: false,
       numberClued: false,
-      annotations: { manualColors: [], manualNumbers: [], note: '' },
+      annotations: { note: '', guarded: false },
     },
   ];
   playAction(s, 0, 0);
@@ -266,7 +266,7 @@ test('reverse-direction stack: 5 is playable on empty pile, then 4, etc.', () =>
       possibleNumbers: [],
       colorClued: false,
       numberClued: false,
-      annotations: { manualColors: [], manualNumbers: [], note: '' },
+      annotations: { note: '', guarded: false },
     },
   ];
   playAction(s, 1, 0);
@@ -297,7 +297,7 @@ test('end: standard rule plays exactly N more turns after deck empties', () => {
     possibleColors: ['red', 'yellow', 'green', 'blue', 'white'],
     possibleNumbers: [1, 2, 3, 4, 5],
     colorClued: false, numberClued: false,
-    annotations: { manualColors: [], manualNumbers: [], note: '' },
+    annotations: { note: '', guarded: false },
   }];
   rigHand(s, 0, [{ color: 'red', number: 3 }, { color: 'blue', number: 4 }]);
   rigHand(s, 1, [{ color: 'green', number: 2 }, { color: 'white', number: 1 }]);
@@ -355,14 +355,16 @@ test('end: perfect score ends the game with reason "perfect"', () => {
   assert.equal(score(s), 25);
 });
 
-test('annotate: owner can set manual colors/numbers/note within their hand', () => {
+test('annotate: owner can set guarded flag and note within their hand', () => {
   const s = freshState();
   const cardId = s.players[0].hand[0].id;
-  annotateAction(s, 0, cardId, { manualColors: ['red', 'blue'], manualNumbers: [3, 4], note: 'maybe' });
+  annotateAction(s, 0, cardId, { guarded: true, note: 'maybe' });
   const card = s.players[0].hand[0];
-  assert.deepEqual(card.annotations.manualColors, ['red', 'blue']);
-  assert.deepEqual(card.annotations.manualNumbers, [3, 4]);
+  assert.equal(card.annotations.guarded, true);
   assert.equal(card.annotations.note, 'maybe');
+  annotateAction(s, 0, cardId, { guarded: false });
+  assert.equal(s.players[0].hand[0].annotations.guarded, false);
+  assert.equal(s.players[0].hand[0].annotations.note, 'maybe');
 });
 
 test('annotate: rejects card not in own hand', () => {
@@ -371,9 +373,9 @@ test('annotate: rejects card not in own hand', () => {
   assert.throws(() => annotateAction(s, 0, otherId, { note: 'cheat' }), GameError);
 });
 
-test('annotate: validates colors and numbers', () => {
+test('annotate: validates note as string and guarded as boolean', () => {
   const s = freshState();
   const id = s.players[0].hand[0].id;
-  assert.throws(() => annotateAction(s, 0, id, { manualColors: ['mauve'] }), GameError);
-  assert.throws(() => annotateAction(s, 0, id, { manualNumbers: [9] }), GameError);
+  assert.throws(() => annotateAction(s, 0, id, { note: 7 }), GameError);
+  assert.throws(() => annotateAction(s, 0, id, { guarded: 'yes' }), GameError);
 });
