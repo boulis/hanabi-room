@@ -7,7 +7,9 @@ const nameInput = document.getElementById('name-input');
 
 const PLAYER_KEY = 'hanabi-room.playerId';
 const NAME_KEY = 'hanabi-room.name';
+const ART_KEY = 'hanabi-room.useArt';
 nameInput.value = localStorage.getItem(NAME_KEY) || '';
+let useArt = localStorage.getItem(ART_KEY) === 'on';
 
 let ws = null;
 let playerId = localStorage.getItem(PLAYER_KEY) || null;
@@ -183,6 +185,21 @@ function renderGame() {
     div.innerHTML = `<strong>${k}</strong>${val}`;
     meta.append(div);
   }
+  const artItem = document.createElement('label');
+  artItem.className = 'meta-item meta-toggle';
+  const artLabel = document.createElement('strong');
+  artLabel.textContent = 'Card art';
+  artItem.append(artLabel);
+  const artBox = document.createElement('input');
+  artBox.type = 'checkbox';
+  artBox.checked = useArt;
+  artBox.addEventListener('change', () => {
+    useArt = artBox.checked;
+    localStorage.setItem(ART_KEY, useArt ? 'on' : 'off');
+    render();
+  });
+  artItem.append(artBox);
+  meta.append(artItem);
 
   if (v.status === 'finished') {
     const banner = document.createElement('div');
@@ -342,7 +359,7 @@ function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
   if (card.colorClued || card.numberClued) el.classList.add('clued');
   if (card.colorClued) el.classList.add('clued-color');
   if (card.numberClued) el.classList.add('clued-number');
-  if (faceColor && faceNumber) {
+  if (useArt && faceColor && faceNumber) {
     el.style.setProperty('--card-svg', `url('/cards/${faceColor}-${faceNumber}.svg')`);
     el.style.backgroundImage = 'var(--card-svg)';
   }
