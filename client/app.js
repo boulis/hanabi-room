@@ -352,21 +352,23 @@ function deriveCardDisplay(card, view) {
 function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
   const isMine = ownerIndex === view.viewerIndex;
   const { faceColor, faceNumber, possibleColorList, possibleNumberList, noInfo } = deriveCardDisplay(card, view);
+  const showArt = useArt && !!faceColor && faceNumber != null;
   const el = document.createElement('div');
   el.className = 'card';
   if (!faceColor) el.classList.add('face-down');
-  if (faceColor) el.dataset.color = faceColor;
+  if (faceColor && !showArt) el.dataset.color = faceColor;
   if (card.colorClued || card.numberClued) el.classList.add('clued');
   if (card.colorClued) el.classList.add('clued-color');
   if (card.numberClued) el.classList.add('clued-number');
-  if (useArt && faceColor && faceNumber) {
+  if (showArt) {
+    el.classList.add('art');
     el.style.setProperty('--card-svg', `url('/cards/${faceColor}-${faceNumber}.svg')`);
     el.style.backgroundImage = 'var(--card-svg)';
   }
 
   const face = document.createElement('div');
   face.className = 'card-face';
-  face.textContent = faceNumber != null ? String(faceNumber) : '';
+  face.textContent = (faceNumber != null && !showArt) ? String(faceNumber) : '';
   el.append(face);
 
   if (noInfo) {
