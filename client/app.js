@@ -140,7 +140,12 @@ function renderLobby() {
   listEl.innerHTML = '';
   for (const p of view.players) {
     const li = document.createElement('div');
-    li.textContent = `${p.name}${p.id === view.hostId ? ' (host)' : ''}${p.online ? '' : ' (offline)'}`;
+    const tags = [];
+    if (p.id === playerId) tags.push('you');
+    if (p.id === view.hostId) tags.push('host');
+    if (!p.online) tags.push('offline');
+    const tagStr = tags.length ? ` (${tags.join(', ')})` : '';
+    li.textContent = `${p.name} [${p.id}]${tagStr}`;
     listEl.append(li);
   }
   const isHost = view.hostId === playerId;

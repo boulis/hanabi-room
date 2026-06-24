@@ -97,7 +97,14 @@ wss.on('connection', (ws) => {
     try {
       switch (msg.type) {
         case 'join': {
-          const player = joinRoom(room, { name: msg.name, playerId: msg.playerId });
+          const takenByOther = !!msg.playerId && [...connections.values()].some(
+            (c) => c !== conn && c.playerId === msg.playerId,
+          );
+          const player = joinRoom(room, {
+            name: msg.name,
+            playerId: msg.playerId,
+            takenByOther,
+          });
           conn.playerId = player.id;
           send(ws, { type: 'identity', playerId: player.id });
           broadcastSync();

@@ -70,6 +70,32 @@ test('viewFor exposes abandonVotes count and self-vote flag', () => {
   assert.equal(bobView.abandonVotes.me, false);
 });
 
+test('join: a second player claiming an already-active id is given a fresh seat', () => {
+  const room = createRoom();
+  const first = joinRoom(room, { name: 'Alice' });
+  const colliding = joinRoom(room, { name: 'Bob', playerId: first.id, takenByOther: true });
+  assert.notEqual(colliding.id, first.id);
+  assert.equal(room.players.length, 2);
+  assert.equal(room.hostId, first.id, 'host stays with the first joiner');
+});
+
+test('join: same id without an active conflict restores the seat (reconnect)', () => {
+  const room = createRoom();
+  const first = joinRoom(room, { name: 'Alice' });
+  const reconnected = joinRoom(room, { name: 'Alice', playerId: first.id });
+  assert.equal(reconnected.id, first.id);
+  assert.equal(room.players.length, 1);
+});
+
+test('join: ids are non-sequential random tokens', () => {
+  const room = createRoom();
+  const a = joinRoom(room, { name: 'A' });
+  const b = joinRoom(room, { name: 'B' });
+  assert.notEqual(a.id, 'p1');
+  assert.notEqual(b.id, 'p2');
+  assert.ok(a.id.length >= 6);
+});
+
 test('startGame stores the seed and lets it propagate to view when finished', () => {
   const { room, alice } = setupRoom();
   assert.equal(room.state.seed, 12345);

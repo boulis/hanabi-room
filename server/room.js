@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { createInitialState } from './game.js';
 import {
   GameError,
@@ -31,11 +32,8 @@ export function createRoom() {
   };
 }
 
-function nextPlayerId(room) {
-  let i = 1;
-  const used = new Set(room.players.map((p) => p.id));
-  while (used.has(`p${i}`)) i++;
-  return `p${i}`;
+function newPlayerId() {
+  return randomUUID().slice(0, 8);
 }
 
 function findPlayer(room, playerId) {
@@ -47,8 +45,8 @@ function playerIndex(room, playerId) {
   return room.state.players.findIndex((p) => p.id === playerId);
 }
 
-export function joinRoom(room, { name, playerId }) {
-  if (playerId) {
+export function joinRoom(room, { name, playerId, takenByOther = false }) {
+  if (playerId && !takenByOther) {
     const existing = findPlayer(room, playerId);
     if (existing) {
       existing.name = name || existing.name;
@@ -60,7 +58,7 @@ export function joinRoom(room, { name, playerId }) {
     throw new GameError('Game already in progress; cannot join', 'in_progress');
   }
   if (room.players.length >= 5) throw new GameError('Room is full', 'room_full');
-  const id = nextPlayerId(room);
+  const id = newPlayerId();
   const player = { id, name: name || id, online: true };
   room.players.push(player);
   if (!room.hostId) room.hostId = id;
