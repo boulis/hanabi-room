@@ -113,6 +113,9 @@ document.getElementById('new-game-button').addEventListener('click', () => {
 document.getElementById('abandon-button').addEventListener('click', () => {
   send({ type: 'abandon' });
 });
+document.getElementById('undo-button').addEventListener('click', () => {
+  send({ type: 'undo' });
+});
 
 function render() {
   if (!view) return;
@@ -241,6 +244,8 @@ function renderGame() {
   renderDiscard();
   const newGameBtn = document.getElementById('new-game-button');
   newGameBtn.hidden = !(v.hostId === playerId && v.status === 'finished');
+  const undoBtn = document.getElementById('undo-button');
+  undoBtn.hidden = !v.canUndo;
   const abandonBtn = document.getElementById('abandon-button');
   if (v.status === 'playing' && v.abandonVotes) {
     abandonBtn.hidden = false;

@@ -12,6 +12,7 @@ import {
   joinRoom,
   leaveRoom,
   startGame,
+  undoLast,
   viewFor,
   voteAbandon,
 } from './room.js';
@@ -131,6 +132,12 @@ wss.on('connection', (ws) => {
         case 'abandon': {
           if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
           voteAbandon(room, conn.playerId);
+          broadcastSync();
+          break;
+        }
+        case 'undo': {
+          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          undoLast(room, conn.playerId);
           broadcastSync();
           break;
         }

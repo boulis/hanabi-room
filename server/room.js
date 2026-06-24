@@ -29,8 +29,11 @@ export function createRoom() {
     sockets: new Map(),
     replayWritten: false,
     abandonVotes: new Set(),
+    undoStack: [],
   };
 }
+
+const UNDOABLE_ACTIONS = new Set(['play', 'discard', 'hint']);
 
 function newPlayerId() {
   return randomUUID().slice(0, 8);
@@ -112,6 +115,7 @@ export function startGame(room, playerId, { seed } = {}) {
   room.phase = 'playing';
   room.replayWritten = false;
   room.abandonVotes.clear();
+  room.undoStack = [];
 }
 
 export function voteAbandon(room, playerId) {
@@ -128,6 +132,7 @@ export function voteAbandon(room, playerId) {
     room.state = null;
     room.replayWritten = false;
     room.abandonVotes.clear();
+    room.undoStack = [];
     return { abandoned: true };
   }
   return { abandoned: false };
@@ -149,26 +154,51 @@ export async function applyAction(room, playerId, action) {
   if (room.phase !== 'playing') throw new GameError('No active game', 'no_game');
   const idx = playerIndex(room, playerId);
   if (idx < 0) throw new GameError('Not in this game', 'not_seated');
-  switch (action.type) {
-    case 'play':
-      playAction(room.state, idx, action.cardIndex);
-      break;
-    case 'discard':
-      discardAction(room.state, idx, action.cardIndex);
-      break;
-    case 'hint':
-      hintAction(room.state, idx, action.toPlayerIndex, action.hintType, action.value);
-      break;
-    case 'annotate':
-      annotateAction(room.state, idx, action.cardId, {
-        guarded: action.guarded,
-        note: action.note,
-      });
-      break;
-    default:
-      throw new GameError(`Unknown action: ${action.type}`, 'bad_action');
+
+  let snapshotPushed = false;
+  if (UNDOABLE_ACTIONS.has(action.type)) {
+    room.undoStack.push({ playerId, snapshot: structuredClone(room.state) });
+    snapshotPushed = true;
+  }
+  try {
+    switch (action.type) {
+      case 'play':
+        playAction(room.state, idx, action.cardIndex);
+        break;
+      case 'discard':
+        discardAction(room.state, idx, action.cardIndex);
+        break;
+      case 'hint':
+        hintAction(room.state, idx, action.toPlayerIndex, action.hintType, action.value);
+        break;
+      case 'annotate':
+        annotateAction(room.state, idx, action.cardId, {
+          guarded: action.guarded,
+          note: action.note,
+        });
+        break;
+      default:
+        throw new GameError(`Unknown action: ${action.type}`, 'bad_action');
+    }
+  } catch (err) {
+    if (snapshotPushed) room.undoStack.pop();
+    throw err;
   }
   await maybeWriteReplay(room);
+}
+
+export function undoLast(room, playerId) {
+  if (room.phase !== 'playing') throw new GameError('No active game', 'no_game');
+  const top = room.undoStack[room.undoStack.length - 1];
+  if (!top) throw new GameError('Nothing to undo', 'nothing_to_undo');
+  if (top.playerId !== playerId) {
+    throw new GameError('Only the player who took the most recent action can undo it', 'not_your_undo');
+  }
+  room.undoStack.pop();
+  room.state = top.snapshot;
+  if (room.state.status === 'playing') {
+    room.replayWritten = false;
+  }
 }
 
 export function viewFor(room, playerId) {
@@ -184,5 +214,7 @@ export function viewFor(room, playerId) {
     threshold: ABANDON_THRESHOLD,
     me: playerId ? room.abandonVotes.has(playerId) : false,
   };
+  const topUndo = room.undoStack[room.undoStack.length - 1];
+  v.canUndo = !!(topUndo && topUndo.playerId === playerId);
   return v;
 }
