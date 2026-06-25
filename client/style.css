@@ -92,6 +92,21 @@ input, select {
   font: inherit;
 }
 
+.game-toprow {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+.game-toprow #game-meta { flex: 1; }
+.game-toprow #undo-button {
+  align-self: stretch;
+  padding: 0.4rem 1rem;
+  font-weight: 600;
+  border-color: #2b6ad1;
+  color: #2b6ad1;
+}
+.game-toprow #undo-button:hover { background: rgba(43, 106, 209, 0.1); }
+
 #game-meta {
   display: flex;
   flex-wrap: wrap;

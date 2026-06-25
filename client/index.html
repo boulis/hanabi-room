@@ -57,13 +57,15 @@
       </section>
 
       <section id="game-screen" class="screen" hidden>
-        <div id="game-meta"></div>
+        <div class="game-toprow">
+          <div id="game-meta"></div>
+          <button id="undo-button" type="button" hidden>Undo my last action</button>
+        </div>
         <div id="game-piles"></div>
         <div id="game-hands"></div>
         <div id="game-log"></div>
         <div id="game-discard"></div>
         <div class="game-footer">
-          <button id="undo-button" type="button" hidden>Undo my last action</button>
           <button id="abandon-button" type="button" hidden>Abandon game</button>
           <button id="new-game-button" type="button" hidden>Start a new game</button>
         </div>
