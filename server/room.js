@@ -48,8 +48,8 @@ function playerIndex(room, playerId) {
   return room.state.players.findIndex((p) => p.id === playerId);
 }
 
-export function joinRoom(room, { name, playerId, takenByOther = false }) {
-  if (playerId && !takenByOther) {
+export function joinRoom(room, { name, playerId }) {
+  if (playerId) {
     const existing = findPlayer(room, playerId);
     if (existing) {
       existing.name = name || existing.name;

@@ -72,13 +72,13 @@ test('viewFor exposes abandonVotes count and self-vote flag', () => {
   assert.equal(bobView.abandonVotes.me, false);
 });
 
-test('join: a second player claiming an already-active id is given a fresh seat', () => {
+test('join: a second connection sharing an id reuses the same seat (duplicate tab)', () => {
   const room = createRoom();
   const first = joinRoom(room, { name: 'Alice' });
-  const colliding = joinRoom(room, { name: 'Bob', playerId: first.id, takenByOther: true });
-  assert.notEqual(colliding.id, first.id);
-  assert.equal(room.players.length, 2);
-  assert.equal(room.hostId, first.id, 'host stays with the first joiner');
+  const second = joinRoom(room, { name: 'Alice', playerId: first.id });
+  assert.equal(second.id, first.id, 'duplicate tab takes the same seat');
+  assert.equal(room.players.length, 1);
+  assert.equal(room.hostId, first.id);
 });
 
 test('join: same id without an active conflict restores the seat (reconnect)', () => {
