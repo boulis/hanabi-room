@@ -26,7 +26,7 @@ function rigHand(state, playerIndex, cards) {
     possibleNumbers: [1, 2, 3, 4, 5],
     colorClued: false,
     numberClued: false,
-    annotations: { note: '', guarded: false },
+    lastHint: null, annotations: { note: '', guarded: false },
   }));
 }
 
@@ -117,6 +117,26 @@ test('hint: empty hint allowed when allowEmptyHints is true; still costs a token
   }
 });
 
+test('hint: lastHint is set on touched cards and cleared elsewhere; replaced by the next hint', () => {
+  const s = freshState();
+  rigHand(s, 1, [
+    { color: 'red', number: 2 },
+    { color: 'blue', number: 2 },
+    { color: 'red', number: 4 },
+  ]);
+  hintAction(s, 0, 1, 'color', 'red');
+  assert.deepEqual(s.players[1].hand[0].lastHint, { type: 'color', value: 'red' });
+  assert.equal(s.players[1].hand[1].lastHint, null);
+  assert.deepEqual(s.players[1].hand[2].lastHint, { type: 'color', value: 'red' });
+
+  s.currentPlayer = 0;
+  s.hintTokens = 8;
+  hintAction(s, 0, 1, 'number', 2);
+  assert.deepEqual(s.players[1].hand[0].lastHint, { type: 'number', value: 2 });
+  assert.deepEqual(s.players[1].hand[1].lastHint, { type: 'number', value: 2 });
+  assert.equal(s.players[1].hand[2].lastHint, null, 'previous color marker cleared on next hint');
+});
+
 test('hint: empty color hint allowed when allowEmptyHints is true; rules out that color', () => {
   const s = freshState({ allowEmptyHints: true });
   rigHand(s, 1, [
@@ -173,7 +193,7 @@ test('hint: rainbow cards are touched by any color hint and resolve via two hint
       possibleNumbers: [1, 2, 3, 4, 5],
       colorClued: false,
       numberClued: false,
-      annotations: { note: '', guarded: false },
+      lastHint: null, annotations: { note: '', guarded: false },
     },
     {
       id: 2001,
@@ -183,7 +203,7 @@ test('hint: rainbow cards are touched by any color hint and resolve via two hint
       possibleNumbers: [1, 2, 3, 4, 5],
       colorClued: false,
       numberClued: false,
-      annotations: { note: '', guarded: false },
+      lastHint: null, annotations: { note: '', guarded: false },
     },
   ];
   hintAction(s, 0, 1, 'color', 'red');
@@ -213,7 +233,7 @@ test('hint: black cards are never touched by color hints; black itself is unhint
       possibleNumbers: [1, 2, 3, 4, 5],
       colorClued: false,
       numberClued: false,
-      annotations: { note: '', guarded: false },
+      lastHint: null, annotations: { note: '', guarded: false },
     },
     {
       id: 3001,
@@ -223,7 +243,7 @@ test('hint: black cards are never touched by color hints; black itself is unhint
       possibleNumbers: [1, 2, 3, 4, 5],
       colorClued: false,
       numberClued: false,
-      annotations: { note: '', guarded: false },
+      lastHint: null, annotations: { note: '', guarded: false },
     },
   ];
   hintAction(s, 0, 1, 'color', 'red');
@@ -249,7 +269,7 @@ test('reverse-direction stack: 5 is playable on empty pile, then 4, etc.', () =>
       possibleNumbers: [],
       colorClued: false,
       numberClued: false,
-      annotations: { note: '', guarded: false },
+      lastHint: null, annotations: { note: '', guarded: false },
     },
   ];
   playAction(s, 0, 0);
@@ -266,7 +286,7 @@ test('reverse-direction stack: 5 is playable on empty pile, then 4, etc.', () =>
       possibleNumbers: [],
       colorClued: false,
       numberClued: false,
-      annotations: { note: '', guarded: false },
+      lastHint: null, annotations: { note: '', guarded: false },
     },
   ];
   playAction(s, 1, 0);
@@ -297,7 +317,7 @@ test('end: standard rule plays exactly N more turns after deck empties', () => {
     possibleColors: ['red', 'yellow', 'green', 'blue', 'white'],
     possibleNumbers: [1, 2, 3, 4, 5],
     colorClued: false, numberClued: false,
-    annotations: { note: '', guarded: false },
+    lastHint: null, annotations: { note: '', guarded: false },
   }];
   rigHand(s, 0, [{ color: 'red', number: 3 }, { color: 'blue', number: 4 }]);
   rigHand(s, 1, [{ color: 'green', number: 2 }, { color: 'white', number: 1 }]);

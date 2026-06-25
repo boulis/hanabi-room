@@ -25,6 +25,7 @@ export function makeCard(id, color, number, variant) {
     possibleNumbers: [1, 2, 3, 4, 5],
     colorClued: false,
     numberClued: false,
+    lastHint: null,
     annotations: { note: '', guarded: false },
   };
 }

@@ -209,6 +209,11 @@ export function hintAction(state, fromIndex, toIndex, hintType, value) {
     throw new GameError('Hint must touch at least one card', 'empty_hint');
   }
 
+  const touchedSet = new Set(touchedIndexes);
+  targetHand.forEach((card, i) => {
+    card.lastHint = touchedSet.has(i) ? { type: hintType, value } : null;
+  });
+
   state.hintTokens -= 1;
   pushLog(state, {
     type: 'hint',

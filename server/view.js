@@ -8,6 +8,7 @@ function viewCard(card, { revealIdentity, isOwner, shareGuarded }) {
     possibleNumbers: card.possibleNumbers.slice(),
     colorClued: card.colorClued,
     numberClued: card.numberClued,
+    lastHint: card.lastHint ? { ...card.lastHint } : null,
   };
   if (revealIdentity) {
     out.color = card.color;

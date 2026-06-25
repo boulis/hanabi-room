@@ -380,6 +380,18 @@ function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
     const possible = renderPossible(possibleColorList ?? [], possibleNumberList ?? [], false);
     if (possible) el.append(possible);
   }
+  if (card.lastHint) {
+    const marker = document.createElement('div');
+    marker.className = 'latest-hint ' + card.lastHint.type;
+    if (card.lastHint.type === 'color') {
+      marker.dataset.color = card.lastHint.value;
+      marker.title = `Latest hint: ${card.lastHint.value}`;
+    } else {
+      marker.textContent = String(card.lastHint.value);
+      marker.title = `Latest hint: ${card.lastHint.value}`;
+    }
+    el.append(marker);
+  }
   if (card.annotations?.guarded) {
     const dot = document.createElement('div');
     dot.className = 'guard-dot';
