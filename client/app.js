@@ -316,7 +316,7 @@ function deriveCardDisplay(card, view) {
     let knownColor = null;
     if (card.possibleColors.length === 1 && card.possibleColors[0] === 'black') {
       knownColor = 'black';
-    } else if (visibleColors.length === 1) {
+    } else if (visibleColors.length === 1 && !card.possibleColors.includes('black')) {
       knownColor = visibleColors[0];
     }
     const knownNumber = card.possibleNumbers.length === 1 ? card.possibleNumbers[0] : null;
