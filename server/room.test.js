@@ -130,6 +130,17 @@ test('rename: rejects unknown player', () => {
   assert.throws(() => renamePlayer(room, 'nobody', 'Anyone'), GameError);
 });
 
+test('rename: updates the in-game name when a game is in progress', () => {
+  const room = createRoom();
+  const a = joinRoom(room, { name: 'Alice' });
+  joinRoom(room, { name: 'Bob' });
+  startGame(room, a.id, { seed: 1 });
+  renamePlayer(room, a.id, 'Alicia');
+  assert.equal(a.name, 'Alicia');
+  const inGame = room.state.players.find((p) => p.id === a.id);
+  assert.equal(inGame.name, 'Alicia');
+});
+
 test('join: name-based recovery does not steal an online seat', () => {
   const room = createRoom();
   const alice = joinRoom(room, { name: 'Alice' });

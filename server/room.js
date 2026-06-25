@@ -84,7 +84,12 @@ export function renamePlayer(room, playerId, newName) {
   if (!p) throw new GameError('Not in this room', 'not_seated');
   const trimmed = typeof newName === 'string' ? newName.trim() : '';
   if (!trimmed) throw new GameError('Name cannot be empty', 'bad_name');
-  p.name = trimmed.slice(0, 24);
+  const truncated = trimmed.slice(0, 24);
+  p.name = truncated;
+  if (room.state) {
+    const inGame = room.state.players.find((sp) => sp.id === playerId);
+    if (inGame) inGame.name = truncated;
+  }
   return p;
 }
 
