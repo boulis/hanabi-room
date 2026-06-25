@@ -298,7 +298,7 @@ input, select {
 .swatch[data-color="blue"]   { background: var(--color-blue); }
 .swatch[data-color="white"]  { background: var(--color-white); }
 .swatch[data-color="rainbow"]{ background: var(--color-rainbow); }
-.swatch[data-color="black"]  { background: var(--color-black); }
+.swatch[data-color="black"]  { background: var(--color-black); box-shadow: 0 0 0 1px #fff, 0 0 0 2px rgba(0,0,0,0.5); border-color: transparent; }
 
 .card-actions {
   display: flex;

@@ -322,7 +322,7 @@ function deriveCardDisplay(card, view) {
     const knownNumber = card.possibleNumbers.length === 1 ? card.possibleNumbers[0] : null;
     let possibleColorList = null;
     if (!knownColor && visibleColors.length < nonBlackColorCount) {
-      possibleColorList = visibleColors;
+      possibleColorList = card.possibleColors.slice();
     }
     let possibleNumberList = null;
     if (!knownNumber && card.possibleNumbers.length < 5) {
@@ -343,7 +343,7 @@ function deriveCardDisplay(card, view) {
   return {
     faceColor: card.color,
     faceNumber: card.number,
-    possibleColorList: noInfo ? null : visibleColors,
+    possibleColorList: noInfo ? null : card.possibleColors.slice(),
     possibleNumberList: noInfo ? null : card.possibleNumbers,
     noInfo,
   };
