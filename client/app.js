@@ -121,6 +121,7 @@ document.getElementById('undo-button').addEventListener('click', () => {
 
 function render() {
   if (!view) return;
+  renderHeader();
   if (!playerId) {
     show(joinScreen);
     return;
@@ -132,6 +133,31 @@ function render() {
     show(gameScreen);
     renderGame();
   }
+}
+
+function renderHeader() {
+  const meEl = document.getElementById('me');
+  const players = view?.players ?? [];
+  const me = players.find((p) => p.id === playerId);
+  if (!me) {
+    meEl.hidden = true;
+    return;
+  }
+  meEl.hidden = false;
+  meEl.textContent = `playing as ${me.name}`;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = 'change';
+  btn.addEventListener('click', () => {
+    const next = prompt('Your name:', me.name);
+    if (next == null) return;
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === me.name) return;
+    send({ type: 'rename', name: trimmed });
+    localStorage.setItem(NAME_KEY, trimmed);
+    nameInput.value = trimmed;
+  });
+  meEl.append(' ', btn);
 }
 
 function show(screen) {

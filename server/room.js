@@ -79,6 +79,15 @@ export function joinRoom(room, { name, playerId }) {
   return player;
 }
 
+export function renamePlayer(room, playerId, newName) {
+  const p = findPlayer(room, playerId);
+  if (!p) throw new GameError('Not in this room', 'not_seated');
+  const trimmed = typeof newName === 'string' ? newName.trim() : '';
+  if (!trimmed) throw new GameError('Name cannot be empty', 'bad_name');
+  p.name = trimmed.slice(0, 24);
+  return p;
+}
+
 export function leaveRoom(room, playerId) {
   const p = findPlayer(room, playerId);
   if (!p) return;

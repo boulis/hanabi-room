@@ -28,11 +28,23 @@ header {
   align-items: baseline;
   padding: 0.6rem 1rem;
   border-bottom: 1px solid var(--border);
+  gap: 1rem;
 }
 
 header h1 {
   margin: 0;
   font-size: 1.05rem;
+}
+
+#me {
+  flex: 1;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+#me button {
+  padding: 0 0.4rem;
+  font-size: 0.75rem;
+  margin-left: 0.25rem;
 }
 
 #status {

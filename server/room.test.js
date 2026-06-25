@@ -6,6 +6,7 @@ import {
   createRoom,
   joinRoom,
   leaveRoom,
+  renamePlayer,
   startGame,
   undoLast,
   viewFor,
@@ -106,6 +107,27 @@ test('join: name-based recovery is case-insensitive and trims whitespace', () =>
   const recovered = joinRoom(room, { name: '  alice ' });
   assert.equal(recovered.id, alice.id);
   assert.equal(recovered.name, '  alice ', 'name is updated to what the user typed');
+});
+
+test('rename: updates the player name without changing the seat', () => {
+  const room = createRoom();
+  const a = joinRoom(room, { name: 'Alice' });
+  renamePlayer(room, a.id, '  Alicia ');
+  assert.equal(a.name, 'Alicia');
+  assert.equal(room.players.length, 1);
+});
+
+test('rename: rejects empty or whitespace-only names', () => {
+  const room = createRoom();
+  const a = joinRoom(room, { name: 'Alice' });
+  assert.throws(() => renamePlayer(room, a.id, ''), GameError);
+  assert.throws(() => renamePlayer(room, a.id, '   '), GameError);
+  assert.throws(() => renamePlayer(room, a.id, null), GameError);
+});
+
+test('rename: rejects unknown player', () => {
+  const room = createRoom();
+  assert.throws(() => renamePlayer(room, 'nobody', 'Anyone'), GameError);
 });
 
 test('join: name-based recovery does not steal an online seat', () => {
