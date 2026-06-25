@@ -5,6 +5,7 @@ import {
   applyAction,
   createRoom,
   joinRoom,
+  leaveRoom,
   startGame,
   undoLast,
   viewFor,
@@ -79,6 +80,42 @@ test('join: a second connection sharing an id reuses the same seat (duplicate ta
   assert.equal(second.id, first.id, 'duplicate tab takes the same seat');
   assert.equal(room.players.length, 1);
   assert.equal(room.hostId, first.id);
+});
+
+test('join: name-based recovery reclaims an offline seat mid-game', () => {
+  const room = createRoom();
+  const alice = joinRoom(room, { name: 'Alice' });
+  const bob = joinRoom(room, { name: 'Bob' });
+  startGame(room, alice.id, { seed: 1 });
+  // Alice closes her window — connection drops, leaveRoom marks her offline.
+  leaveRoom(room, alice.id);
+  assert.equal(alice.online, false);
+  // Alice reopens with fresh storage: no playerId, types her name again.
+  const recovered = joinRoom(room, { name: 'Alice' });
+  assert.equal(recovered.id, alice.id, 'same seat returned');
+  assert.equal(recovered.online, true);
+  assert.equal(room.players.length, 2);
+});
+
+test('join: name-based recovery is case-insensitive and trims whitespace', () => {
+  const room = createRoom();
+  const alice = joinRoom(room, { name: 'Alice' });
+  joinRoom(room, { name: 'Bob' });
+  startGame(room, alice.id, { seed: 1 });
+  leaveRoom(room, alice.id);
+  const recovered = joinRoom(room, { name: '  alice ' });
+  assert.equal(recovered.id, alice.id);
+  assert.equal(recovered.name, '  alice ', 'name is updated to what the user typed');
+});
+
+test('join: name-based recovery does not steal an online seat', () => {
+  const room = createRoom();
+  const alice = joinRoom(room, { name: 'Alice' });
+  joinRoom(room, { name: 'Bob' });
+  startGame(room, alice.id, { seed: 1 });
+  // Alice is still online; a stranger types 'Alice' mid-game.
+  assert.throws(() => joinRoom(room, { name: 'Alice' }), GameError);
+  assert.equal(room.players.length, 2);
 });
 
 test('join: same id without an active conflict restores the seat (reconnect)', () => {

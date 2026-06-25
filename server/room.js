@@ -57,6 +57,17 @@ export function joinRoom(room, { name, playerId }) {
       return existing;
     }
   }
+  const normName = name ? name.trim().toLowerCase() : '';
+  if (normName) {
+    const offlineMatch = room.players.find(
+      (p) => !p.online && p.name.trim().toLowerCase() === normName,
+    );
+    if (offlineMatch) {
+      offlineMatch.name = name;
+      offlineMatch.online = true;
+      return offlineMatch;
+    }
+  }
   if (room.phase !== 'lobby') {
     throw new GameError('Game already in progress; cannot join', 'in_progress');
   }
