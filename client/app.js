@@ -415,17 +415,25 @@ function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
     const possible = renderPossible(possibleColorList ?? [], possibleNumberList ?? [], false);
     if (possible) el.append(possible);
   }
-  if (card.lastHint) {
-    const marker = document.createElement('div');
-    marker.className = 'latest-hint ' + card.lastHint.type;
-    if (card.lastHint.type === 'color') {
-      marker.dataset.color = card.lastHint.value;
-      marker.title = `Latest hint: ${card.lastHint.value}`;
-    } else {
-      marker.textContent = String(card.lastHint.value);
-      marker.title = `Latest hint: ${card.lastHint.value}`;
-    }
-    el.append(marker);
+  if (card.lastHints && card.lastHints.length) {
+    // Newest is the last entry. Render newest at center, older fanning to the
+    // right with overlap; newest sits on top via descending z-index.
+    const total = card.lastHints.length;
+    card.lastHints.forEach((h, i) => {
+      const ageFromNewest = total - 1 - i;
+      const marker = document.createElement('div');
+      marker.className = 'latest-hint ' + h.hintType;
+      if (h.hintType === 'color') {
+        marker.dataset.color = h.value;
+        marker.title = `Hint: ${h.value}`;
+      } else {
+        marker.textContent = String(h.value);
+        marker.title = `Hint: ${h.value}`;
+      }
+      marker.style.setProperty('--hint-offset', String(ageFromNewest));
+      marker.style.zIndex = String(10 - ageFromNewest);
+      el.append(marker);
+    });
   }
   if (card.annotations?.guarded) {
     const dot = document.createElement('div');

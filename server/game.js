@@ -25,7 +25,7 @@ export function makeCard(id, color, number, variant) {
     possibleNumbers: [1, 2, 3, 4, 5],
     colorClued: false,
     numberClued: false,
-    lastHint: null,
+    lastHints: [],
     annotations: { note: '', guarded: false },
   };
 }
@@ -88,7 +88,16 @@ export function createInitialState({
     finalTurn: null,
     log: [],
     endReason: null,
+    nextHintIndex: 0,
   };
+}
+
+export const HINT_MARK_LIMIT = 4;
+
+export function dropHintMarkFromHand(hand, hintIndex) {
+  for (const card of hand) {
+    card.lastHints = card.lastHints.filter((h) => h.hintIndex !== hintIndex);
+  }
 }
 
 export function pileTop(state, color) {

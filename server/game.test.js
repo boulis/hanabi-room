@@ -58,7 +58,7 @@ test('cards are built with full possible-color/number arrays for the variant', (
   assert.deepEqual(sample.possibleNumbers, [1, 2, 3, 4, 5]);
   assert.equal(sample.colorClued, false);
   assert.equal(sample.numberClued, false);
-  assert.equal(sample.lastHint, null);
+  assert.deepEqual(sample.lastHints, []);
   assert.deepEqual(sample.annotations, { note: '', guarded: false });
 });
 

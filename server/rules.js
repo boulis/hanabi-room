@@ -1,7 +1,9 @@
 import { getVariant } from './variants.js';
 import {
+  HINT_MARK_LIMIT,
   MAX_HINT_TOKENS,
   allHandsEmpty,
+  dropHintMarkFromHand,
   maxPossibleScore,
   pileComplete,
   pileDirection,
@@ -87,10 +89,17 @@ function pushLog(state, event) {
   state.log.push({ turn: state.turn, ...event });
 }
 
+function consumeHintMarks(hand, leavingCard) {
+  for (const h of leavingCard.lastHints) {
+    dropHintMarkFromHand(hand, h.hintIndex);
+  }
+}
+
 export function playAction(state, playerIndex, cardIndex) {
   requireTurn(state, playerIndex);
   const card = requireCard(state, playerIndex, cardIndex);
   state.players[playerIndex].hand.splice(cardIndex, 1);
+  consumeHintMarks(state.players[playerIndex].hand, card);
 
   const playable =
     pileDirection(state, card.color) === 'up'
@@ -135,6 +144,7 @@ export function discardAction(state, playerIndex, cardIndex) {
   }
   const card = requireCard(state, playerIndex, cardIndex);
   state.players[playerIndex].hand.splice(cardIndex, 1);
+  consumeHintMarks(state.players[playerIndex].hand, card);
   state.discard.push(card);
   state.hintTokens += 1;
   pushLog(state, {
@@ -209,10 +219,19 @@ export function hintAction(state, fromIndex, toIndex, hintType, value) {
     throw new GameError('Hint must touch at least one card', 'empty_hint');
   }
 
-  const touchedSet = new Set(touchedIndexes);
-  targetHand.forEach((card, i) => {
-    card.lastHint = touchedSet.has(i) ? { type: hintType, value } : null;
-  });
+  const hintIndex = state.nextHintIndex++;
+  for (const i of touchedIndexes) {
+    targetHand[i].lastHints.push({ hintIndex, hintType, value });
+  }
+  // Cap each touched card at HINT_MARK_LIMIT; when a card overflows, drop its
+  // oldest hintIndex from EVERY card in the receiver's hand (a hint mark is
+  // tied to a hint event, not to a single card).
+  for (const i of touchedIndexes) {
+    while (targetHand[i].lastHints.length > HINT_MARK_LIMIT) {
+      const dropped = targetHand[i].lastHints.shift();
+      dropHintMarkFromHand(targetHand, dropped.hintIndex);
+    }
+  }
 
   state.hintTokens -= 1;
   pushLog(state, {

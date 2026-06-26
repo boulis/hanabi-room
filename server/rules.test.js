@@ -26,7 +26,7 @@ function rigHand(state, playerIndex, cards) {
     possibleNumbers: [1, 2, 3, 4, 5],
     colorClued: false,
     numberClued: false,
-    lastHint: null, annotations: { note: '', guarded: false },
+    lastHints: [], annotations: { note: '', guarded: false },
   }));
 }
 
@@ -117,7 +117,7 @@ test('hint: empty hint allowed when allowEmptyHints is true; still costs a token
   }
 });
 
-test('hint: lastHint is set on touched cards and cleared elsewhere; replaced by the next hint', () => {
+test('hint: lastHints marks touched cards only and leaves untouched cards alone', () => {
   const s = freshState();
   rigHand(s, 1, [
     { color: 'red', number: 2 },
@@ -125,16 +125,96 @@ test('hint: lastHint is set on touched cards and cleared elsewhere; replaced by 
     { color: 'red', number: 4 },
   ]);
   hintAction(s, 0, 1, 'color', 'red');
-  assert.deepEqual(s.players[1].hand[0].lastHint, { type: 'color', value: 'red' });
-  assert.equal(s.players[1].hand[1].lastHint, null);
-  assert.deepEqual(s.players[1].hand[2].lastHint, { type: 'color', value: 'red' });
+  assert.equal(s.players[1].hand[0].lastHints.length, 1);
+  assert.deepEqual(s.players[1].hand[0].lastHints[0], { hintIndex: 0, hintType: 'color', value: 'red' });
+  assert.equal(s.players[1].hand[1].lastHints.length, 0);
+  assert.deepEqual(s.players[1].hand[2].lastHints[0], { hintIndex: 0, hintType: 'color', value: 'red' });
+});
 
+test('hint: a second hint accumulates instead of overwriting the previous mark', () => {
+  const s = freshState();
+  rigHand(s, 1, [
+    { color: 'red', number: 2 },
+    { color: 'blue', number: 2 },
+    { color: 'red', number: 4 },
+  ]);
+  hintAction(s, 0, 1, 'color', 'red');
   s.currentPlayer = 0;
   s.hintTokens = 8;
   hintAction(s, 0, 1, 'number', 2);
-  assert.deepEqual(s.players[1].hand[0].lastHint, { type: 'number', value: 2 });
-  assert.deepEqual(s.players[1].hand[1].lastHint, { type: 'number', value: 2 });
-  assert.equal(s.players[1].hand[2].lastHint, null, 'previous color marker cleared on next hint');
+  // Card 0 was touched by both → two marks. Card 1 only by number=2. Card 2 only by red.
+  assert.equal(s.players[1].hand[0].lastHints.length, 2);
+  assert.equal(s.players[1].hand[0].lastHints[1].hintType, 'number');
+  assert.equal(s.players[1].hand[1].lastHints.length, 1);
+  assert.equal(s.players[1].hand[2].lastHints.length, 1, 'untouched-by-new-hint card keeps its old mark');
+});
+
+test('play: leaving the hand consumes the hint marks from every other card it touched', () => {
+  const s = freshState();
+  rigHand(s, 1, [
+    { color: 'red', number: 1 },
+    { color: 'red', number: 4 },
+    { color: 'blue', number: 2 },
+  ]);
+  hintAction(s, 0, 1, 'color', 'red'); // touches cards 0 and 2... wait, card 0 is red-1, card 2 is blue-2 → touches 0 only.
+  // Actually the hand has red-1, red-4, blue-2 → red touches indexes 0 and 1.
+  assert.deepEqual(
+    s.players[1].hand.map((c) => c.lastHints.length),
+    [1, 1, 0],
+  );
+  // Player 1 plays card 0 (red-1, legal). The shared hint mark must vanish from card 1 too.
+  s.currentPlayer = 1;
+  playAction(s, 1, 0);
+  // After the play, hand[0] is the former hand[1] (red-4) — its mark should be gone.
+  assert.equal(s.players[1].hand[0].lastHints.length, 0, 'mark consumed from sibling');
+});
+
+test('discard: also consumes hint marks from other cards in the same hint', () => {
+  const s = freshState();
+  s.hintTokens = 4;
+  rigHand(s, 1, [
+    { color: 'red', number: 2 },
+    { color: 'red', number: 3 },
+    { color: 'blue', number: 5 },
+  ]);
+  hintAction(s, 0, 1, 'color', 'red');
+  s.currentPlayer = 1;
+  discardAction(s, 1, 0);
+  assert.equal(s.players[1].hand[0].lastHints.length, 0, 'sibling mark cleared by discard');
+});
+
+test('hint cap: a 5th hint on the same card drops the oldest hint from all cards it touched', () => {
+  const s = freshState();
+  s.hintTokens = 8;
+  rigHand(s, 1, [
+    // Card A: matches all 5 hints below (we use number=2 four times, then a color hint to drop the oldest).
+    { color: 'red', number: 2 },
+    // Card B: matches only the first hint (number=2), so it shares hintIndex 0 with A.
+    { color: 'green', number: 2 },
+  ]);
+  const giveHint = (type, value) => {
+    s.currentPlayer = 0;
+    s.hintTokens = 8;
+    hintAction(s, 0, 1, type, value);
+  };
+  giveHint('number', 2);   // hintIndex 0 — touches A and B
+  giveHint('color', 'red');// 1 — A only
+  giveHint('number', 2);   // 2 — A and B (no-op for B's possibles since already narrowed). Touches both.
+
+  // After 3 hints, A has [0,1,2], B has [0,2]. Now push two more 'red' hints on A only.
+  // We need a 5th to overflow A. Use 'red' hints again — they only touch A.
+  giveHint('color', 'red');// 3 — A only
+  giveHint('color', 'red');// 4 — A only; A's stack would be [0,1,2,3,4]; cap drops hintIndex 0.
+
+  assert.equal(s.players[1].hand[0].lastHints.length, 4, 'A capped at 4');
+  assert.ok(
+    s.players[1].hand[0].lastHints.every((h) => h.hintIndex !== 0),
+    'A no longer carries hintIndex 0',
+  );
+  assert.ok(
+    s.players[1].hand[1].lastHints.every((h) => h.hintIndex !== 0),
+    'B also lost hintIndex 0 (cap propagates across the hand)',
+  );
 });
 
 test('hint: empty color hint allowed when allowEmptyHints is true; rules out that color', () => {
@@ -193,7 +273,7 @@ test('hint: rainbow cards are touched by any color hint and resolve via two hint
       possibleNumbers: [1, 2, 3, 4, 5],
       colorClued: false,
       numberClued: false,
-      lastHint: null, annotations: { note: '', guarded: false },
+      lastHints: [], annotations: { note: '', guarded: false },
     },
     {
       id: 2001,
@@ -203,7 +283,7 @@ test('hint: rainbow cards are touched by any color hint and resolve via two hint
       possibleNumbers: [1, 2, 3, 4, 5],
       colorClued: false,
       numberClued: false,
-      lastHint: null, annotations: { note: '', guarded: false },
+      lastHints: [], annotations: { note: '', guarded: false },
     },
   ];
   hintAction(s, 0, 1, 'color', 'red');
@@ -233,7 +313,7 @@ test('hint: black cards are never touched by color hints; black itself is unhint
       possibleNumbers: [1, 2, 3, 4, 5],
       colorClued: false,
       numberClued: false,
-      lastHint: null, annotations: { note: '', guarded: false },
+      lastHints: [], annotations: { note: '', guarded: false },
     },
     {
       id: 3001,
@@ -243,7 +323,7 @@ test('hint: black cards are never touched by color hints; black itself is unhint
       possibleNumbers: [1, 2, 3, 4, 5],
       colorClued: false,
       numberClued: false,
-      lastHint: null, annotations: { note: '', guarded: false },
+      lastHints: [], annotations: { note: '', guarded: false },
     },
   ];
   hintAction(s, 0, 1, 'color', 'red');
@@ -269,7 +349,7 @@ test('reverse-direction stack: 5 is playable on empty pile, then 4, etc.', () =>
       possibleNumbers: [],
       colorClued: false,
       numberClued: false,
-      lastHint: null, annotations: { note: '', guarded: false },
+      lastHints: [], annotations: { note: '', guarded: false },
     },
   ];
   playAction(s, 0, 0);
@@ -286,7 +366,7 @@ test('reverse-direction stack: 5 is playable on empty pile, then 4, etc.', () =>
       possibleNumbers: [],
       colorClued: false,
       numberClued: false,
-      lastHint: null, annotations: { note: '', guarded: false },
+      lastHints: [], annotations: { note: '', guarded: false },
     },
   ];
   playAction(s, 1, 0);
@@ -317,7 +397,7 @@ test('end: standard rule plays exactly N more turns after deck empties', () => {
     possibleColors: ['red', 'yellow', 'green', 'blue', 'white'],
     possibleNumbers: [1, 2, 3, 4, 5],
     colorClued: false, numberClued: false,
-    lastHint: null, annotations: { note: '', guarded: false },
+    lastHints: [], annotations: { note: '', guarded: false },
   }];
   rigHand(s, 0, [{ color: 'red', number: 3 }, { color: 'blue', number: 4 }]);
   rigHand(s, 1, [{ color: 'green', number: 2 }, { color: 'white', number: 1 }]);
