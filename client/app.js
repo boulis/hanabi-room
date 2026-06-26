@@ -112,17 +112,11 @@ function readSeedInput() {
 document.getElementById('start-button').addEventListener('click', () => {
   send({ type: 'start', seed: readSeedInput() });
 });
-document.getElementById('new-game-button').addEventListener('click', () => {
-  send({ type: 'start', seed: readSeedInput() });
-});
 document.getElementById('abandon-button').addEventListener('click', () => {
   send({ type: 'abandon' });
 });
 document.getElementById('undo-button').addEventListener('click', () => {
   send({ type: 'undo' });
-});
-document.getElementById('export-deck-button').addEventListener('click', () => {
-  send({ type: 'exportDeck' });
 });
 
 function triggerDownload(data, filename) {
@@ -250,7 +244,34 @@ function renderGame() {
     const banner = document.createElement('div');
     banner.className = 'banner ' + (v.endReason === 'perfect' ? 'win' : v.endReason === 'fuses' ? 'loss' : '');
     const seedText = v.seed != null ? `  seed: ${v.seed}` : '';
-    banner.textContent = `Game over — ${v.endReason}. Final score: ${v.score}/${v.maxScore}.${seedText}`;
+    const text = document.createElement('span');
+    text.className = 'banner-text';
+    text.textContent = `Game over — ${v.endReason}. Final score: ${v.score}/${v.maxScore}.${seedText}`;
+    banner.append(text);
+
+    const actions = document.createElement('div');
+    actions.className = 'banner-actions';
+    const isHost = v.hostId === playerId;
+    if (isHost) {
+      const newBtn = document.createElement('button');
+      newBtn.type = 'button';
+      newBtn.textContent = 'Start a new game';
+      newBtn.addEventListener('click', () => send({ type: 'start', seed: readSeedInput() }));
+      actions.append(newBtn);
+
+      const lobbyBtn = document.createElement('button');
+      lobbyBtn.type = 'button';
+      lobbyBtn.textContent = 'Back to lobby';
+      lobbyBtn.addEventListener('click', () => send({ type: 'returnToLobby' }));
+      actions.append(lobbyBtn);
+    }
+    const exportBtn = document.createElement('button');
+    exportBtn.type = 'button';
+    exportBtn.textContent = 'Export deck order';
+    exportBtn.addEventListener('click', () => send({ type: 'exportDeck' }));
+    actions.append(exportBtn);
+
+    banner.append(actions);
     meta.append(banner);
   }
 
@@ -318,10 +339,6 @@ function renderGame() {
   }
 
   renderDiscard();
-  const newGameBtn = document.getElementById('new-game-button');
-  newGameBtn.hidden = !(v.hostId === playerId && v.status === 'finished');
-  const exportBtn = document.getElementById('export-deck-button');
-  exportBtn.hidden = v.status !== 'finished';
   const undoBtn = document.getElementById('undo-button');
   undoBtn.hidden = !v.canUndo;
   const abandonBtn = document.getElementById('abandon-button');

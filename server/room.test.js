@@ -11,6 +11,7 @@ import {
   leaveRoom,
   renamePlayer,
   resumeRoom,
+  returnToLobby,
   startGame,
   undoLast,
   viewFor,
@@ -268,6 +269,38 @@ test('undo: failed action does not leave a stale snapshot behind', async () => {
     room.state.hintTokens = 8;
     await assert.rejects(applyAction(room, alice.id, { type: 'discard', cardIndex: 0 }));
     assert.equal(room.undoStack.length, 0);
+  });
+});
+
+test('returnToLobby: host can drop back to lobby after a finished game', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    await voteAbandon(room, alice.id);
+    await voteAbandon(room, bob.id);
+    assert.equal(room.state.status, 'finished');
+    returnToLobby(room, alice.id);
+    assert.equal(room.phase, 'lobby');
+    assert.equal(room.state, null);
+    assert.equal(room.savePath, null);
+    assert.equal(room.undoStack.length, 0);
+    assert.equal(room.players.length, 2, 'players stay in the room');
+  });
+});
+
+test('returnToLobby: non-host cannot trigger', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    await voteAbandon(room, alice.id);
+    await voteAbandon(room, bob.id);
+    assert.throws(() => returnToLobby(room, bob.id), GameError);
+    assert.equal(room.phase, 'playing');
+  });
+});
+
+test('returnToLobby: refused while the game is still in progress', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice } = await setupRoom();
+    assert.throws(() => returnToLobby(room, alice.id), GameError);
   });
 });
 

@@ -162,6 +162,20 @@ export async function startGame(room, playerId, { seed } = {}) {
   }
 }
 
+export function returnToLobby(room, playerId) {
+  if (room.phase !== 'playing' || room.state?.status !== 'finished') {
+    throw new GameError('Game is not finished', 'not_finished');
+  }
+  if (room.hostId !== playerId) {
+    throw new GameError('Only the host can return to lobby', 'not_host');
+  }
+  room.phase = 'lobby';
+  room.state = null;
+  room.undoStack = [];
+  room.savePath = null;
+  room.abandonVotes.clear();
+}
+
 export async function voteAbandon(room, playerId) {
   if (room.phase !== 'playing') throw new GameError('No active game', 'no_game');
   if (room.state.status !== 'playing') throw new GameError('Game is not in progress', 'not_playing');

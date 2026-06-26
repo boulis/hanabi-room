@@ -15,6 +15,7 @@ import {
   leaveRoom,
   renamePlayer,
   resumeRoom,
+  returnToLobby,
   startGame,
   undoLast,
   viewFor,
@@ -182,6 +183,12 @@ wss.on('connection', (ws) => {
         case 'undo': {
           if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
           await undoLast(room, conn.playerId);
+          broadcastSync();
+          break;
+        }
+        case 'returnToLobby': {
+          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          returnToLobby(room, conn.playerId);
           broadcastSync();
           break;
         }
