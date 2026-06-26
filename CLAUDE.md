@@ -25,12 +25,13 @@ Requires Node ≥ 20 (uses ES modules and `node:test`).
   - `game.js` — deck building, initial state, pile/score helpers (pure)
   - `rules.js` — action handlers (play/discard/hint/annotate), turn rotation, end conditions (pure mutations on state)
   - `view.js` — filters state into a per-viewer view (hides own card identities; gates the guarded-card flag on the share option; the note is owner-only and never shared)
-  - `replay.js` — writes a JSON log file under `replays/` when a game finishes
+  - `savedGame.js` — append-only JSONL game log under `saved-games/`, plus reconstruction (`loadSave`) used by the resume flow
   - `room.js` — lobby + game-room model: who's host, who's joined, action dispatch
   - `index.js` — HTTP static server + WebSocket transport; thin shell over `room.js`
   Keep game logic in `game.js` / `rules.js` and view filtering in `view.js`. The transport doesn't know game rules.
 - **Per-card hint state**: every card carries `possibleColors`, `possibleNumbers`, `colorClued`, `numberClued`, and `annotations` (a `{ note, guarded }` pair). Formal hints update the constraints; annotations are owner-controlled metadata. Cards in your own hand are sent to you WITHOUT their `color`/`number` fields, but WITH the inferred constraints — that's how you see "this could be red or rainbow" without seeing what it actually is. The `note` field is always private to the owner. The `guarded` boolean is visible to the owner; other players see it only when the lobby option `shareGuarded` is on.
-- **Replays**: finished games are written to `replays/` as JSON. Directory is gitignored; created at runtime.
+- **Saved games**: every started game opens a new `saved-games/<timestamp>-<variant>.jsonl` file. The first line is a `start` header (seed, variant, options, players, hostId); each subsequent line is an event (`action`, `undo`, `rename`, `abandon-vote`, `end`). Writes use `fs.appendFile`, so a crash leaves at most one truncated trailing line which the loader tolerates. A natural game-end appends an `end` line but keeps the file open — if a player then undoes the game-ending move, the continuation is appended past the `end` and supersedes it on replay. Abandon is the only definitive close. Directory is gitignored; created at runtime.
+- **Resume on `npm start`**: on boot the server scans `saved-games/` for files whose last event isn't `end` (incomplete or continued past a previous end), and prompts the host in the terminal to pick one of the 3 most recent (or to type a filename). The prompt is skipped silently when stdin isn't a TTY or when `HANABI_NO_RESUME_PROMPT=1`. Resumed players come back marked `online:false`; their browsers reattach to the same seat via the existing `playerId`/name reconnect path. Tests can override the directory with `HANABI_SAVED_DIR`.
 
 ## Hint mechanics
 
@@ -79,11 +80,11 @@ Client → server:
 
 There is intentionally **no reset action**. To start over before a natural end, two players have to independently click "Abandon game" — that makes a single accidental click harmless. The host can also paste an old seed into the lobby's seed input to re-deal the same deck.
 
-## Seeds and replays
+## Seeds and saved games
 
-- Every game has a 32-bit unsigned `seed`. If the host doesn't supply one, the server generates a random seed at game start. The seed is stored on the game state and embedded in the replay file under `replays/`.
+- Every game has a 32-bit unsigned `seed`. If the host doesn't supply one, the server generates a random seed at game start. The seed is stored on the game state and embedded in the save header under `saved-games/`.
 - The seed is NOT exposed in the live view while a game is in progress — it would leak the entire deck. It only appears in the view (and is shown on the game-over banner) once `status === 'finished'`.
-- To re-deal an identical starting hand, the host pastes the seed into the lobby's seed input before clicking Start. Replays today are static JSON dumps (no step-through viewer yet).
+- To re-deal an identical starting hand, the host pastes the seed into the lobby's seed input before clicking Start. There is no step-through viewer yet; the save files are the source of truth for reconstruction.
 
 The server broadcasts a fresh `sync` to all connections after every state change. Each client renders from `sync.view` — no client-side game state apart from the latest view.
 

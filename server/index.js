@@ -1,6 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { VARIANTS } from './variants.js';
@@ -12,11 +13,13 @@ import {
   joinRoom,
   leaveRoom,
   renamePlayer,
+  resumeRoom,
   startGame,
   undoLast,
   viewFor,
   voteAbandon,
 } from './room.js';
+import { listIncompleteSaves, savedDir } from './savedGame.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIR = path.resolve(__dirname, '..', 'client');
@@ -32,8 +35,54 @@ const MIME = {
   '.json': 'application/json',
 };
 
-const room = createRoom();
+let room = createRoom();
 const connections = new Map();
+
+function prompt(question) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer);
+    });
+  });
+}
+
+async function maybeResumeRoom() {
+  if (process.env.HANABI_NO_RESUME_PROMPT === '1') return null;
+  const incomplete = await listIncompleteSaves();
+  if (incomplete.length === 0) return null;
+  if (!process.stdin.isTTY) {
+    console.log(
+      `(${incomplete.length} incomplete save(s) in saved-games/; skipping resume prompt — no TTY)`,
+    );
+    return null;
+  }
+  const top = incomplete.slice(0, 3);
+  console.log('\nIncomplete saved games found:');
+  for (let i = 0; i < top.length; i++) {
+    const s = top[i];
+    const variant = s.variantId.padEnd(22);
+    console.log(`  [${i + 1}] ${s.basename}  ${variant}  ${s.moves} moves  (${s.playerNames.join(', ')})`);
+  }
+  const ans = (await prompt('Resume which? [1-3, filename, or Enter to skip]: ')).trim();
+  if (!ans) return null;
+  let filePath = null;
+  const n = Number(ans);
+  if (Number.isInteger(n) && n >= 1 && n <= top.length) {
+    filePath = top[n - 1].filePath;
+  } else {
+    filePath = path.isAbsolute(ans) ? ans : path.join(savedDir(), ans);
+  }
+  try {
+    const resumed = await resumeRoom(filePath);
+    console.log(`Resumed ${path.basename(filePath)} — ${resumed.players.length} players, turn ${resumed.state.turn}.`);
+    return resumed;
+  } catch (err) {
+    console.error(`Could not resume ${filePath}: ${err.message}`);
+    return null;
+  }
+}
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -113,7 +162,7 @@ wss.on('connection', (ws) => {
         }
         case 'start': {
           if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
-          startGame(room, conn.playerId, { seed: msg.seed });
+          await startGame(room, conn.playerId, { seed: msg.seed });
           broadcastSync();
           break;
         }
@@ -125,19 +174,19 @@ wss.on('connection', (ws) => {
         }
         case 'abandon': {
           if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
-          voteAbandon(room, conn.playerId);
+          await voteAbandon(room, conn.playerId);
           broadcastSync();
           break;
         }
         case 'undo': {
           if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
-          undoLast(room, conn.playerId);
+          await undoLast(room, conn.playerId);
           broadcastSync();
           break;
         }
         case 'rename': {
           if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
-          renamePlayer(room, conn.playerId, msg.name);
+          await renamePlayer(room, conn.playerId, msg.name);
           broadcastSync();
           break;
         }
@@ -160,6 +209,9 @@ wss.on('connection', (ws) => {
     broadcastSync();
   });
 });
+
+const resumed = await maybeResumeRoom();
+if (resumed) room = resumed;
 
 server.listen(PORT, HOST, () => {
   console.log(`hanabi-room listening on http://${HOST}:${PORT}`);

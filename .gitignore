@@ -1,4 +1,4 @@
 node_modules/
-replays/
+saved-games/
 *.log
 .DS_Store

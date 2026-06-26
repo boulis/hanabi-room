@@ -8,7 +8,12 @@ import {
   playAction,
 } from './rules.js';
 import { lobbyView, viewState } from './view.js';
-import { writeReplay } from './replay.js';
+import {
+  appendEvent,
+  closeSave,
+  loadSave,
+  openSave,
+} from './savedGame.js';
 
 const DEFAULT_OPTIONS = {
   variantId: 'simple',
@@ -27,9 +32,9 @@ export function createRoom() {
     hostId: null,
     state: null,
     sockets: new Map(),
-    replayWritten: false,
     abandonVotes: new Set(),
     undoStack: [],
+    savePath: null,
   };
 }
 
@@ -46,6 +51,24 @@ function findPlayer(room, playerId) {
 function playerIndex(room, playerId) {
   if (room.phase === 'lobby') return room.players.findIndex((p) => p.id === playerId);
   return room.state.players.findIndex((p) => p.id === playerId);
+}
+
+async function safeAppend(room, event) {
+  if (!room.savePath) return;
+  try {
+    await appendEvent(room.savePath, event);
+  } catch (err) {
+    console.error('Failed to append save event:', err);
+  }
+}
+
+async function safeClose(filePath, endReason) {
+  if (!filePath) return;
+  try {
+    await closeSave(filePath, endReason);
+  } catch (err) {
+    console.error('Failed to close save file:', err);
+  }
 }
 
 export function joinRoom(room, { name, playerId }) {
@@ -79,7 +102,7 @@ export function joinRoom(room, { name, playerId }) {
   return player;
 }
 
-export function renamePlayer(room, playerId, newName) {
+export async function renamePlayer(room, playerId, newName) {
   const p = findPlayer(room, playerId);
   if (!p) throw new GameError('Not in this room', 'not_seated');
   const trimmed = typeof newName === 'string' ? newName.trim() : '';
@@ -89,6 +112,7 @@ export function renamePlayer(room, playerId, newName) {
   if (room.state) {
     const inGame = room.state.players.find((sp) => sp.id === playerId);
     if (inGame) inGame.name = truncated;
+    await safeAppend(room, { kind: 'rename', playerId, name: truncated });
   }
   return p;
 }
@@ -123,7 +147,7 @@ export function configureRoom(room, playerId, partial) {
   room.options = next;
 }
 
-export function startGame(room, playerId, { seed } = {}) {
+export async function startGame(room, playerId, { seed } = {}) {
   const isLobby = room.phase === 'lobby';
   const isFinished = room.phase === 'playing' && room.state?.status === 'finished';
   if (!isLobby && !isFinished) throw new GameError('Game in progress', 'in_progress');
@@ -138,41 +162,37 @@ export function startGame(room, playerId, { seed } = {}) {
     seed,
   });
   room.phase = 'playing';
-  room.replayWritten = false;
   room.abandonVotes.clear();
   room.undoStack = [];
+  room.savePath = null;
+  try {
+    room.savePath = await openSave(room.state, room.hostId);
+  } catch (err) {
+    console.error('Failed to open save file:', err);
+  }
 }
 
-export function voteAbandon(room, playerId) {
+export async function voteAbandon(room, playerId) {
   if (room.phase !== 'playing') throw new GameError('No active game', 'no_game');
   if (room.state.status !== 'playing') throw new GameError('Game is not in progress', 'not_playing');
   if (!findPlayer(room, playerId)) throw new GameError('Not in this game', 'not_seated');
+  await safeAppend(room, { kind: 'abandon-vote', playerId });
   if (room.abandonVotes.has(playerId)) {
     room.abandonVotes.delete(playerId);
     return { abandoned: false };
   }
   room.abandonVotes.add(playerId);
   if (room.abandonVotes.size >= ABANDON_THRESHOLD) {
+    const closingPath = room.savePath;
     room.phase = 'lobby';
     room.state = null;
-    room.replayWritten = false;
     room.abandonVotes.clear();
     room.undoStack = [];
+    room.savePath = null;
+    await safeClose(closingPath, 'abandoned');
     return { abandoned: true };
   }
   return { abandoned: false };
-}
-
-async function maybeWriteReplay(room) {
-  if (room.phase !== 'playing') return;
-  if (room.state.status !== 'finished') return;
-  if (room.replayWritten) return;
-  room.replayWritten = true;
-  try {
-    await writeReplay(room.state);
-  } catch (err) {
-    console.error('Failed to write replay:', err);
-  }
 }
 
 export async function applyAction(room, playerId, action) {
@@ -209,10 +229,16 @@ export async function applyAction(room, playerId, action) {
     if (snapshotPushed) room.undoStack.pop();
     throw err;
   }
-  await maybeWriteReplay(room);
+  await safeAppend(room, { kind: 'action', playerId, action });
+  if (room.state.status === 'finished') {
+    // Keep savePath set: an undo + continuation after game-over should still
+    // be persisted. The 'end' line is metadata; further events appended after
+    // it supersede it on replay.
+    await safeAppend(room, { kind: 'end', endReason: room.state.endReason });
+  }
 }
 
-export function undoLast(room, playerId) {
+export async function undoLast(room, playerId) {
   if (room.phase !== 'playing') throw new GameError('No active game', 'no_game');
   const top = room.undoStack[room.undoStack.length - 1];
   if (!top) throw new GameError('Nothing to undo', 'nothing_to_undo');
@@ -221,9 +247,7 @@ export function undoLast(room, playerId) {
   }
   room.undoStack.pop();
   room.state = top.snapshot;
-  if (room.state.status === 'playing') {
-    room.replayWritten = false;
-  }
+  await safeAppend(room, { kind: 'undo', playerId });
 }
 
 export function viewFor(room, playerId) {
@@ -242,4 +266,28 @@ export function viewFor(room, playerId) {
   const topUndo = room.undoStack[room.undoStack.length - 1];
   v.canUndo = !!(topUndo && topUndo.playerId === playerId);
   return v;
+}
+
+export async function resumeRoom(filePath) {
+  const { header, state, undoStack, abandonVotes } = await loadSave(filePath);
+  if (state.status !== 'playing') {
+    throw new Error(
+      `Cannot resume ${filePath}: game already ended (${state.endReason || 'unknown'})`,
+    );
+  }
+  const room = createRoom();
+  room.phase = 'playing';
+  room.options = {
+    variantId: header.variantId,
+    endRule: header.endRule,
+    shareGuarded: header.shareGuarded,
+    allowEmptyHints: header.allowEmptyHints,
+  };
+  room.players = state.players.map((p) => ({ id: p.id, name: p.name, online: false }));
+  room.hostId = header.hostId;
+  room.state = state;
+  room.undoStack = undoStack;
+  room.abandonVotes = abandonVotes;
+  room.savePath = filePath;
+  return room;
 }

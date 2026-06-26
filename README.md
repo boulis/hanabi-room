@@ -56,9 +56,13 @@ To test on a single machine, open different browsers (Chrome + Firefox) — each
 
 The repo ships with a set of SVG cards in `client/cards/` (filenames like `red-3.svg`, `rainbow-5.svg`, `black-1.svg`, `back.svg`). To swap them, drop your own SVGs in there with the same filenames; the client picks them up automatically when the *Card art* toggle is on.
 
-## Replays
+## Saved games
 
-Every finished game writes a JSON log to `replays/<timestamp>-<variant>.json` containing the seed, players, full action log, and final score. The directory is gitignored. There's no replay viewer UI yet — these are useful for `git log`-style review and for re-running a game via the seed input.
+Every started game writes an append-only JSONL log to `saved-games/<timestamp>-<variant>.jsonl`. The first line is a header (seed, variant, options, players, host); each subsequent line records one event (action, undo, rename, abandon-vote, end). The directory is gitignored.
+
+On `npm start`, if any save's last event isn't an `end` (server crash, killed mid-game, or someone undid the game-ending move and kept playing) the host is prompted in the terminal to resume one of the 3 most recent — or type a filename for any other. Press Enter to skip. The prompt is silently skipped when stdin isn't a TTY (e.g. backgrounded for the smoke test) or when `HANABI_NO_RESUME_PROMPT=1` is set. After a resume, players reconnect by reopening their browser; their existing seat is recovered by `playerId` or by name.
+
+There's no step-through replay viewer yet; the JSONL is the source of truth for reconstruction, and re-running a finished game from scratch only needs the seed (paste it into the lobby).
 
 ## Development
 
