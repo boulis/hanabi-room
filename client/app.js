@@ -354,7 +354,7 @@ function renderPlayerRow(player, index, isMyTurn) {
     head.append(marker);
   }
   const latest = latestActionEntry(view.log);
-  if (latest && latest.playerIndex === index) {
+  if (latest && bubbleTargetIndex(latest) === index) {
     const notable = notableEntry(latest);
     if (notable) {
       const bubble = document.createElement('span');
@@ -601,6 +601,9 @@ function latestActionEntry(log) {
 
 function notableEntry(e) {
   if (!e) return null;
+  if (e.type === 'hint' && e.touchedIndexes && e.touchedIndexes.length === 0) {
+    return { kind: 'hint-empty', text: 'No cards touched' };
+  }
   if (e.type === 'play' && e.wasTouched === false) {
     return { kind: 'play-unclued', text: 'Played an untouched card' };
   }
@@ -611,6 +614,13 @@ function notableEntry(e) {
     }
   }
   return null;
+}
+
+function bubbleTargetIndex(e) {
+  if (!e) return -1;
+  // Hints flag the receiver (the row whose cards visibly got nothing).
+  if (e.type === 'hint') return e.toIndex;
+  return e.playerIndex;
 }
 
 function renderLatestAction(v) {
