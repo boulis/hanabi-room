@@ -324,9 +324,12 @@ function renderGame() {
 
   const hands = document.getElementById('game-hands');
   hands.innerHTML = '';
+  hands.dataset.count = String(v.players.length);
   const isMyTurn = v.currentPlayer === v.viewerIndex && v.status === 'playing';
   for (let i = 0; i < v.players.length; i++) {
-    hands.append(renderPlayerRow(v.players[i], i, isMyTurn));
+    const row = renderPlayerRow(v.players[i], i, isMyTurn);
+    row.dataset.seat = String(i);
+    hands.append(row);
   }
 
   const log = document.getElementById('game-log');

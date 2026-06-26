@@ -297,6 +297,48 @@ input, select {
   gap: 0.75rem;
 }
 
+/* 2 players: a single vertical column — same as before. */
+#game-hands[data-count="2"] { grid-template-areas: "p0" "p1"; }
+
+/* 3+ players use a 2-column grid; player rows below shrink to fit their cards
+   (instead of stretching across the page) so the border hugs the hand. */
+#game-hands[data-count="3"] {
+  grid-template-columns: 1fr 1fr;
+  grid-template-areas:
+    "p0 p1"
+    "p2 p2";
+}
+#game-hands[data-count="4"] {
+  grid-template-columns: 1fr 1fr;
+  grid-template-areas:
+    "p0 p1"
+    "p3 p2";
+}
+#game-hands[data-count="5"] {
+  grid-template-columns: 1fr 1fr;
+  grid-template-areas:
+    "p0 p1"
+    "p4 p2"
+    "p3 p3";
+}
+
+#game-hands:not([data-count="2"]) .player-row { width: fit-content; }
+
+#game-hands[data-count="3"] .player-row[data-seat="0"] { grid-area: p0; justify-self: start; }
+#game-hands[data-count="3"] .player-row[data-seat="1"] { grid-area: p1; justify-self: end; }
+#game-hands[data-count="3"] .player-row[data-seat="2"] { grid-area: p2; justify-self: center; }
+
+#game-hands[data-count="4"] .player-row[data-seat="0"] { grid-area: p0; justify-self: start; }
+#game-hands[data-count="4"] .player-row[data-seat="1"] { grid-area: p1; justify-self: end; }
+#game-hands[data-count="4"] .player-row[data-seat="2"] { grid-area: p2; justify-self: end; }
+#game-hands[data-count="4"] .player-row[data-seat="3"] { grid-area: p3; justify-self: start; }
+
+#game-hands[data-count="5"] .player-row[data-seat="0"] { grid-area: p0; justify-self: start; }
+#game-hands[data-count="5"] .player-row[data-seat="1"] { grid-area: p1; justify-self: end; }
+#game-hands[data-count="5"] .player-row[data-seat="2"] { grid-area: p2; justify-self: end; }
+#game-hands[data-count="5"] .player-row[data-seat="3"] { grid-area: p3; justify-self: center; }
+#game-hands[data-count="5"] .player-row[data-seat="4"] { grid-area: p4; justify-self: start; }
+
 .player-row {
   border: 1px solid var(--border);
   border-radius: 6px;
