@@ -237,6 +237,15 @@ function renderGame() {
 
   const piles = document.getElementById('game-piles');
   piles.innerHTML = '';
+  const tokensWrap = document.createElement('div');
+  tokensWrap.className = 'hint-tokens';
+  tokensWrap.title = `${v.hintTokens} / 8 hint tokens available`;
+  for (let i = 0; i < 8; i++) {
+    const t = document.createElement('div');
+    t.className = 'hint-token' + (i < v.hintTokens ? '' : ' empty');
+    tokensWrap.append(t);
+  }
+  piles.append(tokensWrap);
   const discardsByColor = Object.fromEntries(v.suits.map((s) => [s.color, []]));
   for (const c of v.discard) discardsByColor[c.color].push(c.number);
   for (const color of Object.keys(discardsByColor)) {
