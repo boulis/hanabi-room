@@ -265,28 +265,57 @@ test('log: chopIndex is -1 when every card in hand is touched', () => {
   assert.equal(e.chopIndex, -1);
 });
 
-test('hint cap: a 5th hint on the same card drops the oldest hint from all cards it touched', () => {
+test('hint: a repeat of the same (type, value) replaces the prior mark on that card', () => {
   const s = freshState();
   s.hintTokens = 8;
   rigHand(s, 1, [
-    // Card A: matches all 5 hints below (we use number=2 four times, then a color hint to drop the oldest).
-    { color: 'red', number: 2 },
-    // Card B: matches only the first hint (number=2), so it shares hintIndex 0 with A.
-    { color: 'green', number: 2 },
+    { color: 'red', number: 5 },
+    { color: 'blue', number: 5 },
   ]);
   const giveHint = (type, value) => {
     s.currentPlayer = 0;
     s.hintTokens = 8;
     hintAction(s, 0, 1, type, value);
   };
-  giveHint('number', 2);   // hintIndex 0 — touches A and B
-  giveHint('color', 'red');// 1 — A only
-  giveHint('number', 2);   // 2 — A and B (no-op for B's possibles since already narrowed). Touches both.
+  giveHint('number', 5); // hintIndex 0 — both
+  giveHint('color', 'red'); // 1 — card 0 only
+  giveHint('number', 5); // 2 — repeat of hint 0 → replaces on both cards
 
-  // After 3 hints, A has [0,1,2], B has [0,2]. Now push two more 'red' hints on A only.
-  // We need a 5th to overflow A. Use 'red' hints again — they only touch A.
-  giveHint('color', 'red');// 3 — A only
-  giveHint('color', 'red');// 4 — A only; A's stack would be [0,1,2,3,4]; cap drops hintIndex 0.
+  assert.equal(s.players[1].hand[0].lastHints.length, 2, 'card 0 still has just two marks');
+  assert.deepEqual(
+    s.players[1].hand[0].lastHints.map((h) => h.hintType + ':' + h.value),
+    ['color:red', 'number:5'],
+    'card 0: number=5 mark replaced (idx 2 now), red kept',
+  );
+  assert.equal(s.players[1].hand[0].lastHints[1].hintIndex, 2);
+  assert.equal(s.players[1].hand[1].lastHints.length, 1);
+  assert.equal(s.players[1].hand[1].lastHints[0].hintIndex, 2, 'card 1: number=5 replaced too');
+});
+
+test('hint cap: a 5th distinct hint on the same card drops the oldest hint from all cards it touched', () => {
+  const s = freshState({ variantId: 'rainbow' });
+  s.hintTokens = 8;
+  rigHand(s, 1, [
+    // A: rainbow card — touched by every color hint AND its number, so 5
+    // distinct hints can stack on it.
+    { color: 'rainbow', number: 2 },
+    // B: red 2 — shares hintIndex 0 (number=2) and hintIndex 1 (color=red).
+    { color: 'red', number: 2 },
+  ]);
+  // The variant has 6 possible colors including rainbow; rigHand's default
+  // 5-color list would empty out after the first cross-suit hint. Fix it.
+  for (const c of s.players[1].hand) c.possibleColors = ['red', 'yellow', 'green', 'blue', 'white', 'rainbow'];
+
+  const giveHint = (type, value) => {
+    s.currentPlayer = 0;
+    s.hintTokens = 8;
+    hintAction(s, 0, 1, type, value);
+  };
+  giveHint('number', 2);     // 0 — A and B
+  giveHint('color', 'red');  // 1 — A (rainbow=all) and B
+  giveHint('color', 'yellow'); // 2 — A only
+  giveHint('color', 'green');  // 3 — A only
+  giveHint('color', 'blue');   // 4 — A only → A stack [0..4] → cap drops hintIndex 0
 
   assert.equal(s.players[1].hand[0].lastHints.length, 4, 'A capped at 4');
   assert.ok(

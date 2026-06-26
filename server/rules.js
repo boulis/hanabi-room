@@ -247,6 +247,13 @@ export function hintAction(state, fromIndex, toIndex, hintType, value) {
 
   const hintIndex = state.nextHintIndex++;
   for (const i of touchedIndexes) {
+    // If this card already carries a mark with the same (hintType, value),
+    // drop the older one so the repeat hint replaces it instead of stacking
+    // a duplicate dot. Only this card is affected; other cards that shared
+    // the old hintIndex keep their marker.
+    targetHand[i].lastHints = targetHand[i].lastHints.filter(
+      (h) => !(h.hintType === hintType && h.value === value),
+    );
     targetHand[i].lastHints.push({ hintIndex, hintType, value });
   }
   // Cap each touched card at HINT_MARK_LIMIT; when a card overflows, drop its
