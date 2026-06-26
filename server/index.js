@@ -9,8 +9,10 @@ import { exportDeckOrder } from './game.js';
 import { GameError } from './rules.js';
 import {
   applyAction,
+  clearImportedDeck,
   configureRoom,
   createRoom,
+  importDeck,
   joinRoom,
   leaveRoom,
   movePlayer,
@@ -202,6 +204,18 @@ wss.on('connection', (ws) => {
           const slug = data.date.replace(/[T:]/g, '-');
           const filename = `hanabi-deck-${slug}-${room.state.variantId}.json`;
           send(ws, { type: 'deckExport', data, filename });
+          break;
+        }
+        case 'importDeck': {
+          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          importDeck(room, conn.playerId, msg.deck);
+          broadcastSync();
+          break;
+        }
+        case 'clearImportedDeck': {
+          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          clearImportedDeck(room, conn.playerId);
+          broadcastSync();
           break;
         }
         case 'movePlayer': {

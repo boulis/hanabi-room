@@ -6,7 +6,10 @@ import path from 'node:path';
 import { GameError } from './rules.js';
 import {
   applyAction,
+  clearImportedDeck,
+  configureRoom,
   createRoom,
+  importDeck,
   joinRoom,
   leaveRoom,
   movePlayer,
@@ -18,6 +21,7 @@ import {
   viewFor,
   voteAbandon,
 } from './room.js';
+import { exportDeckOrder } from './game.js';
 
 async function withTmpSaveDir(fn) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'hanabi-saves-'));
@@ -270,6 +274,102 @@ test('undo: failed action does not leave a stale snapshot behind', async () => {
     room.state.hintTokens = 8;
     await assert.rejects(applyAction(room, alice.id, { type: 'discard', cardIndex: 0 }));
     assert.equal(room.undoStack.length, 0);
+  });
+});
+
+function buildVariantDeckStrings(variantId) {
+  // Mimic buildDeck without importing it: enumerate suits in their declared
+  // distribution order. The actual order doesn't matter for these tests as
+  // long as it's a valid multiset.
+  const variants = {
+    simple: [
+      ['red', [1, 1, 1, 2, 2, 3, 3, 4, 4, 5]],
+      ['yellow', [1, 1, 1, 2, 2, 3, 3, 4, 4, 5]],
+      ['green', [1, 1, 1, 2, 2, 3, 3, 4, 4, 5]],
+      ['blue', [1, 1, 1, 2, 2, 3, 3, 4, 4, 5]],
+      ['white', [1, 1, 1, 2, 2, 3, 3, 4, 4, 5]],
+    ],
+  };
+  const out = [];
+  for (const [color, dist] of variants[variantId]) {
+    for (const n of dist) out.push(`${color}_${n}`);
+  }
+  return out;
+}
+
+test('importDeck: host can import a valid deck; clears after start', async () => {
+  await withTmpSaveDir(async () => {
+    const room = createRoom();
+    const a = joinRoom(room, { name: 'Alice' });
+    joinRoom(room, { name: 'Bob' });
+    const deck = buildVariantDeckStrings('simple');
+    importDeck(room, a.id, deck);
+    assert.equal(room.importedDeck.length, 50);
+    await startGame(room, a.id, {});
+    assert.equal(room.importedDeck, null, 'imported deck is one-shot');
+    // The actual game state should reflect the imported draw order.
+    assert.deepEqual(room.state.initialDeckCards, deck);
+  });
+});
+
+test('importDeck: rejects a deck with wrong size for the variant', () => {
+  const room = createRoom();
+  const a = joinRoom(room, { name: 'Alice' });
+  joinRoom(room, { name: 'Bob' });
+  assert.throws(() => importDeck(room, a.id, ['red_1']), /doesn't match variant/);
+});
+
+test('importDeck: rejects a deck with the wrong multiset for the variant', () => {
+  const room = createRoom();
+  const a = joinRoom(room, { name: 'Alice' });
+  joinRoom(room, { name: 'Bob' });
+  const deck = buildVariantDeckStrings('simple');
+  // Swap a red_1 for an extra red_5 (now wrong multiset).
+  const i = deck.indexOf('red_1');
+  deck[i] = 'red_5';
+  assert.throws(() => importDeck(room, a.id, deck), /expects/);
+});
+
+test('importDeck: rejects when the host changes variant after import', async () => {
+  await withTmpSaveDir(async () => {
+    const room = createRoom();
+    const a = joinRoom(room, { name: 'Alice' });
+    joinRoom(room, { name: 'Bob' });
+    importDeck(room, a.id, buildVariantDeckStrings('simple'));
+    configureRoom(room, a.id, { variantId: 'rainbow' });
+    await assert.rejects(() => startGame(room, a.id, {}), /Imported deck doesn't fit/);
+    assert.equal(room.importedDeck.length, 50, 'import stays until cleared or accepted');
+  });
+});
+
+test('importDeck: clearImportedDeck removes the pending import', () => {
+  const room = createRoom();
+  const a = joinRoom(room, { name: 'Alice' });
+  joinRoom(room, { name: 'Bob' });
+  importDeck(room, a.id, buildVariantDeckStrings('simple'));
+  clearImportedDeck(room, a.id);
+  assert.equal(room.importedDeck, null);
+});
+
+test('importDeck: non-host cannot import or clear', () => {
+  const room = createRoom();
+  const a = joinRoom(room, { name: 'Alice' });
+  const b = joinRoom(room, { name: 'Bob' });
+  assert.throws(() => importDeck(room, b.id, buildVariantDeckStrings('simple')), GameError);
+  importDeck(room, a.id, buildVariantDeckStrings('simple'));
+  assert.throws(() => clearImportedDeck(room, b.id), GameError);
+});
+
+test('exportDeckOrder of an imported game round-trips the imported list', async () => {
+  await withTmpSaveDir(async () => {
+    const room = createRoom();
+    const a = joinRoom(room, { name: 'Alice' });
+    joinRoom(room, { name: 'Bob' });
+    const deck = buildVariantDeckStrings('simple');
+    importDeck(room, a.id, deck);
+    await startGame(room, a.id, {});
+    const out = exportDeckOrder(room.state);
+    assert.deepEqual(out.cards, deck);
   });
 });
 

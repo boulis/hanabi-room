@@ -51,6 +51,7 @@ export function createInitialState({
   allowEmptyHints = false,
   players,
   seed,
+  deckCards,
 }) {
   if (!['standard', 'lax'].includes(endRule)) {
     throw new Error(`Unknown endRule: ${endRule}`);
@@ -60,7 +61,13 @@ export function createInitialState({
   }
   const finalSeed = seed != null ? (seed >>> 0) : Math.floor(Math.random() * 0x100000000);
   const variant = getVariant(variantId);
-  const deck = shuffledDeck(variantId, finalSeed);
+  // deckCards = explicit draw-order list (from an import or save header).
+  // Without it, shuffle from the seed.
+  const deck = deckCards
+    ? cardsFromDrawOrder(variantId, deckCards)
+    : shuffledDeck(variantId, finalSeed);
+  // Capture the draw-order snapshot before dealing pops anything off.
+  const initialDeckCards = deck.slice().reverse().map((c) => `${c.color}_${c.number}`);
   const size = handSize(players.length);
   const hands = players.map(() => []);
   for (let i = 0; i < size; i++) {
@@ -90,11 +97,66 @@ export function createInitialState({
     nextHintIndex: 0,
     startedAt: Date.now(),
     endedAt: null,
+    initialDeckCards,
   };
 }
 
 export function shuffledDeck(variantId, seed) {
   return shuffle(buildDeck(variantId), mulberry32(seed));
+}
+
+function tallyCards(cards) {
+  const t = Object.create(null);
+  for (const c of cards) {
+    const k = `${c.color}_${c.number}`;
+    t[k] = (t[k] || 0) + 1;
+  }
+  return t;
+}
+
+export function validateDeckAgainstVariant(variantId, drawOrderStrings) {
+  if (!Array.isArray(drawOrderStrings)) {
+    throw new Error('Deck must be an array of "<color>_<number>" strings');
+  }
+  const variant = getVariant(variantId);
+  const expected = [];
+  for (const suit of variant.suits) {
+    for (const n of suit.distribution) expected.push({ color: suit.color, number: n });
+  }
+  if (drawOrderStrings.length !== expected.length) {
+    throw new Error(
+      `Deck size ${drawOrderStrings.length} doesn't match variant ${variantId} (${expected.length} cards)`,
+    );
+  }
+  const parsed = drawOrderStrings.map((s, i) => {
+    const m = typeof s === 'string' ? /^([a-z]+)_([1-5])$/.exec(s) : null;
+    if (!m) throw new Error(`Card ${i + 1} (${JSON.stringify(s)}) is not in <color>_<number> format`);
+    return { color: m[1], number: Number(m[2]) };
+  });
+  const got = tallyCards(parsed);
+  const want = tallyCards(expected);
+  const seen = new Set();
+  for (const k of Object.keys(want)) {
+    seen.add(k);
+    if ((got[k] || 0) !== want[k]) {
+      throw new Error(
+        `Variant ${variantId} expects ${want[k]} ${k}, deck has ${got[k] || 0}`,
+      );
+    }
+  }
+  for (const k of Object.keys(got)) {
+    if (!seen.has(k)) throw new Error(`Variant ${variantId} has no ${k}`);
+  }
+  return parsed;
+}
+
+function cardsFromDrawOrder(variantId, drawOrderStrings) {
+  const variant = getVariant(variantId);
+  const parsed = validateDeckAgainstVariant(variantId, drawOrderStrings);
+  // Reverse: the internal deck array pops from the end, so the first-drawn
+  // card belongs at index length-1.
+  const reversed = parsed.slice().reverse();
+  return reversed.map((c, i) => makeCard(i, c.color, c.number, variant));
 }
 
 function formatLocalDate(d) {
@@ -107,9 +169,14 @@ function formatLocalDate(d) {
 
 export function exportDeckOrder(state) {
   const variant = getVariant(state.variantId);
-  const deck = shuffledDeck(state.variantId, state.seed);
-  // deck.pop() is the next card dealt, so draw order = reversed array.
-  const cards = deck.slice().reverse().map((c) => `${c.color}_${c.number}`);
+  // initialDeckCards is the post-shuffle (or imported) draw order, captured
+  // at game start. Fall back to re-shuffling for any legacy state without it.
+  const cards = state.initialDeckCards
+    ? state.initialDeckCards.slice()
+    : shuffledDeck(state.variantId, state.seed)
+        .slice()
+        .reverse()
+        .map((c) => `${c.color}_${c.number}`);
   const startedAt = state.startedAt ?? Date.now();
   const endedAt = state.endedAt ?? Date.now();
   return {

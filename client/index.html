@@ -52,6 +52,13 @@
             Seed (optional — paste from a previous game to re-deal the same deck)
             <input id="opt-seed" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="random" />
           </label>
+          <div id="import-deck-row">
+            <label class="import-label">
+              Import deck order (optional — JSON exported from a previous game)
+              <input id="import-deck-file" type="file" accept=".json,application/json" />
+            </label>
+            <div id="import-deck-status" hidden></div>
+          </div>
           <button id="start-button" type="button">Start game</button>
         </fieldset>
       </section>

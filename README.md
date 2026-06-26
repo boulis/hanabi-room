@@ -62,6 +62,8 @@ Every started game writes an append-only JSONL log to `saved-games/<timestamp>-<
 
 When a game finishes (perfect, fuses, deck-out, or two-vote abandon) the game-over screen exposes an **Export deck order** button for every player. It downloads a JSON file describing the shuffled deck (variant, start time, duration, final score, ordered card list, and the matched-set description) for use with companion tools.
 
+The lobby also has an **Import deck order** file input so the host can hand-pick the next deck — drop in a JSON file in the same export format and the cards are validated against the selected variant (size + multiset). The pending deck shows in the lobby with a Clear button; it's used by the next game and then cleared (one-shot).
+
 On `npm start`, if any save's last event isn't an `end` (server crash, killed mid-game, or someone undid the game-ending move and kept playing) the host is prompted in the terminal to resume one of the 3 most recent — or type a filename for any other. Press Enter to skip. The prompt is silently skipped when stdin isn't a TTY (e.g. backgrounded for the smoke test) or when `HANABI_NO_RESUME_PROMPT=1` is set. After a resume, players reconnect by reopening their browser; their existing seat is recovered by `playerId` or by name.
 
 There's no step-through replay viewer yet; the JSONL is the source of truth for reconstruction, and re-running a finished game from scratch only needs the seed (paste it into the lobby).

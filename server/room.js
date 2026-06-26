@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { createInitialState } from './game.js';
+import { createInitialState, validateDeckAgainstVariant } from './game.js';
 import {
   GameError,
   annotateAction,
@@ -34,6 +34,7 @@ export function createRoom() {
     abandonVotes: new Set(),
     undoStack: [],
     savePath: null,
+    importedDeck: null,
   };
 }
 
@@ -136,6 +137,28 @@ export function movePlayer(room, hostId, targetId, direction) {
   [room.players[idx], room.players[j]] = [room.players[j], room.players[idx]];
 }
 
+export function importDeck(room, playerId, deck) {
+  if (room.phase !== 'lobby') {
+    throw new GameError('Deck can only be imported in the lobby', 'not_lobby');
+  }
+  if (room.hostId !== playerId) {
+    throw new GameError('Only the host can import a deck', 'not_host');
+  }
+  try {
+    validateDeckAgainstVariant(room.options.variantId, deck);
+  } catch (err) {
+    throw new GameError(err.message, 'bad_deck');
+  }
+  room.importedDeck = deck.slice();
+}
+
+export function clearImportedDeck(room, playerId) {
+  if (room.hostId !== playerId) {
+    throw new GameError('Only the host can clear the imported deck', 'not_host');
+  }
+  room.importedDeck = null;
+}
+
 export function configureRoom(room, playerId, partial) {
   if (room.phase !== 'lobby') throw new GameError('Game already started', 'not_lobby');
   if (room.hostId !== playerId) throw new GameError('Only the host can configure', 'not_host');
@@ -159,6 +182,19 @@ export async function startGame(room, playerId, { seed } = {}) {
   if (!isLobby && !isFinished) throw new GameError('Game in progress', 'in_progress');
   if (room.hostId !== playerId) throw new GameError('Only the host can start', 'not_host');
   if (room.players.length < 2) throw new GameError('Need at least 2 players', 'too_few');
+  // If a deck was imported, it must still match the (possibly changed) variant.
+  let deckCards;
+  if (room.importedDeck) {
+    try {
+      validateDeckAgainstVariant(room.options.variantId, room.importedDeck);
+    } catch (err) {
+      throw new GameError(
+        `Imported deck doesn't fit variant ${room.options.variantId}: ${err.message}`,
+        'bad_deck',
+      );
+    }
+    deckCards = room.importedDeck;
+  }
   room.state = createInitialState({
     variantId: room.options.variantId,
     endRule: room.options.endRule,
@@ -166,11 +202,14 @@ export async function startGame(room, playerId, { seed } = {}) {
     allowEmptyHints: room.options.allowEmptyHints,
     players: room.players.map((p) => ({ id: p.id, name: p.name })),
     seed,
+    deckCards,
   });
   room.phase = 'playing';
   room.abandonVotes.clear();
   room.undoStack = [];
   room.savePath = null;
+  // Imported deck is one-shot — clear after the game starts using it.
+  room.importedDeck = null;
   try {
     room.savePath = await openSave(room.state, room.hostId);
   } catch (err) {

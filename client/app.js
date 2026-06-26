@@ -112,6 +112,23 @@ function readSeedInput() {
 document.getElementById('start-button').addEventListener('click', () => {
   send({ type: 'start', seed: readSeedInput() });
 });
+
+document.getElementById('import-deck-file').addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const deck = data?.cards;
+    if (!Array.isArray(deck)) throw new Error('JSON has no "cards" array');
+    send({ type: 'importDeck', deck });
+  } catch (err) {
+    flashError(`Import failed: ${err.message}`);
+  } finally {
+    // Allow re-picking the same file later.
+    e.target.value = '';
+  }
+});
 document.getElementById('abandon-button').addEventListener('click', () => {
   send({ type: 'abandon' });
 });
@@ -221,6 +238,25 @@ function renderLobby() {
   document.getElementById('opt-endRule').value = view.options.endRule;
   document.getElementById('opt-shareGuarded').checked = view.options.shareGuarded;
   document.getElementById('opt-allowEmptyHints').checked = view.options.allowEmptyHints;
+  const importFile = document.getElementById('import-deck-file');
+  importFile.disabled = !isHost;
+  const importStatus = document.getElementById('import-deck-status');
+  importStatus.innerHTML = '';
+  if (view.importedDeck) {
+    importStatus.hidden = false;
+    const span = document.createElement('span');
+    span.textContent = `Imported deck loaded (${view.importedDeck.count} cards) — used when the next game starts.`;
+    importStatus.append(span);
+    if (isHost) {
+      const clear = document.createElement('button');
+      clear.type = 'button';
+      clear.textContent = 'Clear';
+      clear.addEventListener('click', () => send({ type: 'clearImportedDeck' }));
+      importStatus.append(' ', clear);
+    }
+  } else {
+    importStatus.hidden = true;
+  }
 }
 
 function renderGame() {

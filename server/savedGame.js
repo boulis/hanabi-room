@@ -46,6 +46,7 @@ export async function openSave(state, hostId) {
     allowEmptyHints: state.allowEmptyHints,
     hostId,
     players: state.players.map((p) => ({ id: p.id, name: p.name })),
+    deck: state.initialDeckCards,
   };
   await fs.writeFile(filePath, JSON.stringify(header) + '\n');
   return filePath;
@@ -88,6 +89,9 @@ export async function loadSave(filePath) {
     allowEmptyHints: header.allowEmptyHints,
     players: header.players,
     seed: header.seed,
+    // header.deck is the explicit draw order (added in 0.9.0 for imports);
+    // older saves lack it and fall back to seed-shuffle inside createInitialState.
+    deckCards: header.deck,
   });
   // createInitialState stamps startedAt = Date.now(); replace with the real
   // start time from the save header so export durations stay accurate after

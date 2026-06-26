@@ -345,6 +345,20 @@ input, select {
   padding: 0.5rem 0.75rem;
 }
 
+#import-deck-row { display: grid; gap: 0.25rem; }
+#import-deck-row .import-label { gap: 0.35rem; }
+#import-deck-status {
+  font-size: 0.85rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 4px;
+  background: rgba(43, 106, 209, 0.12);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+#import-deck-status button { padding: 0.15rem 0.5rem; font-size: 0.8rem; }
+
 .lobby-player {
   display: flex;
   align-items: center;

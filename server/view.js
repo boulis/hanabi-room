@@ -80,5 +80,6 @@ export function lobbyView(lobby) {
     variants: Object.values(VARIANTS).map((v) => ({ id: v.id, name: v.name })),
     players: lobby.players.map((p) => ({ id: p.id, name: p.name, online: p.online })),
     hostId: lobby.hostId,
+    importedDeck: lobby.importedDeck ? { count: lobby.importedDeck.length } : null,
   };
 }
