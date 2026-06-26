@@ -251,6 +251,8 @@ function renderGame() {
   for (const color of Object.keys(discardsByColor)) {
     discardsByColor[color].sort((a, b) => a - b);
   }
+  const pileGroup = document.createElement('div');
+  pileGroup.className = 'pile-group';
   for (const suit of v.suits) {
     const p = v.playedPiles[suit.color];
     const column = document.createElement('div');
@@ -274,8 +276,11 @@ function renderGame() {
       summary.append(num);
     }
     column.append(summary);
-    piles.append(column);
+    pileGroup.append(column);
   }
+  piles.append(pileGroup);
+
+  renderLatestAction(v);
 
   const hands = document.getElementById('game-hands');
   hands.innerHTML = '';
@@ -326,6 +331,16 @@ function renderPlayerRow(player, index, isMyTurn) {
     marker.className = 'turn-marker';
     marker.textContent = 'turn';
     head.append(marker);
+  }
+  const latest = latestActionEntry(view.log);
+  if (latest && latest.playerIndex === index) {
+    const notable = notableEntry(latest);
+    if (notable) {
+      const bubble = document.createElement('span');
+      bubble.className = 'action-bubble ' + notable.kind;
+      bubble.textContent = notable.text;
+      head.append(bubble);
+    }
   }
   row.append(head);
 
@@ -535,20 +550,108 @@ function renderHintControls(targetIndex) {
   return wrap;
 }
 
+function renderCardSymbol(color, number) {
+  const el = document.createElement('span');
+  el.className = 'card-symbol';
+  el.style.background = `var(--color-${color})`;
+  el.style.color = (color === 'yellow' || color === 'white') ? '#111' : '#fff';
+  el.textContent = number;
+  return el;
+}
+
 function renderDiscard() {
   const root = document.getElementById('game-discard');
   root.innerHTML = '<h3>Discard Order</h3>';
   const pile = document.createElement('div');
   pile.className = 'discard-pile';
   for (const c of view.discard) {
-    const el = document.createElement('div');
-    el.className = 'discard-card';
-    el.style.background = `var(--color-${c.color})`;
-    el.style.color = (c.color === 'yellow' || c.color === 'white') ? '#111' : '#fff';
-    el.textContent = c.number;
-    pile.append(el);
+    pile.append(renderCardSymbol(c.color, c.number));
   }
   root.append(pile);
+}
+
+function latestActionEntry(log) {
+  for (let i = log.length - 1; i >= 0; i--) {
+    const e = log[i];
+    if (e.type === 'play' || e.type === 'discard' || e.type === 'hint') return e;
+  }
+  return null;
+}
+
+function notableEntry(e) {
+  if (!e) return null;
+  if (e.type === 'play' && e.wasTouched === false) {
+    return { kind: 'play-unclued', text: 'Played an untouched card' };
+  }
+  if (e.type === 'discard') {
+    if (e.wasTouched) return { kind: 'discard-touched', text: 'Discarded a touched card' };
+    if (e.chopIndex != null && e.chopIndex >= 0 && e.cardIndex !== e.chopIndex) {
+      return { kind: 'discard-past-chop', text: 'Discarded past the chop' };
+    }
+  }
+  return null;
+}
+
+function renderLatestAction(v) {
+  const root = document.getElementById('latest-action');
+  root.innerHTML = '';
+  const header = document.createElement('h3');
+  header.textContent = 'Latest action';
+  root.append(header);
+
+  const e = latestActionEntry(v.log);
+  if (!e) {
+    const empty = document.createElement('div');
+    empty.className = 'latest-empty';
+    empty.textContent = 'Waiting for the first action…';
+    root.append(empty);
+    return;
+  }
+  const name = (i) => v.players[i]?.name ?? `P${i}`;
+  const body = document.createElement('div');
+  body.className = 'latest-body';
+
+  if (e.type === 'hint') {
+    const line = document.createElement('div');
+    line.append(`${name(e.fromIndex)} hinted ${name(e.toIndex)}`);
+    body.append(line);
+    if (e.touchedIndexes && e.touchedIndexes.length === 0) {
+      const warn = document.createElement('div');
+      warn.className = 'latest-highlight';
+      warn.textContent = 'No cards touched.';
+      body.append(warn);
+    }
+  } else if (e.type === 'play') {
+    const line = document.createElement('div');
+    line.className = 'latest-line';
+    line.append(`${name(e.playerIndex)} played `);
+    line.append(renderCardSymbol(e.card.color, e.card.number));
+    if (e.success === false) line.append(' (MISPLAY)');
+    body.append(line);
+    if (e.wasTouched === false) {
+      const warn = document.createElement('div');
+      warn.className = 'latest-highlight';
+      warn.textContent = 'Card was not touched.';
+      body.append(warn);
+    }
+  } else if (e.type === 'discard') {
+    const line = document.createElement('div');
+    line.className = 'latest-line';
+    line.append(`${name(e.playerIndex)} discarded `);
+    line.append(renderCardSymbol(e.card.color, e.card.number));
+    body.append(line);
+    if (e.wasTouched) {
+      const touched = document.createElement('div');
+      touched.textContent = `Card was touched. ${e.wasFullyKnown ? 'Full info was known.' : 'Full info was not known.'}`;
+      body.append(touched);
+    } else if (e.chopIndex != null && e.chopIndex >= 0 && e.cardIndex !== e.chopIndex) {
+      const chop = document.createElement('div');
+      chop.className = 'latest-highlight';
+      chop.textContent = 'Card was not the chop.';
+      body.append(chop);
+    }
+  }
+  root.append(body);
 }
 
 function formatLog(e) {

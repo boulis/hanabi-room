@@ -183,6 +183,60 @@ test('discard: also consumes hint marks from other cards in the same hint', () =
   assert.equal(s.players[1].hand[0].lastHints.length, 0, 'sibling mark cleared by discard');
 });
 
+test('log: play entry records wasTouched and wasFullyKnown from pre-action card state', () => {
+  const s = freshState();
+  rigHand(s, 0, [{ color: 'red', number: 1 }]);
+  s.players[0].hand[0].colorClued = true;
+  s.players[0].hand[0].possibleColors = ['red'];
+  s.players[0].hand[0].numberClued = true;
+  s.players[0].hand[0].possibleNumbers = [1];
+  playAction(s, 0, 0);
+  const e = s.log.find((x) => x.type === 'play');
+  assert.equal(e.wasTouched, true);
+  assert.equal(e.wasFullyKnown, true);
+});
+
+test('log: discard entry records chopIndex and whether the discarded card was the chop', () => {
+  const s = freshState();
+  s.hintTokens = 4;
+  rigHand(s, 0, [
+    { color: 'red', number: 4 },
+    { color: 'green', number: 2 },
+    { color: 'blue', number: 3 },
+  ]);
+  // Touch card 0 only (chop becomes card 1).
+  s.players[0].hand[0].colorClued = true;
+  // Discard card 2 — not the chop (chop is index 1).
+  discardAction(s, 0, 2);
+  const e = s.log.find((x) => x.type === 'discard');
+  assert.equal(e.chopIndex, 1);
+  assert.equal(e.cardIndex, 2);
+  assert.equal(e.wasTouched, false);
+});
+
+test('log: discard records wasFullyKnown when the discarded card was fully clued', () => {
+  const s = freshState();
+  s.hintTokens = 4;
+  rigHand(s, 0, [{ color: 'red', number: 3 }, { color: 'blue', number: 1 }]);
+  const c = s.players[0].hand[0];
+  c.colorClued = true; c.possibleColors = ['red'];
+  c.numberClued = true; c.possibleNumbers = [3];
+  discardAction(s, 0, 0);
+  const e = s.log.find((x) => x.type === 'discard');
+  assert.equal(e.wasTouched, true);
+  assert.equal(e.wasFullyKnown, true);
+});
+
+test('log: chopIndex is -1 when every card in hand is touched', () => {
+  const s = freshState();
+  s.hintTokens = 4;
+  rigHand(s, 0, [{ color: 'red', number: 1 }, { color: 'blue', number: 1 }]);
+  for (const c of s.players[0].hand) c.colorClued = true;
+  discardAction(s, 0, 0);
+  const e = s.log.find((x) => x.type === 'discard');
+  assert.equal(e.chopIndex, -1);
+});
+
 test('hint cap: a 5th hint on the same card drops the oldest hint from all cards it touched', () => {
   const s = freshState();
   s.hintTokens = 8;

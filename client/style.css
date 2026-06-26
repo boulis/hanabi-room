@@ -121,13 +121,64 @@ input, select {
 #game-meta .meta-toggle { cursor: pointer; display: flex; flex-direction: column; align-items: flex-start; gap: 0.1rem; }
 #game-meta .meta-toggle input { margin: 0; }
 
+.board-row {
+  display: flex;
+  gap: 1rem;
+  align-items: stretch;
+}
+
 #game-piles {
+  flex: 1;
   display: flex;
   gap: 1rem;
   flex-wrap: wrap;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: center;
   padding: 0.5rem 0;
+}
+
+#latest-action {
+  flex: 0 0 240px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+#latest-action h3 { margin: 0; font-size: 0.8rem; opacity: 0.7; font-weight: normal; text-transform: uppercase; }
+#latest-action .latest-empty { opacity: 0.6; font-style: italic; }
+#latest-action .latest-body { display: flex; flex-direction: column; gap: 0.55rem; }
+#latest-action .latest-line { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; }
+#latest-action .latest-highlight {
+  background: #d6b51b;
+  color: #111;
+  border-radius: 4px;
+  padding: 0.2rem 0.4rem;
+  font-weight: bold;
+  font-size: 0.8rem;
+  align-self: flex-start;
+}
+
+.card-symbol {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 36px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: bold;
+}
+
+.action-bubble {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  background: #d6b51b;
+  color: #111;
+  border-radius: 99px;
+  font-weight: bold;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 
 .hint-tokens {
@@ -173,6 +224,15 @@ input, select {
   box-shadow: none;
 }
 .hint-token.empty::after { display: none; }
+
+.pile-group {
+  display: flex;
+  gap: 1rem;
+  /* auto margins inside a flex parent absorb leftover space evenly on both
+     sides, centering the pile group between the tokens box and the
+     latest-action panel. */
+  margin: 0 auto;
+}
 
 .pile-column {
   display: flex;
@@ -447,15 +507,6 @@ input, select {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem;
-}
-.discard-card {
-  width: 28px;
-  height: 36px;
-  border-radius: 4px;
-  display: grid;
-  place-items: center;
-  font-size: 0.85rem;
-  font-weight: bold;
 }
 
 .modal {

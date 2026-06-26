@@ -95,9 +95,22 @@ function consumeHintMarks(hand, leavingCard) {
   }
 }
 
+function isFullyKnown(card) {
+  return card.possibleColors.length === 1 && card.possibleNumbers.length === 1;
+}
+
+function chopIndex(hand) {
+  for (let i = 0; i < hand.length; i++) {
+    if (!hand[i].colorClued && !hand[i].numberClued) return i;
+  }
+  return -1;
+}
+
 export function playAction(state, playerIndex, cardIndex) {
   requireTurn(state, playerIndex);
   const card = requireCard(state, playerIndex, cardIndex);
+  const wasTouched = card.colorClued || card.numberClued;
+  const wasFullyKnown = isFullyKnown(card);
   state.players[playerIndex].hand.splice(cardIndex, 1);
   consumeHintMarks(state.players[playerIndex].hand, card);
 
@@ -119,6 +132,8 @@ export function playAction(state, playerIndex, cardIndex) {
       card: { id: card.id, color: card.color, number: card.number },
       success: true,
       bonusHint,
+      wasTouched,
+      wasFullyKnown,
     });
   } else {
     state.discard.push(card);
@@ -128,6 +143,8 @@ export function playAction(state, playerIndex, cardIndex) {
       playerIndex,
       card: { id: card.id, color: card.color, number: card.number },
       success: false,
+      wasTouched,
+      wasFullyKnown,
     });
   }
 
@@ -143,6 +160,9 @@ export function discardAction(state, playerIndex, cardIndex) {
     throw new GameError('Cannot discard at maximum hint tokens', 'tokens_full');
   }
   const card = requireCard(state, playerIndex, cardIndex);
+  const wasTouched = card.colorClued || card.numberClued;
+  const wasFullyKnown = isFullyKnown(card);
+  const chop = chopIndex(state.players[playerIndex].hand);
   state.players[playerIndex].hand.splice(cardIndex, 1);
   consumeHintMarks(state.players[playerIndex].hand, card);
   state.discard.push(card);
@@ -151,6 +171,10 @@ export function discardAction(state, playerIndex, cardIndex) {
     type: 'discard',
     playerIndex,
     card: { id: card.id, color: card.color, number: card.number },
+    wasTouched,
+    wasFullyKnown,
+    chopIndex: chop,
+    cardIndex,
   });
   const drawn = drawIfPossible(state, playerIndex);
   if (drawn) pushLog(state, { type: 'draw', playerIndex, cardId: drawn.id });
