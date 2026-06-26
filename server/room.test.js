@@ -9,6 +9,7 @@ import {
   createRoom,
   joinRoom,
   leaveRoom,
+  movePlayer,
   renamePlayer,
   resumeRoom,
   returnToLobby,
@@ -269,6 +270,42 @@ test('undo: failed action does not leave a stale snapshot behind', async () => {
     room.state.hintTokens = 8;
     await assert.rejects(applyAction(room, alice.id, { type: 'discard', cardIndex: 0 }));
     assert.equal(room.undoStack.length, 0);
+  });
+});
+
+test('movePlayer: host can reorder the player list in the lobby', () => {
+  const room = createRoom();
+  const a = joinRoom(room, { name: 'Alice' });
+  const b = joinRoom(room, { name: 'Bob' });
+  const c = joinRoom(room, { name: 'Carol' });
+  // a is host (first to join).
+  movePlayer(room, a.id, c.id, 'up'); // Carol moves above Bob
+  assert.deepEqual(room.players.map((p) => p.name), ['Alice', 'Carol', 'Bob']);
+  movePlayer(room, a.id, a.id, 'down'); // Alice moves below Carol
+  assert.deepEqual(room.players.map((p) => p.name), ['Carol', 'Alice', 'Bob']);
+});
+
+test('movePlayer: moving past an edge is a silent no-op', () => {
+  const room = createRoom();
+  const a = joinRoom(room, { name: 'Alice' });
+  const b = joinRoom(room, { name: 'Bob' });
+  movePlayer(room, a.id, a.id, 'up'); // already at top
+  assert.deepEqual(room.players.map((p) => p.name), ['Alice', 'Bob']);
+  movePlayer(room, a.id, b.id, 'down'); // already at bottom
+  assert.deepEqual(room.players.map((p) => p.name), ['Alice', 'Bob']);
+});
+
+test('movePlayer: non-host cannot reorder', () => {
+  const room = createRoom();
+  const a = joinRoom(room, { name: 'Alice' });
+  const b = joinRoom(room, { name: 'Bob' });
+  assert.throws(() => movePlayer(room, b.id, a.id, 'down'), GameError);
+});
+
+test('movePlayer: refused after the game has started', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    assert.throws(() => movePlayer(room, alice.id, bob.id, 'up'), GameError);
   });
 });
 

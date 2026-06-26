@@ -345,6 +345,18 @@ input, select {
   padding: 0.5rem 0.75rem;
 }
 
+.lobby-player {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0;
+}
+.lobby-player button {
+  padding: 0 0.4rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
 .player-row.active { border-color: #2b6ad1; box-shadow: 0 0 0 2px rgba(43,106,209,0.25); }
 .player-row header { padding: 0; border: 0; display: flex; gap: 0.5rem; align-items: center; }
 .player-row .player-name { font-weight: bold; }

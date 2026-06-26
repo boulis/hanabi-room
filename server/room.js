@@ -120,6 +120,22 @@ export function leaveRoom(room, playerId) {
   }
 }
 
+export function movePlayer(room, hostId, targetId, direction) {
+  if (room.phase !== 'lobby') {
+    throw new GameError('Players can only be reordered in the lobby', 'not_lobby');
+  }
+  if (room.hostId !== hostId) {
+    throw new GameError('Only the host can reorder players', 'not_host');
+  }
+  const delta = direction === 'up' ? -1 : direction === 'down' ? 1 : null;
+  if (delta === null) throw new GameError('direction must be up or down', 'bad_direction');
+  const idx = room.players.findIndex((p) => p.id === targetId);
+  if (idx < 0) throw new GameError('Unknown player', 'no_player');
+  const j = idx + delta;
+  if (j < 0 || j >= room.players.length) return; // at edge — no-op
+  [room.players[idx], room.players[j]] = [room.players[j], room.players[idx]];
+}
+
 export function configureRoom(room, playerId, partial) {
   if (room.phase !== 'lobby') throw new GameError('Game already started', 'not_lobby');
   if (room.hostId !== playerId) throw new GameError('Only the host can configure', 'not_host');

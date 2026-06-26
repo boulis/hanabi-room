@@ -13,6 +13,7 @@ import {
   createRoom,
   joinRoom,
   leaveRoom,
+  movePlayer,
   renamePlayer,
   resumeRoom,
   returnToLobby,
@@ -201,6 +202,12 @@ wss.on('connection', (ws) => {
           const slug = data.date.replace(/[T:]/g, '-');
           const filename = `hanabi-deck-${slug}-${room.state.variantId}.json`;
           send(ws, { type: 'deckExport', data, filename });
+          break;
+        }
+        case 'movePlayer': {
+          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          movePlayer(room, conn.playerId, msg.targetId, msg.direction);
+          broadcastSync();
           break;
         }
         case 'rename': {

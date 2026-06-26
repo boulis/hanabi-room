@@ -182,17 +182,36 @@ function show(screen) {
 function renderLobby() {
   const listEl = document.getElementById('lobby-players');
   listEl.innerHTML = '';
-  for (const p of view.players) {
+  const isHost = view.hostId === playerId;
+  view.players.forEach((p, i) => {
     const li = document.createElement('div');
+    li.className = 'lobby-player';
     const tags = [];
     if (p.id === playerId) tags.push('you');
     if (p.id === view.hostId) tags.push('host');
     if (!p.online) tags.push('offline');
     const tagStr = tags.length ? ` (${tags.join(', ')})` : '';
-    li.textContent = `${p.name} [${p.id}]${tagStr}`;
+    const label = document.createElement('span');
+    label.textContent = `${i + 1}. ${p.name} [${p.id}]${tagStr}`;
+    li.append(label);
+    if (isHost && view.players.length > 1) {
+      const up = document.createElement('button');
+      up.type = 'button';
+      up.textContent = '↑';
+      up.title = 'Move up';
+      up.disabled = i === 0;
+      up.addEventListener('click', () => send({ type: 'movePlayer', targetId: p.id, direction: 'up' }));
+      li.append(up);
+      const down = document.createElement('button');
+      down.type = 'button';
+      down.textContent = '↓';
+      down.title = 'Move down';
+      down.disabled = i === view.players.length - 1;
+      down.addEventListener('click', () => send({ type: 'movePlayer', targetId: p.id, direction: 'down' }));
+      li.append(down);
+    }
     listEl.append(li);
-  }
-  const isHost = view.hostId === playerId;
+  });
   document.getElementById('opt-variant').disabled = !isHost;
   document.getElementById('opt-endRule').disabled = !isHost;
   document.getElementById('opt-shareGuarded').disabled = !isHost;
