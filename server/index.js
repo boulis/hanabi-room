@@ -5,6 +5,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { VARIANTS } from './variants.js';
+import { exportDeckOrder } from './game.js';
 import { GameError } from './rules.js';
 import {
   applyAction,
@@ -182,6 +183,17 @@ wss.on('connection', (ws) => {
           if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
           await undoLast(room, conn.playerId);
           broadcastSync();
+          break;
+        }
+        case 'exportDeck': {
+          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          if (room.phase !== 'playing' || room.state?.status !== 'finished') {
+            throw new GameError('No finished game to export', 'no_finished_game');
+          }
+          const data = exportDeckOrder(room.state);
+          const slug = data.date.replace(/[T:]/g, '-');
+          const filename = `hanabi-deck-${slug}-${room.state.variantId}.json`;
+          send(ws, { type: 'deckExport', data, filename });
           break;
         }
         case 'rename': {

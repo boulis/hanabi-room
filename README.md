@@ -58,7 +58,9 @@ The repo ships with a set of SVG cards in `client/cards/` (filenames like `red-3
 
 ## Saved games
 
-Every started game writes an append-only JSONL log to `saved-games/<timestamp>-<variant>.jsonl`. The first line is a header (seed, variant, options, players, host); each subsequent line records one event (action, undo, rename, abandon-vote, end). The directory is gitignored.
+Every started game writes an append-only JSONL log to `saved-games/<timestamp>-<variant>.jsonl`. The first line is a header (seed, variant, options, players, host, startedAt); each subsequent line records one event (action, undo, rename, abandon-vote, end). The directory is gitignored.
+
+When a game finishes (perfect, fuses, deck-out, or two-vote abandon) the game-over screen exposes an **Export deck order** button for every player. It downloads a JSON file describing the shuffled deck (variant, start time, duration, final score, ordered card list, and the matched-set description) for use with companion tools.
 
 On `npm start`, if any save's last event isn't an `end` (server crash, killed mid-game, or someone undid the game-ending move and kept playing) the host is prompted in the terminal to resume one of the 3 most recent — or type a filename for any other. Press Enter to skip. The prompt is silently skipped when stdin isn't a TTY (e.g. backgrounded for the smoke test) or when `HANABI_NO_RESUME_PROMPT=1` is set. After a resume, players reconnect by reopening their browser; their existing seat is recovered by `playerId` or by name.
 

@@ -48,15 +48,18 @@ test('abandon: single vote does not abandon the game', async () => {
   });
 });
 
-test('abandon: two votes returns the room to lobby', async () => {
+test('abandon: two votes marks the game finished with reason=abandoned', async () => {
   await withTmpSaveDir(async () => {
     const { room, alice, bob } = await setupRoom();
     await voteAbandon(room, alice.id);
     const result = await voteAbandon(room, bob.id);
     assert.equal(result.abandoned, true);
-    assert.equal(room.phase, 'lobby');
-    assert.equal(room.state, null);
+    assert.equal(room.phase, 'playing', 'room stays in playing phase…');
+    assert.equal(room.state.status, 'finished', '…but state is finished');
+    assert.equal(room.state.endReason, 'abandoned');
+    assert.ok(room.state.endedAt, 'endedAt is stamped');
     assert.equal(room.abandonVotes.size, 0);
+    assert.equal(room.undoStack.length, 0);
   });
 });
 

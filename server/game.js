@@ -60,8 +60,7 @@ export function createInitialState({
   }
   const finalSeed = seed != null ? (seed >>> 0) : Math.floor(Math.random() * 0x100000000);
   const variant = getVariant(variantId);
-  const rng = mulberry32(finalSeed);
-  const deck = shuffle(buildDeck(variantId), rng);
+  const deck = shuffledDeck(variantId, finalSeed);
   const size = handSize(players.length);
   const hands = players.map(() => []);
   for (let i = 0; i < size; i++) {
@@ -89,6 +88,41 @@ export function createInitialState({
     log: [],
     endReason: null,
     nextHintIndex: 0,
+    startedAt: Date.now(),
+    endedAt: null,
+  };
+}
+
+export function shuffledDeck(variantId, seed) {
+  return shuffle(buildDeck(variantId), mulberry32(seed));
+}
+
+function formatLocalDate(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  );
+}
+
+export function exportDeckOrder(state) {
+  const variant = getVariant(state.variantId);
+  const deck = shuffledDeck(state.variantId, state.seed);
+  // deck.pop() is the next card dealt, so draw order = reversed array.
+  const cards = deck.slice().reverse().map((c) => `${c.color}_${c.number}`);
+  const startedAt = state.startedAt ?? Date.now();
+  const endedAt = state.endedAt ?? Date.now();
+  return {
+    date: formatLocalDate(new Date(startedAt)),
+    score: score(state),
+    duration_seconds: Math.max(0, Math.round((endedAt - startedAt) / 1000)),
+    count: cards.length,
+    cards,
+    validation: {
+      matched_set: variant.matchedSetDescription || '',
+      is_exact: true,
+      discrepancy_summary: '',
+    },
   };
 }
 

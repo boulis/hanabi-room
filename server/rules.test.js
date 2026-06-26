@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createInitialState, pileTop, score } from './game.js';
+import { createInitialState, exportDeckOrder, pileTop, score } from './game.js';
 import { GameError, annotateAction, discardAction, hintAction, playAction } from './rules.js';
 
 const PLAYERS = [
@@ -225,6 +225,34 @@ test('log: discard records wasFullyKnown when the discarded card was fully clued
   const e = s.log.find((x) => x.type === 'discard');
   assert.equal(e.wasTouched, true);
   assert.equal(e.wasFullyKnown, true);
+});
+
+test('exportDeckOrder: produces the expected shape for a 65-card variant', () => {
+  const s = createInitialState({
+    variantId: 'rainbowCriticalBlackReverse',
+    players: PLAYERS,
+    seed: 42,
+  });
+  s.endedAt = s.startedAt + 1197 * 1000;
+  s.playedPiles.red = [{}, {}, {}]; // fake a score of 3 for the smoke check
+  const out = exportDeckOrder(s);
+  assert.equal(out.count, 65);
+  assert.equal(out.cards.length, 65);
+  assert.match(out.date, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
+  assert.equal(out.duration_seconds, 1197);
+  assert.equal(out.score, 3);
+  assert.equal(out.validation.matched_set, 'Full 65 cards. Black reversed. One for each rainbow');
+  assert.equal(out.validation.is_exact, true);
+  assert.equal(out.validation.discrepancy_summary, '');
+  for (const c of out.cards) {
+    assert.match(c, /^(red|yellow|green|blue|white|rainbow|black)_[1-5]$/);
+  }
+});
+
+test('exportDeckOrder: same seed → same card order (deterministic)', () => {
+  const a = exportDeckOrder(createInitialState({ variantId: 'simple', players: PLAYERS, seed: 7 }));
+  const b = exportDeckOrder(createInitialState({ variantId: 'simple', players: PLAYERS, seed: 7 }));
+  assert.deepEqual(a.cards, b.cards);
 });
 
 test('log: chopIndex is -1 when every card in hand is touched', () => {

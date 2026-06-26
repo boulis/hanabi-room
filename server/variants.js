@@ -21,26 +21,31 @@ export const VARIANTS = {
     id: 'simple',
     name: 'Simple',
     suits: baseSuits,
+    matchedSetDescription: 'Full 50 cards.',
   },
   rainbow: {
     id: 'rainbow',
     name: 'Rainbow',
     suits: [...baseSuits, rainbowFull],
+    matchedSetDescription: 'Full 60 cards. Rainbow',
   },
   rainbowCritical: {
     id: 'rainbowCritical',
     name: 'Rainbow Critical',
     suits: [...baseSuits, rainbowCritical],
+    matchedSetDescription: 'Full 55 cards. One for each rainbow',
   },
   rainbowCriticalBlack: {
     id: 'rainbowCriticalBlack',
     name: 'Rainbow Critical + Black',
     suits: [...baseSuits, rainbowCritical, blackFull],
+    matchedSetDescription: 'Full 65 cards. Black. One for each rainbow',
   },
   rainbowCriticalBlackReverse: {
     id: 'rainbowCriticalBlackReverse',
     name: 'Rainbow Critical + Black Reverse',
     suits: [...baseSuits, rainbowCritical, blackReverse],
+    matchedSetDescription: 'Full 65 cards. Black reversed. One for each rainbow',
   },
 };
 

@@ -53,6 +53,9 @@ function handleMessage(msg) {
       view = msg.view;
       render();
       break;
+    case 'deckExport':
+      triggerDownload(msg.data, msg.filename);
+      break;
     case 'error':
       console.warn('server error:', msg.code, msg.error);
       flashError(msg.error);
@@ -118,6 +121,22 @@ document.getElementById('abandon-button').addEventListener('click', () => {
 document.getElementById('undo-button').addEventListener('click', () => {
   send({ type: 'undo' });
 });
+document.getElementById('export-deck-button').addEventListener('click', () => {
+  send({ type: 'exportDeck' });
+});
+
+function triggerDownload(data, filename) {
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 function render() {
   if (!view) return;
@@ -301,6 +320,8 @@ function renderGame() {
   renderDiscard();
   const newGameBtn = document.getElementById('new-game-button');
   newGameBtn.hidden = !(v.hostId === playerId && v.status === 'finished');
+  const exportBtn = document.getElementById('export-deck-button');
+  exportBtn.hidden = v.status !== 'finished';
   const undoBtn = document.getElementById('undo-button');
   undoBtn.hidden = !v.canUndo;
   const abandonBtn = document.getElementById('abandon-button');

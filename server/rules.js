@@ -48,26 +48,28 @@ function drawIfPossible(state, playerIndex) {
   return card;
 }
 
+function endGame(state, reason) {
+  state.status = 'finished';
+  state.endReason = reason;
+  state.endedAt = Date.now();
+}
+
 function advanceTurn(state) {
   state.turn += 1;
   if (state.fuseTokens === 0) {
-    state.status = 'finished';
-    state.endReason = 'fuses';
+    endGame(state, 'fuses');
     return;
   }
   if (score(state) === maxPossibleScore(state)) {
-    state.status = 'finished';
-    state.endReason = 'perfect';
+    endGame(state, 'perfect');
     return;
   }
   if (state.endRule === 'standard' && state.finalTurn !== null && state.turn >= state.finalTurn) {
-    state.status = 'finished';
-    state.endReason = 'deck';
+    endGame(state, 'deck');
     return;
   }
   if (state.endRule === 'lax' && state.deck.length === 0 && allHandsEmpty(state)) {
-    state.status = 'finished';
-    state.endReason = 'deck';
+    endGame(state, 'deck');
     return;
   }
   const n = state.players.length;

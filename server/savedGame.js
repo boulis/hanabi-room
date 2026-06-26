@@ -89,6 +89,13 @@ export async function loadSave(filePath) {
     players: header.players,
     seed: header.seed,
   });
+  // createInitialState stamps startedAt = Date.now(); replace with the real
+  // start time from the save header so export durations stay accurate after
+  // a resume.
+  if (header.startedAt) {
+    const parsed = Date.parse(header.startedAt);
+    if (!Number.isNaN(parsed)) state.startedAt = parsed;
+  }
   const undoStack = [];
   const abandonVotes = new Set();
   let endReason = null;
@@ -168,11 +175,20 @@ function applyEvent(state, ev, ctx) {
       if (abandonVotes.size >= ABANDON_THRESHOLD) {
         state.status = 'finished';
         state.endReason = 'abandoned';
+        if (ev.t) {
+          const parsed = Date.parse(ev.t);
+          if (!Number.isNaN(parsed)) state.endedAt = parsed;
+        }
       }
       break;
     }
     case 'end':
-      // Loader handles termination — nothing to apply.
+      // Replace the replay-time endedAt with the original event time, so
+      // export durations are honest after a resume.
+      if (ev.t) {
+        const parsed = Date.parse(ev.t);
+        if (!Number.isNaN(parsed)) state.endedAt = parsed;
+      }
       break;
     default:
       throw new Error(`Unknown event kind during replay: ${ev.kind}`);

@@ -10,7 +10,6 @@ import {
 import { lobbyView, viewState } from './view.js';
 import {
   appendEvent,
-  closeSave,
   loadSave,
   openSave,
 } from './savedGame.js';
@@ -59,15 +58,6 @@ async function safeAppend(room, event) {
     await appendEvent(room.savePath, event);
   } catch (err) {
     console.error('Failed to append save event:', err);
-  }
-}
-
-async function safeClose(filePath, endReason) {
-  if (!filePath) return;
-  try {
-    await closeSave(filePath, endReason);
-  } catch (err) {
-    console.error('Failed to close save file:', err);
   }
 }
 
@@ -183,13 +173,14 @@ export async function voteAbandon(room, playerId) {
   }
   room.abandonVotes.add(playerId);
   if (room.abandonVotes.size >= ABANDON_THRESHOLD) {
-    const closingPath = room.savePath;
-    room.phase = 'lobby';
-    room.state = null;
+    // Mark the game as finished so the game-over screen takes over (with the
+    // export-deck button, score, etc.). Same exit path as a natural end.
+    room.state.status = 'finished';
+    room.state.endReason = 'abandoned';
+    room.state.endedAt = Date.now();
     room.abandonVotes.clear();
     room.undoStack = [];
-    room.savePath = null;
-    await safeClose(closingPath, 'abandoned');
+    await safeAppend(room, { kind: 'end', endReason: 'abandoned' });
     return { abandoned: true };
   }
   return { abandoned: false };
