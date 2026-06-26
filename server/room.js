@@ -16,7 +16,7 @@ import {
 
 const DEFAULT_OPTIONS = {
   variantId: 'simple',
-  endRule: 'standard',
+  endRule: 'lax',
   shareGuarded: false,
   allowEmptyHints: false,
 };
