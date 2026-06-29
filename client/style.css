@@ -665,18 +665,30 @@ input, select {
   min-height: 144px;
   pointer-events: none;
   z-index: 95;
-  animation: ghost-leave 1.2s cubic-bezier(0.25, 0.7, 0.3, 1) forwards;
+  animation: ghost-leave 1.2s linear forwards;
   transform-origin: 50% 50%;
 }
 .card.ghost-leave.misplay {
   box-shadow: 0 0 0 2px #d23a3a, 0 4px 12px rgba(0, 0, 0, 0.35);
 }
 @keyframes ghost-leave {
-  0%   { transform: translate(0, 0)    rotate(0deg)  scale(1.00); opacity: 1; }
-  20%  { transform: translate(0, -18px) rotate(-5deg) scale(1.12); opacity: 1; }
-  40%  { transform: translate(0, -38px) rotate(4deg)  scale(1.22); opacity: 1; }
-  60%  { transform: translate(0, -60px) rotate(-3deg) scale(1.32); opacity: 0.9; }
-  100% { transform: translate(0, -110px) rotate(0deg) scale(1.5);  opacity: 0; }
+  0%   { transform: translate(0, 0)     scale(1.00); opacity: 1.00; }
+  6%   { transform: translate(0, -7px)  scale(1.03); opacity: 1.00; }
+  12%  { transform: translate(0, -14px) scale(1.06); opacity: 1.00; }
+  18%  { transform: translate(0, -22px) scale(1.10); opacity: 1.00; }
+  24%  { transform: translate(0, -30px) scale(1.14); opacity: 1.00; }
+  30%  { transform: translate(0, -38px) scale(1.18); opacity: 1.00; }
+  36%  { transform: translate(0, -46px) scale(1.22); opacity: 1.00; }
+  42%  { transform: translate(0, -54px) scale(1.26); opacity: 0.96; }
+  48%  { transform: translate(0, -62px) scale(1.30); opacity: 0.92; }
+  54%  { transform: translate(0, -70px) scale(1.34); opacity: 0.86; }
+  60%  { transform: translate(0, -78px) scale(1.38); opacity: 0.78; }
+  66%  { transform: translate(0, -85px) scale(1.41); opacity: 0.68; }
+  72%  { transform: translate(0, -92px) scale(1.44); opacity: 0.56; }
+  78%  { transform: translate(0, -98px) scale(1.46); opacity: 0.42; }
+  84%  { transform: translate(0, -103px) scale(1.48); opacity: 0.28; }
+  90%  { transform: translate(0, -107px) scale(1.49); opacity: 0.14; }
+  100% { transform: translate(0, -110px) scale(1.50); opacity: 0.00; }
 }
 
 #fireworks {

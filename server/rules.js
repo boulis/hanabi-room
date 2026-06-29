@@ -136,6 +136,7 @@ export function playAction(state, playerIndex, cardIndex) {
     pushLog(state, {
       type: 'play',
       playerIndex,
+      cardIndex,
       card: { id: card.id, color: card.color, number: card.number },
       success: true,
       bonusHint,
@@ -148,6 +149,7 @@ export function playAction(state, playerIndex, cardIndex) {
     pushLog(state, {
       type: 'play',
       playerIndex,
+      cardIndex,
       card: { id: card.id, color: card.color, number: card.number },
       success: false,
       wasTouched,
