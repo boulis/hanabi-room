@@ -255,6 +255,36 @@ test('exportDeckOrder: same seed → same card order (deterministic)', () => {
   assert.deepEqual(a.cards, b.cards);
 });
 
+test('log: with shareGuarded, a guarded card is skipped when finding the chop', () => {
+  const s = freshState({ shareGuarded: true });
+  s.hintTokens = 4;
+  rigHand(s, 0, [
+    { color: 'red', number: 4 },
+    { color: 'green', number: 2 },
+    { color: 'blue', number: 3 },
+  ]);
+  // Card 0 is guarded → chop should skip it and land on card 1.
+  s.players[0].hand[0].annotations.guarded = true;
+  discardAction(s, 0, 2);
+  const e = s.log.find((x) => x.type === 'discard');
+  assert.equal(e.chopIndex, 1, 'guarded card 0 is skipped when computing chop');
+  assert.equal(e.cardIndex, 2, 'card 2 was discarded — past the chop');
+});
+
+test('log: without shareGuarded, the guard annotation is ignored for chop', () => {
+  const s = freshState({ shareGuarded: false });
+  s.hintTokens = 4;
+  rigHand(s, 0, [
+    { color: 'red', number: 4 },
+    { color: 'green', number: 2 },
+    { color: 'blue', number: 3 },
+  ]);
+  s.players[0].hand[0].annotations.guarded = true;
+  discardAction(s, 0, 2);
+  const e = s.log.find((x) => x.type === 'discard');
+  assert.equal(e.chopIndex, 0, 'private guard does not affect chop');
+});
+
 test('log: chopIndex is -1 when every card in hand is touched', () => {
   const s = freshState();
   s.hintTokens = 4;

@@ -103,9 +103,12 @@ function isFullyKnown(card) {
   return card.possibleColors.length === 1 && card.possibleNumbers.length === 1;
 }
 
-function chopIndex(hand) {
+function chopIndex(hand, { skipGuarded } = {}) {
   for (let i = 0; i < hand.length; i++) {
-    if (!hand[i].colorClued && !hand[i].numberClued) return i;
+    const c = hand[i];
+    if (c.colorClued || c.numberClued) continue;
+    if (skipGuarded && c.annotations?.guarded) continue;
+    return i;
   }
   return -1;
 }
@@ -166,7 +169,10 @@ export function discardAction(state, playerIndex, cardIndex) {
   const card = requireCard(state, playerIndex, cardIndex);
   const wasTouched = card.colorClued || card.numberClued;
   const wasFullyKnown = isFullyKnown(card);
-  const chop = chopIndex(state.players[playerIndex].hand);
+  // When guard marks are public, a guarded card counts as "taken care of" and
+  // is skipped when finding the chop, so the past-chop callout reflects what
+  // every player can see.
+  const chop = chopIndex(state.players[playerIndex].hand, { skipGuarded: state.shareGuarded });
   state.players[playerIndex].hand.splice(cardIndex, 1);
   consumeHintMarks(state.players[playerIndex].hand, card);
   state.discard.push(card);
