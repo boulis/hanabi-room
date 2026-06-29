@@ -52,6 +52,8 @@ export function viewState(state, viewerIndex) {
     maxAchievable: maxAchievableScore(state),
     endReason: state.endReason,
     seed: state.status === 'finished' ? state.seed : null,
+    startedAt: state.startedAt,
+    endedAt: state.endedAt,
     playedPiles: Object.fromEntries(
       Object.entries(state.playedPiles).map(([color, pile]) => [
         color,

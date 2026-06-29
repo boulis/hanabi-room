@@ -240,6 +240,21 @@ function spawnBurst(overlay, count) {
   setTimeout(() => burst.remove(), 1400);
 }
 
+function formatElapsed(startedAt, endedAt) {
+  if (!startedAt) return '00:00';
+  const end = endedAt || Date.now();
+  const totalSec = Math.max(0, Math.floor((end - startedAt) / 1000));
+  const mm = String(Math.floor(totalSec / 60)).padStart(2, '0');
+  const ss = String(totalSec % 60).padStart(2, '0');
+  return `${mm}:${ss}`;
+}
+
+setInterval(() => {
+  const el = document.getElementById('game-timer');
+  if (!el || !view) return;
+  el.textContent = formatElapsed(view.startedAt, view.endedAt);
+}, 1000);
+
 function triggerDownload(data, filename) {
   const json = JSON.stringify(data, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
@@ -440,6 +455,13 @@ function renderGame() {
 
   const piles = document.getElementById('game-piles');
   piles.innerHTML = '';
+  const tokensCol = document.createElement('div');
+  tokensCol.className = 'tokens-col';
+  const timer = document.createElement('div');
+  timer.id = 'game-timer';
+  timer.className = 'game-timer';
+  timer.textContent = formatElapsed(v.startedAt, v.endedAt);
+  tokensCol.append(timer);
   const tokensWrap = document.createElement('div');
   tokensWrap.className = 'hint-tokens';
   tokensWrap.title = `${v.hintTokens} / 8 hint tokens available`;
@@ -448,7 +470,8 @@ function renderGame() {
     t.className = 'hint-token' + (i < v.hintTokens ? '' : ' empty');
     tokensWrap.append(t);
   }
-  piles.append(tokensWrap);
+  tokensCol.append(tokensWrap);
+  piles.append(tokensCol);
   const discardsByColor = Object.fromEntries(v.suits.map((s) => [s.color, []]));
   for (const c of v.discard) discardsByColor[c.color].push(c.number);
   for (const color of Object.keys(discardsByColor)) {
