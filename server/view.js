@@ -64,7 +64,9 @@ export function viewState(state, viewerIndex) {
       name: p.name,
       hand: p.hand.map((c) =>
         viewCard(c, {
-          revealIdentity: i !== viewerIndex,
+          // Reveal everyone's cards once the game is over — there's no hidden
+          // information left to protect and players want to see what they had.
+          revealIdentity: i !== viewerIndex || state.status === 'finished',
           isOwner: i === viewerIndex,
           shareGuarded: state.shareGuarded,
         }),

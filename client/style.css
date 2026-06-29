@@ -7,7 +7,7 @@
   --color-blue: #2b6ad1;
   --color-white: #e8e8e8;
   --color-rainbow: linear-gradient(135deg, #d23a3a, #d6b51b, #2f9648, #2b6ad1, #b14de0);
-  --color-black: #181818;
+  --color-black: #2c2c2c;
   --card-text-light: #fff;
   --card-text-dark: #111;
   --border: rgba(127, 127, 127, 0.4);
@@ -706,13 +706,13 @@ input, select {
 }
 .firework-particle {
   position: absolute;
-  left: -4px;
-  top: -4px;
-  width: 8px;
-  height: 8px;
+  left: -6px;
+  top: -6px;
+  width: 12px;
+  height: 12px;
   border-radius: 99px;
   background: var(--fw-color, #fff);
-  box-shadow: 0 0 10px var(--fw-color, #fff), 0 0 22px var(--fw-color, #fff);
+  box-shadow: 0 0 16px var(--fw-color, #fff), 0 0 34px var(--fw-color, #fff);
   animation: firework-particle 1.3s cubic-bezier(0.2, 0.6, 0.3, 1) forwards;
 }
 @keyframes firework-particle {

@@ -208,27 +208,27 @@ function playFireworks(tier) {
   const overlay = document.getElementById('fireworks');
   if (!overlay) return;
   const { bursts, particles, spread } = {
-    high:   { bursts: 10, particles: 20, spread: 3800 },
-    medium: { bursts: 5,  particles: 14, spread: 2600 },
-    low:    { bursts: 2,  particles: 10, spread: 1500 },
+    high:   { bursts: 22, particles: 32, spread: 4800 },
+    medium: { bursts: 12, particles: 24, spread: 3400 },
+    low:    { bursts: 5,  particles: 18, spread: 2000 },
   }[tier];
   for (let i = 0; i < bursts; i++) {
-    const delay = (i / bursts) * spread + Math.random() * 220;
+    const delay = (i / bursts) * spread + Math.random() * 240;
     setTimeout(() => spawnBurst(overlay, particles), delay);
   }
 }
 
 function spawnBurst(overlay, count) {
-  const x = 10 + Math.random() * 80;   // 10-90% of viewport width
-  const y = 18 + Math.random() * 52;   // 18-70% (keep above the hands)
+  const x = 8 + Math.random() * 84;    // 8-92% of viewport width
+  const y = 15 + Math.random() * 55;   // 15-70% (keep above the hands)
   const baseHue = Math.floor(Math.random() * 360);
   const burst = document.createElement('div');
   burst.className = 'firework-burst';
   burst.style.left = `${x}%`;
   burst.style.top = `${y}%`;
   for (let i = 0; i < count; i++) {
-    const angle = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
-    const distance = 70 + Math.random() * 60;
+    const angle = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.22;
+    const distance = 90 + Math.random() * 80;
     const p = document.createElement('div');
     p.className = 'firework-particle';
     p.style.setProperty('--fw-dx', `${Math.cos(angle) * distance}px`);
