@@ -8,10 +8,12 @@ const nameInput = document.getElementById('name-input');
 const PLAYER_KEY = 'hanabi-room.playerId';
 const NAME_KEY = 'hanabi-room.name';
 const ART_KEY = 'hanabi-room.useArt';
+const VERBOSE_KEY = 'hanabi-room.verbose';
 const SIZE_KEY = 'hanabi-room.size';
 const SIZE_FACTORS = { S: 0.85, M: 1.0, L: 1.2, XL: 1.5 };
 nameInput.value = localStorage.getItem(NAME_KEY) || '';
 let useArt = localStorage.getItem(ART_KEY) === 'on';
+let verbose = localStorage.getItem(VERBOSE_KEY) === 'on';
 
 function applySize(name) {
   if (!SIZE_FACTORS[name]) name = 'M';
@@ -433,6 +435,22 @@ function renderGame() {
   artItem.append(artBox);
   meta.append(artItem);
 
+  const verboseItem = document.createElement('label');
+  verboseItem.className = 'meta-item meta-toggle';
+  const verboseLabel = document.createElement('strong');
+  verboseLabel.textContent = 'Verbose info';
+  verboseItem.append(verboseLabel);
+  const verboseBox = document.createElement('input');
+  verboseBox.type = 'checkbox';
+  verboseBox.checked = verbose;
+  verboseBox.addEventListener('change', () => {
+    verbose = verboseBox.checked;
+    localStorage.setItem(VERBOSE_KEY, verbose ? 'on' : 'off');
+    render();
+  });
+  verboseItem.append(verboseBox);
+  meta.append(verboseItem);
+
   if (v.status === 'finished') {
     const banner = document.createElement('div');
     banner.className = 'banner ' + (v.endReason === 'perfect' ? 'win' : v.endReason === 'fuses' ? 'loss' : '');
@@ -599,7 +617,7 @@ function renderPlayerRow(player, index, isMyTurn) {
   return row;
 }
 
-function deriveCardDisplay(card, view) {
+function deriveCardDisplay(card, view, verboseOn) {
   const isMine = card.color === undefined;
   const nonBlackColorCount = view.suits.filter((s) => s.color !== 'black').length;
   const visibleColors = card.possibleColors.filter((c) => c !== 'black');
@@ -613,11 +631,11 @@ function deriveCardDisplay(card, view) {
     }
     const knownNumber = card.possibleNumbers.length === 1 ? card.possibleNumbers[0] : null;
     let possibleColorList = null;
-    if (!knownColor && visibleColors.length < nonBlackColorCount) {
+    if (!knownColor && (verboseOn || visibleColors.length < nonBlackColorCount)) {
       possibleColorList = card.possibleColors.slice();
     }
     let possibleNumberList = null;
-    if (!knownNumber && card.possibleNumbers.length < 5) {
+    if (!knownNumber && (verboseOn || card.possibleNumbers.length < 5)) {
       possibleNumberList = card.possibleNumbers;
     }
     return {
@@ -631,7 +649,7 @@ function deriveCardDisplay(card, view) {
 
   const colorsAllOpen = visibleColors.length === nonBlackColorCount;
   const numbersAllOpen = card.possibleNumbers.length === 5;
-  const noInfo = colorsAllOpen && numbersAllOpen;
+  const noInfo = !verboseOn && colorsAllOpen && numbersAllOpen;
   return {
     faceColor: card.color,
     faceNumber: card.number,
@@ -643,7 +661,7 @@ function deriveCardDisplay(card, view) {
 
 function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
   const isMine = ownerIndex === view.viewerIndex;
-  const { faceColor, faceNumber, possibleColorList, possibleNumberList, noInfo } = deriveCardDisplay(card, view);
+  const { faceColor, faceNumber, possibleColorList, possibleNumberList, noInfo } = deriveCardDisplay(card, view, verbose);
   const showArt = useArt && !!faceColor && faceNumber != null;
   const el = document.createElement('div');
   el.className = 'card';
