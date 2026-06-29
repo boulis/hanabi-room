@@ -171,6 +171,27 @@ input, select {
   font-weight: bold;
 }
 
+.latest-hint-chip {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 99px;
+  font-size: 0.78rem;
+  font-weight: bold;
+  color: #fff;
+  vertical-align: middle;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+.latest-hint-chip.number { background: #555; }
+.latest-hint-chip.color[data-color="red"]     { background: var(--color-red); }
+.latest-hint-chip.color[data-color="yellow"]  { background: var(--color-yellow); color: var(--card-text-dark); }
+.latest-hint-chip.color[data-color="green"]   { background: var(--color-green); }
+.latest-hint-chip.color[data-color="blue"]    { background: var(--color-blue); }
+.latest-hint-chip.color[data-color="white"]   { background: var(--color-white); color: var(--card-text-dark); }
+.latest-hint-chip.color[data-color="rainbow"] { background: var(--color-rainbow); }
+.latest-hint-chip.color[data-color="black"]   { background: var(--color-black); box-shadow: 0 0 0 1px #fff, 0 0 0 2px rgba(0, 0, 0, 0.5); }
+
 .action-bubble {
   font-size: 0.75rem;
   padding: 0.15rem 0.5rem;
@@ -636,6 +657,26 @@ input, select {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.card.ghost-leave {
+  position: fixed;
+  width: 96px;
+  min-height: 144px;
+  pointer-events: none;
+  z-index: 95;
+  animation: ghost-leave 1.2s cubic-bezier(0.25, 0.7, 0.3, 1) forwards;
+  transform-origin: 50% 50%;
+}
+.card.ghost-leave.misplay {
+  box-shadow: 0 0 0 2px #d23a3a, 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+@keyframes ghost-leave {
+  0%   { transform: translate(0, 0)    rotate(0deg)  scale(1.00); opacity: 1; }
+  20%  { transform: translate(0, -18px) rotate(-5deg) scale(1.12); opacity: 1; }
+  40%  { transform: translate(0, -38px) rotate(4deg)  scale(1.22); opacity: 1; }
+  60%  { transform: translate(0, -60px) rotate(-3deg) scale(1.32); opacity: 0.9; }
+  100% { transform: translate(0, -110px) rotate(0deg) scale(1.5);  opacity: 0; }
 }
 
 #fireworks {

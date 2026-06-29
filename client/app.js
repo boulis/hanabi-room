@@ -136,6 +136,56 @@ document.getElementById('undo-button').addEventListener('click', () => {
   send({ type: 'undo' });
 });
 
+let lastAnimatedActionTurn = null;
+
+function maybeAnimateAction(v) {
+  const latest = latestActionEntry(v.log);
+  if (!latest) {
+    // No action yet (game just started or restarted). Re-baseline so the
+    // first action in the new game does animate.
+    lastAnimatedActionTurn = -1;
+    return;
+  }
+  if (lastAnimatedActionTurn === null) {
+    // First time we're seeing actions (fresh connect mid-game). Baseline
+    // silently — don't replay history with animations.
+    lastAnimatedActionTurn = latest.turn;
+    return;
+  }
+  if (latest.turn <= lastAnimatedActionTurn) return;
+  lastAnimatedActionTurn = latest.turn;
+  if (latest.type !== 'play' && latest.type !== 'discard') return;
+  // Defer one frame so the post-action DOM is in place before we measure.
+  requestAnimationFrame(() => animateLeavingCard(v, latest));
+}
+
+function animateLeavingCard(v, latest) {
+  const rows = document.querySelectorAll('#game-hands .player-row');
+  const row = rows[latest.playerIndex];
+  if (!row) return;
+  const hand = row.querySelector('.hand');
+  if (!hand) return;
+  const handRect = hand.getBoundingClientRect();
+  // Card width and gap match the .card and .hand CSS.
+  const cardWidth = 96;
+  const gap = 8;
+  const x = handRect.left + latest.cardIndex * (cardWidth + gap);
+  const y = handRect.top;
+
+  const ghost = document.createElement('div');
+  ghost.className = 'card ghost-leave';
+  ghost.dataset.color = latest.card.color;
+  ghost.style.left = `${x}px`;
+  ghost.style.top = `${y}px`;
+  if (latest.type === 'play' && latest.success === false) ghost.classList.add('misplay');
+  const face = document.createElement('div');
+  face.className = 'card-face';
+  face.textContent = String(latest.card.number);
+  ghost.append(face);
+  document.body.append(ghost);
+  setTimeout(() => ghost.remove(), 1300);
+}
+
 let lastFinishedStatus = null;
 
 function maybeFireworks(v) {
@@ -315,6 +365,7 @@ function renderLobby() {
 
 function renderGame() {
   const v = view;
+  maybeAnimateAction(v);
   maybeFireworks(v);
   const meta = document.getElementById('game-meta');
   meta.innerHTML = '';
@@ -703,6 +754,19 @@ function renderHintControls(targetIndex) {
   return wrap;
 }
 
+function renderHintChip(hintType, value) {
+  const chip = document.createElement('span');
+  chip.className = 'latest-hint-chip ' + hintType;
+  if (hintType === 'color') {
+    chip.dataset.color = value;
+    chip.title = String(value);
+  } else {
+    chip.textContent = String(value);
+    chip.title = String(value);
+  }
+  return chip;
+}
+
 function renderCardSymbol(color, number) {
   const el = document.createElement('span');
   el.className = 'card-symbol';
@@ -776,7 +840,9 @@ function renderLatestAction(v) {
 
   if (e.type === 'hint') {
     const line = document.createElement('div');
-    line.append(`${name(e.fromIndex)} hinted ${name(e.toIndex)}`);
+    line.className = 'latest-line';
+    line.append(`${name(e.fromIndex)} hinted ${name(e.toIndex)}: `);
+    line.append(renderHintChip(e.hintType, e.value));
     body.append(line);
     if (e.touchedIndexes && e.touchedIndexes.length === 0) {
       const warn = document.createElement('div');
