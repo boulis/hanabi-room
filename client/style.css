@@ -638,6 +638,36 @@ input, select {
   flex-wrap: wrap;
 }
 
+#fireworks {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 100;
+}
+#fireworks:empty { display: none; }
+.firework-burst {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+.firework-particle {
+  position: absolute;
+  left: -4px;
+  top: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+  background: var(--fw-color, #fff);
+  box-shadow: 0 0 10px var(--fw-color, #fff), 0 0 22px var(--fw-color, #fff);
+  animation: firework-particle 1.3s cubic-bezier(0.2, 0.6, 0.3, 1) forwards;
+}
+@keyframes firework-particle {
+  0%   { transform: translate(0, 0) scale(0.6); opacity: 1; }
+  20%  { opacity: 1; }
+  100% { transform: translate(var(--fw-dx), var(--fw-dy)) scale(0.3); opacity: 0; }
+}
+
 #abandon-button.voted {
   border-color: #d23a3a;
   color: #d23a3a;

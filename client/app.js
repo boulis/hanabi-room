@@ -136,6 +136,60 @@ document.getElementById('undo-button').addEventListener('click', () => {
   send({ type: 'undo' });
 });
 
+let lastFinishedStatus = null;
+
+function maybeFireworks(v) {
+  const prev = lastFinishedStatus;
+  lastFinishedStatus = v.status;
+  // Fire only on the in-session transition into 'finished'. If a client
+  // reconnects directly into an already-finished game, prev is null and we
+  // skip — they missed the moment.
+  if (prev == null || prev === 'finished' || v.status !== 'finished') return;
+  const gap = (v.maxScore ?? 0) - (v.score ?? 0);
+  let tier = null;
+  if (gap <= 0) tier = 'high';
+  else if (gap <= 2) tier = 'medium';
+  else if (gap <= 4) tier = 'low';
+  if (!tier) return;
+  playFireworks(tier);
+}
+
+function playFireworks(tier) {
+  const overlay = document.getElementById('fireworks');
+  if (!overlay) return;
+  const { bursts, particles, spread } = {
+    high:   { bursts: 10, particles: 20, spread: 3800 },
+    medium: { bursts: 5,  particles: 14, spread: 2600 },
+    low:    { bursts: 2,  particles: 10, spread: 1500 },
+  }[tier];
+  for (let i = 0; i < bursts; i++) {
+    const delay = (i / bursts) * spread + Math.random() * 220;
+    setTimeout(() => spawnBurst(overlay, particles), delay);
+  }
+}
+
+function spawnBurst(overlay, count) {
+  const x = 10 + Math.random() * 80;   // 10-90% of viewport width
+  const y = 18 + Math.random() * 52;   // 18-70% (keep above the hands)
+  const baseHue = Math.floor(Math.random() * 360);
+  const burst = document.createElement('div');
+  burst.className = 'firework-burst';
+  burst.style.left = `${x}%`;
+  burst.style.top = `${y}%`;
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
+    const distance = 70 + Math.random() * 60;
+    const p = document.createElement('div');
+    p.className = 'firework-particle';
+    p.style.setProperty('--fw-dx', `${Math.cos(angle) * distance}px`);
+    p.style.setProperty('--fw-dy', `${Math.sin(angle) * distance}px`);
+    p.style.setProperty('--fw-color', `hsl(${baseHue + (Math.random() - 0.5) * 50}, 92%, 65%)`);
+    burst.append(p);
+  }
+  overlay.append(burst);
+  setTimeout(() => burst.remove(), 1400);
+}
+
 function triggerDownload(data, filename) {
   const json = JSON.stringify(data, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
@@ -261,6 +315,7 @@ function renderLobby() {
 
 function renderGame() {
   const v = view;
+  maybeFireworks(v);
   const meta = document.getElementById('game-meta');
   meta.innerHTML = '';
   const items = [
