@@ -8,8 +8,23 @@ const nameInput = document.getElementById('name-input');
 const PLAYER_KEY = 'hanabi-room.playerId';
 const NAME_KEY = 'hanabi-room.name';
 const ART_KEY = 'hanabi-room.useArt';
+const SIZE_KEY = 'hanabi-room.size';
+const SIZE_FACTORS = { S: 0.85, M: 1.0, L: 1.2, XL: 1.5 };
 nameInput.value = localStorage.getItem(NAME_KEY) || '';
 let useArt = localStorage.getItem(ART_KEY) === 'on';
+
+function applySize(name) {
+  if (!SIZE_FACTORS[name]) name = 'M';
+  document.body.style.zoom = String(SIZE_FACTORS[name]);
+  localStorage.setItem(SIZE_KEY, name);
+  for (const b of document.querySelectorAll('#size-controls button')) {
+    b.classList.toggle('active', b.dataset.size === name);
+  }
+}
+for (const b of document.querySelectorAll('#size-controls button')) {
+  b.addEventListener('click', () => applySize(b.dataset.size));
+}
+applySize(localStorage.getItem(SIZE_KEY) || 'M');
 
 let ws = null;
 let playerId = localStorage.getItem(PLAYER_KEY) || null;
