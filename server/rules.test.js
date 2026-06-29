@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createInitialState, exportDeckOrder, pileTop, score } from './game.js';
+import { createInitialState, exportDeckOrder, maxAchievableScore, pileTop, score } from './game.js';
 import { GameError, annotateAction, discardAction, hintAction, playAction } from './rules.js';
 
 const PLAYERS = [
@@ -564,6 +564,60 @@ test('end: perfect score ends the game with reason "perfect"', () => {
   assert.equal(s.status, 'finished');
   assert.equal(s.endReason, 'perfect');
   assert.equal(score(s), 25);
+});
+
+test('maxAchievableScore: caps a suit when every copy of a value is discarded', () => {
+  const s = freshState(); // simple variant — two 4s per suit
+  s.discard.push({ id: 1, color: 'red', number: 4 });
+  s.discard.push({ id: 2, color: 'red', number: 4 });
+  // Red can no longer reach 4 or 5 → contributes at most 3 to the score.
+  // Other 4 suits still cap at 5 each → 5*4 + 3 = 23.
+  assert.equal(maxAchievableScore(s), 23);
+});
+
+test('maxAchievableScore: respects pile progress when computing the cap', () => {
+  const s = freshState();
+  s.playedPiles.red = [1, 2, 3].map((n) => ({ id: n, color: 'red', number: n }));
+  // Even with all 4s discarded, the red pile already shows 3 (its cap stays 3).
+  s.discard.push({ id: 10, color: 'red', number: 4 });
+  s.discard.push({ id: 11, color: 'red', number: 4 });
+  assert.equal(maxAchievableScore(s), 23);
+});
+
+test('end: hitting the achievable cap ends the game with reason "maxed"', () => {
+  const s = freshState();
+  // Other 4 piles complete (4 * 5 = 20). Red at top=2 with both 4s discarded
+  // and red-3 ready in hand: playing red-3 brings score to 23, which equals
+  // the cap (red can never reach 4 → red max = 3).
+  for (const color of ['yellow', 'green', 'blue', 'white']) {
+    s.playedPiles[color] = [1, 2, 3, 4, 5].map((n) => ({ id: 5000 + n, color, number: n }));
+  }
+  s.playedPiles.red = [1, 2].map((n) => ({ id: 6000 + n, color: 'red', number: n }));
+  s.discard.push({ id: 7000, color: 'red', number: 4 });
+  s.discard.push({ id: 7001, color: 'red', number: 4 });
+  rigHand(s, 0, [{ color: 'red', number: 3 }]);
+  playAction(s, 0, 0);
+  assert.equal(s.status, 'finished');
+  assert.equal(s.endReason, 'maxed');
+  assert.equal(score(s), 23);
+});
+
+test('end: discarding the last critical card ends the game when score already equals the new cap', () => {
+  const s = freshState();
+  s.hintTokens = 4;
+  // All non-red suits complete (20). Red pile at 3 (=23). One red-4 already
+  // in discard. The about-to-be-discarded second red-4 caps red at 3, so the
+  // new cap equals the current score → game ends immediately on discard.
+  for (const color of ['yellow', 'green', 'blue', 'white']) {
+    s.playedPiles[color] = [1, 2, 3, 4, 5].map((n) => ({ id: 4000 + n, color, number: n }));
+  }
+  s.playedPiles.red = [1, 2, 3].map((n) => ({ id: 6000 + n, color: 'red', number: n }));
+  s.discard.push({ id: 7000, color: 'red', number: 4 });
+  rigHand(s, 0, [{ color: 'red', number: 4 }]);
+  discardAction(s, 0, 0);
+  assert.equal(s.status, 'finished');
+  assert.equal(s.endReason, 'maxed');
+  assert.equal(score(s), 23);
 });
 
 test('annotate: owner can set guarded flag and note within their hand', () => {

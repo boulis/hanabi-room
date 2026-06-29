@@ -227,6 +227,40 @@ export function maxPossibleScore(state) {
   return variant.suits.length * 5;
 }
 
+function maxAchievablePileLength(state, suit) {
+  const pile = state.playedPiles[suit.color];
+  if (pile.length === 5) return 5;
+  const top = pile.length === 0
+    ? (suit.direction === 'up' ? 0 : 6)
+    : pile[pile.length - 1].number;
+  const distCount = Object.create(null);
+  for (const n of suit.distribution) distCount[n] = (distCount[n] || 0) + 1;
+  const discardedCount = Object.create(null);
+  for (const c of state.discard) {
+    if (c.color === suit.color) discardedCount[c.number] = (discardedCount[c.number] || 0) + 1;
+  }
+  let reachable = pile.length;
+  if (suit.direction === 'up') {
+    for (let n = top + 1; n <= 5; n++) {
+      if ((distCount[n] || 0) - (discardedCount[n] || 0) > 0) reachable++;
+      else break;
+    }
+  } else {
+    for (let n = top - 1; n >= 1; n--) {
+      if ((distCount[n] || 0) - (discardedCount[n] || 0) > 0) reachable++;
+      else break;
+    }
+  }
+  return reachable;
+}
+
+export function maxAchievableScore(state) {
+  const variant = getVariant(state.variantId);
+  let total = 0;
+  for (const suit of variant.suits) total += maxAchievablePileLength(state, suit);
+  return total;
+}
+
 export function allHandsEmpty(state) {
   return state.players.every((p) => p.hand.length === 0);
 }

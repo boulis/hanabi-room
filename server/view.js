@@ -1,5 +1,5 @@
 import { getVariant, VARIANTS } from './variants.js';
-import { hintableColors, maxPossibleScore, pileTop, score } from './game.js';
+import { hintableColors, maxAchievableScore, maxPossibleScore, pileTop, score } from './game.js';
 
 function viewCard(card, { revealIdentity, isOwner, shareGuarded }) {
   const out = {
@@ -49,6 +49,7 @@ export function viewState(state, viewerIndex) {
     deckSize: state.deck.length,
     score: score(state),
     maxScore: maxPossibleScore(state),
+    maxAchievable: maxAchievableScore(state),
     endReason: state.endReason,
     seed: state.status === 'finished' ? state.seed : null,
     playedPiles: Object.fromEntries(

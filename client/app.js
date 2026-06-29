@@ -266,7 +266,9 @@ function renderGame() {
   const items = [
     ['Variant', v.variantName],
     ['Turn', v.turn],
-    ['Score', `${v.score} / ${v.maxScore}`],
+    ['Score', v.maxAchievable < v.maxScore
+      ? `${v.score} / ${v.maxScore}  (cap ${v.maxAchievable})`
+      : `${v.score} / ${v.maxScore}`],
     ['Hint tokens', `${v.hintTokens} / 8`],
     ['Fuse tokens', `${v.fuseTokens} / 3`],
     ['Deck', `${v.deckSize} cards`],

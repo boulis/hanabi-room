@@ -4,6 +4,7 @@ import {
   MAX_HINT_TOKENS,
   allHandsEmpty,
   dropHintMarkFromHand,
+  maxAchievableScore,
   maxPossibleScore,
   pileComplete,
   pileDirection,
@@ -60,8 +61,9 @@ function advanceTurn(state) {
     endGame(state, 'fuses');
     return;
   }
-  if (score(state) === maxPossibleScore(state)) {
-    endGame(state, 'perfect');
+  const reachable = maxAchievableScore(state);
+  if (score(state) >= reachable) {
+    endGame(state, reachable === maxPossibleScore(state) ? 'perfect' : 'maxed');
     return;
   }
   if (state.endRule === 'standard' && state.finalTurn !== null && state.turn >= state.finalTurn) {
