@@ -1,6 +1,6 @@
 {
   "name": "hanabi-room",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "description": "Self-hosted Hanabi card game for small groups, served over Tailscale.",
   "private": true,
   "type": "module",
