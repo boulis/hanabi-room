@@ -419,6 +419,15 @@ function renderGame() {
     div.innerHTML = `<strong>${k}</strong>${val}`;
     meta.append(div);
   }
+  const timerItem = document.createElement('div');
+  timerItem.className = 'meta-item meta-timer';
+  const timerLabel = document.createElement('strong');
+  timerLabel.textContent = 'Time';
+  const timerVal = document.createElement('span');
+  timerVal.id = 'game-timer';
+  timerVal.textContent = formatElapsed(v.startedAt, v.endedAt);
+  timerItem.append(timerLabel, timerVal);
+  meta.append(timerItem);
   const artItem = document.createElement('label');
   artItem.className = 'meta-item meta-toggle';
   const artLabel = document.createElement('strong');
@@ -488,13 +497,6 @@ function renderGame() {
 
   const piles = document.getElementById('game-piles');
   piles.innerHTML = '';
-  const tokensCol = document.createElement('div');
-  tokensCol.className = 'tokens-col';
-  const timer = document.createElement('div');
-  timer.id = 'game-timer';
-  timer.className = 'game-timer';
-  timer.textContent = formatElapsed(v.startedAt, v.endedAt);
-  tokensCol.append(timer);
   const tokensWrap = document.createElement('div');
   tokensWrap.className = 'hint-tokens';
   tokensWrap.title = `${v.hintTokens} / 8 hint tokens available`;
@@ -503,8 +505,7 @@ function renderGame() {
     t.className = 'hint-token' + (i < v.hintTokens ? '' : ' empty');
     tokensWrap.append(t);
   }
-  tokensCol.append(tokensWrap);
-  piles.append(tokensCol);
+  piles.append(tokensWrap);
   const discardsByColor = Object.fromEntries(v.suits.map((s) => [s.color, []]));
   for (const c of v.discard) discardsByColor[c.color].push(c.number);
   for (const color of Object.keys(discardsByColor)) {

@@ -217,17 +217,8 @@ input, select {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 
-.tokens-col {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.game-timer {
+.meta-timer #game-timer {
   font-family: ui-monospace, monospace;
-  font-size: 0.95rem;
-  opacity: 0.8;
   font-variant-numeric: tabular-nums;
 }
 
@@ -347,8 +338,15 @@ input, select {
   gap: 0.75rem;
 }
 
-/* 2 players: a single vertical column — same as before. */
+/* 2 players: a single vertical column, but cap each row to roughly six card
+   widths so the turn / notable bubbles in the header sit near the cards
+   instead of out at the right edge of the page. */
 #game-hands[data-count="2"] { grid-template-areas: "p0" "p1"; }
+#game-hands[data-count="2"] .player-row {
+  width: 100%;
+  max-width: 660px;
+  justify-self: start;
+}
 
 /* 3+ players use a 2-column grid; player rows below shrink to fit their cards
    (instead of stretching across the page) so the border hugs the hand. */
