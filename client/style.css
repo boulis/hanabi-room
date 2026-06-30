@@ -570,6 +570,24 @@ input, select {
   padding: 1px 0;
 }
 
+/* When card art is on, the underlying image swamps the small UI bits at the
+   bottom — give them a dark translucent sheet so they stay legible. */
+.card.art .possible,
+.card.art .no-info,
+.card.art .card-note {
+  background: rgba(0, 0, 0, 0.62);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+.card.art .possible .num,
+.card.art .no-info,
+.card.art .card-note {
+  color: rgba(255, 255, 255, 0.95);
+}
+.card.art .possible .num {
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
 .swatch[data-color="red"]    { background: var(--color-red); }
 .swatch[data-color="yellow"] { background: var(--color-yellow); }
 .swatch[data-color="green"]  { background: var(--color-green); }

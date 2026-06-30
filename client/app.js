@@ -677,8 +677,7 @@ function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
   if (card.numberClued) el.classList.add('clued-number');
   if (showArt) {
     el.classList.add('art');
-    el.style.setProperty('--card-svg', `url('/cards/${faceColor}-${faceNumber}.svg')`);
-    el.style.backgroundImage = 'var(--card-svg)';
+    el.style.backgroundImage = `url('/cards/${faceColor}-${faceNumber}')`;
   }
 
   const face = document.createElement('div');

@@ -50,11 +50,11 @@ To test on a single machine, open different browsers (Chrome + Firefox) — each
 - **Abandon game** — needs **two** distinct votes to take effect, so a single mis-click is harmless.
 - **Annotate** — pencil icon on your own cards opens a *Guard* checkbox and a private *Note* field. The note is never shared.
 - **Change name** — link in the top header; renames you for everyone immediately.
-- **Card art toggle** — per-client checkbox in the top meta row. When on, fully-known cards render with the SVG from `client/cards/`.
+- **Card art toggle** — per-client checkbox in the top meta row. When on, fully-known cards render with the image from `client/cards/` (PNG/WebP/JPEG/SVG/AVIF/GIF — first match wins).
 
 ## Card art
 
-The repo ships with a set of SVG cards in `client/cards/` (filenames like `red-3.svg`, `rainbow-5.svg`, `black-1.svg`, `back.svg`). To swap them, drop your own SVGs in there with the same filenames; the client picks them up automatically when the *Card art* toggle is on.
+Drop card images into `client/cards/` named `{color}-{number}.{ext}` (e.g. `red-3.png`, `rainbow-5.webp`, `black-1.svg`). Supported extensions: PNG, WebP, JPEG, AVIF, SVG, GIF. The server probes that order and serves whichever one exists, so you can mix formats or swap SVG → PNG just by replacing the file. When the *Card art* toggle is on, the client requests the image via `/cards/{color}-{number}` (no extension) — no code changes needed.
 
 ## Saved games
 

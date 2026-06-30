@@ -114,7 +114,7 @@ When adding a new variant, add it to `VARIANTS` and add a row to the deck-size t
 
 ## Card art
 
-User-provided SVGs go in `client/cards/` with the naming convention `{color}-{number}.svg` (e.g. `red-3.svg`, `rainbow-5.svg`, `black-1.svg`) plus `back.svg` for face-down cards. The client should reference cards by this convention so art is hot-swappable.
+User-provided card images go in `client/cards/` with the naming convention `{color}-{number}.{ext}` (e.g. `red-3.png`, `rainbow-5.webp`, `black-1.svg`). The client always requests `/cards/{color}-{number}` (no extension); the server probes for `.png`, `.webp`, `.jpg`, `.jpeg`, `.avif`, `.svg`, and `.gif` in that order and serves whichever it finds, so the host can drop any supported format without touching code.
 
 ## Deployment
 

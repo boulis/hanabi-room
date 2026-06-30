@@ -37,8 +37,36 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.avif': 'image/avif',
   '.json': 'application/json',
 };
+
+// Order matters — first existing match wins (so a swapped-in .png beats an
+// older .svg with the same basename).
+const CARD_EXTS = ['.png', '.webp', '.jpg', '.jpeg', '.avif', '.svg', '.gif'];
+
+async function tryServeCard(rel, res) {
+  const base = rel.slice('/cards/'.length);
+  if (!base || base.includes('/') || base.startsWith('.')) return false;
+  const cardsDir = path.join(CLIENT_DIR, 'cards');
+  for (const ext of CARD_EXTS) {
+    const candidate = path.join(cardsDir, base + ext);
+    if (!candidate.startsWith(cardsDir)) continue;
+    try {
+      const data = await fs.readFile(candidate);
+      res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+      res.end(data);
+      return true;
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+  }
+  return false;
+}
 
 let room = createRoom();
 const connections = new Map();
@@ -94,6 +122,14 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     let rel = decodeURIComponent(url.pathname);
     if (rel === '/') rel = '/index.html';
+    // Extensionless /cards/<name> requests probe the cards/ folder for any
+    // supported image format (png, webp, jpg, svg, …) and serve whichever
+    // file is present — so the host can swap formats without touching code.
+    if (rel.startsWith('/cards/') && !path.extname(rel)) {
+      if (await tryServeCard(rel, res)) return;
+      res.writeHead(404).end('Not found');
+      return;
+    }
     const filePath = path.join(CLIENT_DIR, rel);
     if (!filePath.startsWith(CLIENT_DIR)) {
       res.writeHead(403).end('Forbidden');
