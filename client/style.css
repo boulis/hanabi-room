@@ -723,6 +723,47 @@ input, select {
   gap: 0.25rem;
 }
 
+.card.tap-target {
+  cursor: pointer;
+}
+.card.tap-target:hover { box-shadow: 0 0 0 2px rgba(43, 106, 209, 0.45); }
+
+#card-action-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: grid;
+  place-items: center;
+  z-index: 60;
+}
+#card-action-popover {
+  background: Canvas;
+  color: CanvasText;
+  border-radius: 12px;
+  padding: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 240px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+#card-action-popover .popover-title {
+  font-weight: bold;
+  text-align: center;
+  margin-bottom: 0.25rem;
+  opacity: 0.75;
+}
+#card-action-popover .big-action {
+  padding: 0.85rem 1rem;
+  font-size: 1.05rem;
+  min-height: 52px;
+  border-radius: 8px;
+}
+#card-action-popover .play    { background: rgba(47, 150, 72, 0.18); border-color: rgba(47, 150, 72, 0.6); }
+#card-action-popover .discard { background: rgba(210, 58, 58, 0.18); border-color: rgba(210, 58, 58, 0.6); }
+#card-action-popover .annotate { background: rgba(43, 106, 209, 0.18); border-color: rgba(43, 106, 209, 0.6); }
+#card-action-popover .cancel { margin-top: 0.35rem; background: transparent; opacity: 0.85; }
+
 .modal {
   position: fixed;
   inset: 0;

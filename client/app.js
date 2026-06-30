@@ -9,11 +9,13 @@ const PLAYER_KEY = 'hanabi-room.playerId';
 const NAME_KEY = 'hanabi-room.name';
 const ART_KEY = 'hanabi-room.useArt';
 const VERBOSE_KEY = 'hanabi-room.verbose';
+const TAP_KEY = 'hanabi-room.tap';
 const SIZE_KEY = 'hanabi-room.size';
 const SIZE_FACTORS = { S: 0.85, M: 1.0, L: 1.2, XL: 1.5 };
 nameInput.value = localStorage.getItem(NAME_KEY) || '';
 let useArt = localStorage.getItem(ART_KEY) === 'on';
 let verbose = localStorage.getItem(VERBOSE_KEY) === 'on';
+let tapMode = localStorage.getItem(TAP_KEY) === 'on';
 
 function applySize(name) {
   if (!SIZE_FACTORS[name]) name = 'M';
@@ -459,6 +461,22 @@ function renderGame() {
   verboseItem.append(verboseBox);
   meta.append(verboseItem);
 
+  const tapItem = document.createElement('label');
+  tapItem.className = 'meta-item meta-toggle';
+  const tapLabel = document.createElement('strong');
+  tapLabel.textContent = 'Tap to act';
+  tapItem.append(tapLabel);
+  const tapBox = document.createElement('input');
+  tapBox.type = 'checkbox';
+  tapBox.checked = tapMode;
+  tapBox.addEventListener('change', () => {
+    tapMode = tapBox.checked;
+    localStorage.setItem(TAP_KEY, tapMode ? 'on' : 'off');
+    render();
+  });
+  tapItem.append(tapBox);
+  meta.append(tapItem);
+
   if (v.status === 'finished') {
     const banner = document.createElement('div');
     banner.className = 'banner ' + (v.endReason === 'perfect' ? 'win' : v.endReason === 'fuses' ? 'loss' : '');
@@ -739,38 +757,90 @@ function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
   }
 
   if (isMine && view.status === 'playing') {
-    const actions = document.createElement('div');
-    actions.className = 'card-actions';
+    if (tapMode) {
+      el.classList.add('tap-target');
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        openCardActions(card, cardIndex, isMyTurn);
+      });
+    } else {
+      const actions = document.createElement('div');
+      actions.className = 'card-actions';
 
-    const row1 = document.createElement('div');
-    row1.className = 'row';
-    if (isMyTurn) {
-      const playBtn = document.createElement('button');
-      playBtn.textContent = 'Play';
-      playBtn.addEventListener('click', () => send({ type: 'action', action: { type: 'play', cardIndex } }));
-      row1.append(playBtn);
-    }
-    const noteBtn = document.createElement('button');
-    noteBtn.className = 'edit-btn';
-    noteBtn.textContent = '✎';
-    noteBtn.title = 'Annotate';
-    noteBtn.addEventListener('click', () => openAnnotateModal(card));
-    row1.append(noteBtn);
-    actions.append(row1);
+      const row1 = document.createElement('div');
+      row1.className = 'row';
+      if (isMyTurn) {
+        const playBtn = document.createElement('button');
+        playBtn.textContent = 'Play';
+        playBtn.addEventListener('click', () => send({ type: 'action', action: { type: 'play', cardIndex } }));
+        row1.append(playBtn);
+      }
+      const noteBtn = document.createElement('button');
+      noteBtn.className = 'edit-btn';
+      noteBtn.textContent = '✎';
+      noteBtn.title = 'Annotate';
+      noteBtn.addEventListener('click', () => openAnnotateModal(card));
+      row1.append(noteBtn);
+      actions.append(row1);
 
-    if (isMyTurn) {
-      const row2 = document.createElement('div');
-      row2.className = 'row';
-      const discardBtn = document.createElement('button');
-      discardBtn.textContent = 'Discard';
-      discardBtn.disabled = view.hintTokens >= 8;
-      discardBtn.addEventListener('click', () => send({ type: 'action', action: { type: 'discard', cardIndex } }));
-      row2.append(discardBtn);
-      actions.append(row2);
+      if (isMyTurn) {
+        const row2 = document.createElement('div');
+        row2.className = 'row';
+        const discardBtn = document.createElement('button');
+        discardBtn.textContent = 'Discard';
+        discardBtn.disabled = view.hintTokens >= 8;
+        discardBtn.addEventListener('click', () => send({ type: 'action', action: { type: 'discard', cardIndex } }));
+        row2.append(discardBtn);
+        actions.append(row2);
+      }
+      el.append(actions);
     }
-    el.append(actions);
   }
   return el;
+}
+
+function openCardActions(card, cardIndex, isMyTurn) {
+  const overlay = document.getElementById('card-action-overlay');
+  const pop = document.getElementById('card-action-popover');
+  pop.innerHTML = '';
+
+  const title = document.createElement('div');
+  title.className = 'popover-title';
+  title.textContent = `Card ${cardIndex + 1}`;
+  pop.append(title);
+
+  const make = (text, className, disabled, onClick) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = text;
+    if (className) b.className = className;
+    if (disabled) b.disabled = true;
+    b.addEventListener('click', onClick);
+    pop.append(b);
+    return b;
+  };
+
+  if (isMyTurn) {
+    make('Play', 'big-action play', false, () => {
+      send({ type: 'action', action: { type: 'play', cardIndex } });
+      closeCardActions();
+    });
+    make('Discard', 'big-action discard', view.hintTokens >= 8, () => {
+      send({ type: 'action', action: { type: 'discard', cardIndex } });
+      closeCardActions();
+    });
+  }
+  make('Annotate', 'big-action annotate', false, () => {
+    closeCardActions();
+    openAnnotateModal(card);
+  });
+  make('Cancel', 'big-action cancel', false, closeCardActions);
+
+  overlay.hidden = false;
+}
+
+function closeCardActions() {
+  document.getElementById('card-action-overlay').hidden = true;
 }
 
 function renderPossible(colors, numbers, manual) {
@@ -986,6 +1056,11 @@ function openAnnotateModal(card) {
 
 document.getElementById('annotate-cancel').addEventListener('click', () => {
   annotateModal.hidden = true;
+});
+
+document.getElementById('card-action-overlay').addEventListener('click', (ev) => {
+  // Close when the user taps the backdrop (anywhere outside the popover).
+  if (ev.target.id === 'card-action-overlay') closeCardActions();
 });
 
 document.getElementById('annotate-save').addEventListener('click', () => {
