@@ -620,18 +620,28 @@ input, select {
 }
 
 /* When card art is on, the underlying image swamps the small UI bits at the
-   bottom — give them a dark translucent sheet so they stay legible. */
+   bottom — give them an opaque black sheet that bleeds slightly past the
+   card padding so the swatches/numbers/note read cleanly. */
 .card.art .possible,
 .card.art .no-info,
 .card.art .card-note {
-  background: rgba(0, 0, 0, 0.62);
+  background: #111;
   border-radius: 4px;
-  padding: 2px 4px;
+  padding: 4px 6px;
+  margin-left: -0.35rem;
+  margin-right: -0.35rem;
+}
+.card.art .possible:last-child,
+.card.art .no-info:last-child,
+.card.art .card-note:last-child {
+  margin-bottom: -0.35rem;
+  padding-bottom: 8px;
+  border-radius: 0 0 6px 6px;
 }
 .card.art .possible .num,
 .card.art .no-info,
 .card.art .card-note {
-  color: rgba(255, 255, 255, 0.95);
+  color: rgba(255, 255, 255, 0.96);
 }
 .card.art .possible .num {
   border-color: rgba(255, 255, 255, 0.45);
