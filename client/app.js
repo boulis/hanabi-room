@@ -1012,8 +1012,20 @@ function renderLatestAction(v) {
     body.append(line);
     if (e.wasTouched) {
       const touched = document.createElement('div');
-      touched.textContent = `Card was touched. ${e.wasFullyKnown ? 'Full info was known.' : 'Full info was not known.'}`;
-      body.append(touched);
+      if (e.wasFullyKnown) {
+        touched.textContent = 'Card was touched. Full info was known.';
+        body.append(touched);
+      } else if (e.knownColors || e.knownNumbers) {
+        touched.className = 'latest-line';
+        touched.append(`Card was touched. ${name(e.playerIndex)} knew `);
+        const possible = renderPossible(e.knownColors ?? [], e.knownNumbers ?? [], false);
+        if (possible) touched.append(possible);
+        body.append(touched);
+      } else {
+        // Older save / log entry without the snapshot — fall back to the previous wording.
+        touched.textContent = 'Card was touched. Full info was not known.';
+        body.append(touched);
+      }
     } else if (e.chopIndex != null && e.chopIndex >= 0 && e.cardIndex !== e.chopIndex) {
       const chop = document.createElement('div');
       chop.className = 'latest-highlight';

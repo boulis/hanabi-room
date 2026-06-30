@@ -171,6 +171,8 @@ export function discardAction(state, playerIndex, cardIndex) {
   const card = requireCard(state, playerIndex, cardIndex);
   const wasTouched = card.colorClued || card.numberClued;
   const wasFullyKnown = isFullyKnown(card);
+  const knownColors = card.possibleColors.slice();
+  const knownNumbers = card.possibleNumbers.slice();
   // When guard marks are public, a guarded card counts as "taken care of" and
   // is skipped when finding the chop, so the past-chop callout reflects what
   // every player can see.
@@ -185,6 +187,8 @@ export function discardAction(state, playerIndex, cardIndex) {
     card: { id: card.id, color: card.color, number: card.number },
     wasTouched,
     wasFullyKnown,
+    knownColors,
+    knownNumbers,
     chopIndex: chop,
     cardIndex,
   });
