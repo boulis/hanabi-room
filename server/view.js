@@ -1,5 +1,5 @@
 import { getVariant, VARIANTS } from './variants.js';
-import { hintableColors, maxAchievableScore, maxPossibleScore, pileTop, score } from './game.js';
+import { hintableColors, maxAchievableScore, maxPossibleScore, pileCap, pileTop, score } from './game.js';
 
 function viewCard(card, { revealIdentity, isOwner, shareGuarded }) {
   const out = {
@@ -57,7 +57,7 @@ export function viewState(state, viewerIndex) {
     playedPiles: Object.fromEntries(
       Object.entries(state.playedPiles).map(([color, pile]) => [
         color,
-        { top: pileTop(state, color), count: pile.length },
+        { top: pileTop(state, color), count: pile.length, cap: pileCap(state, color) },
       ]),
     ),
     discard: state.discard.map((c) => ({ id: c.id, color: c.color, number: c.number })),

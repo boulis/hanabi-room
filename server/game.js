@@ -261,6 +261,12 @@ export function maxAchievableScore(state) {
   return total;
 }
 
+export function pileCap(state, color) {
+  const variant = getVariant(state.variantId);
+  const suit = variant.suits.find((s) => s.color === color);
+  return maxAchievablePileLength(state, suit);
+}
+
 export function allHandsEmpty(state) {
   return state.players.every((p) => p.hand.length === 0);
 }

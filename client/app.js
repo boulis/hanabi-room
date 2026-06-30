@@ -522,6 +522,10 @@ function renderGame() {
     pile.className = 'pile';
     pile.dataset.color = suit.color;
     pile.dataset.direction = suit.direction;
+    if (p.count >= p.cap) {
+      pile.classList.add('done');
+      pile.title = p.count === 5 ? 'Pile complete' : `Pile capped at ${p.count} (critical cards discarded)`;
+    }
     pile.textContent = suit.direction === 'up'
       ? (p.top > 0 ? p.top : '–')
       : (p.top < 6 ? p.top : '–');
