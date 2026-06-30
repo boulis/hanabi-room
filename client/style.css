@@ -222,6 +222,55 @@ input, select {
   font-variant-numeric: tabular-nums;
 }
 
+.tokens-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.fuse-tokens {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.04);
+}
+
+.fuse-token {
+  width: 22px;
+  height: 22px;
+  border-radius: 99px;
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0) 35%),
+    radial-gradient(circle at 65% 70%, #b13d20 0%, #d96340 45%, #f29671 100%);
+  box-shadow:
+    inset 0 -2px 4px rgba(0, 0, 0, 0.25),
+    0 1px 2px rgba(0, 0, 0, 0.35);
+  position: relative;
+}
+
+.fuse-token::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 99px;
+  background:
+    linear-gradient(45deg, transparent 46%, rgba(255, 255, 255, 0.55) 49%, rgba(255, 255, 255, 0.55) 51%, transparent 54%),
+    linear-gradient(-45deg, transparent 46%, rgba(255, 255, 255, 0.55) 49%, rgba(255, 255, 255, 0.55) 51%, transparent 54%);
+  mask: radial-gradient(circle, #000 0%, #000 28%, transparent 32%);
+  -webkit-mask: radial-gradient(circle, #000 0%, #000 28%, transparent 32%);
+  opacity: 0.85;
+}
+
+.fuse-token.empty {
+  background: transparent;
+  border: 1px dashed rgba(127, 127, 127, 0.45);
+  box-shadow: none;
+}
+.fuse-token.empty::after { display: none; }
+
 .hint-tokens {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
