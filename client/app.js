@@ -699,7 +699,13 @@ function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
   const showArt = useArt && !!faceColor && faceNumber != null;
   const el = document.createElement('div');
   el.className = 'card';
-  if (!faceColor) el.classList.add('face-down');
+  if (!faceColor) {
+    el.classList.add('face-down');
+    if (useArt) {
+      el.classList.add('art');
+      el.style.backgroundImage = `url('/cards/back')`;
+    }
+  }
   if (faceColor && !showArt) el.dataset.color = faceColor;
   if (card.colorClued || card.numberClued) el.classList.add('clued');
   if (card.colorClued) el.classList.add('clued-color');
