@@ -149,7 +149,9 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const wss = new WebSocketServer({ server });
+// A dedicated path (rather than the root) keeps the WebSocket upgrade from
+// colliding with a reverse proxy's static-file/index-file shortcut for '/'.
+const wss = new WebSocketServer({ server, path: '/ws' });
 
 function send(ws, payload) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
@@ -286,9 +288,19 @@ wss.on('connection', (ws) => {
   });
 });
 
-const resumed = await maybeResumeRoom();
-if (resumed) room = resumed;
+// No top-level await here: some hosts (e.g. Phusion Passenger) load this
+// ESM file via require(), which Node refuses for a module with top-level
+// await. Keeping the await inside main() avoids that restriction.
+async function main() {
+  const resumed = await maybeResumeRoom();
+  if (resumed) room = resumed;
 
-server.listen(PORT, HOST, () => {
-  console.log(`hanabi-room listening on http://${HOST}:${PORT}`);
+  server.listen(PORT, HOST, () => {
+    console.log(`hanabi-room listening on http://${HOST}:${PORT}`);
+  });
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
 });

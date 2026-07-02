@@ -35,7 +35,7 @@ let playerId = localStorage.getItem(PLAYER_KEY) || null;
 let view = null;
 
 function connect() {
-  const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`;
+  const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
   ws = new WebSocket(url);
   ws.addEventListener('open', () => {
     statusEl.textContent = 'connected';
