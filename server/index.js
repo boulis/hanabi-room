@@ -11,7 +11,6 @@ import {
   applyAction,
   clearImportedDeck,
   configureRoom,
-  createRoom,
   importDeck,
   joinRoom,
   leaveRoom,
@@ -24,6 +23,7 @@ import {
   viewFor,
   voteAbandon,
 } from './room.js';
+import { addRoom, createRoom, deleteRoom, getRoom, listRooms } from './rooms.js';
 import { listIncompleteSaves, savedDir } from './savedGame.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -68,7 +68,6 @@ async function tryServeCard(rel, res) {
   return false;
 }
 
-let room = createRoom();
 const connections = new Map();
 
 function prompt(question) {
@@ -81,15 +80,15 @@ function prompt(question) {
   });
 }
 
-async function maybeResumeRoom() {
-  if (process.env.HANABI_NO_RESUME_PROMPT === '1') return null;
+async function maybeResumeAtBoot() {
+  if (process.env.HANABI_NO_RESUME_PROMPT === '1') return;
   const incomplete = await listIncompleteSaves();
-  if (incomplete.length === 0) return null;
+  if (incomplete.length === 0) return;
   if (!process.stdin.isTTY) {
     console.log(
-      `(${incomplete.length} incomplete save(s) in saved-games/; skipping resume prompt — no TTY)`,
+      `(${incomplete.length} incomplete save(s) in saved-games/; available for resume from the server lobby)`,
     );
-    return null;
+    return;
   }
   const top = incomplete.slice(0, 3);
   console.log('\nIncomplete saved games found:');
@@ -98,8 +97,8 @@ async function maybeResumeRoom() {
     const variant = s.variantId.padEnd(22);
     console.log(`  [${i + 1}] ${s.basename}  ${variant}  ${s.moves} moves  (${s.playerNames.join(', ')})`);
   }
-  const ans = (await prompt('Resume which? [1-3, filename, or Enter to skip]: ')).trim();
-  if (!ans) return null;
+  const ans = (await prompt('Resume any into a starter room? [1-3, filename, or Enter to skip]: ')).trim();
+  if (!ans) return;
   let filePath = null;
   const n = Number(ans);
   if (Number.isInteger(n) && n >= 1 && n <= top.length) {
@@ -109,12 +108,26 @@ async function maybeResumeRoom() {
   }
   try {
     const resumed = await resumeRoom(filePath);
-    console.log(`Resumed ${path.basename(filePath)} — ${resumed.players.length} players, turn ${resumed.state.turn}.`);
-    return resumed;
+    const r = addRoom(resumed, `Resumed ${path.basename(filePath)}`);
+    console.log(`Resumed ${path.basename(filePath)} into room ${r.id} — ${r.players.length} players, turn ${r.state.turn}.`);
   } catch (err) {
     console.error(`Could not resume ${filePath}: ${err.message}`);
-    return null;
   }
+}
+
+async function serverLobbyView() {
+  const saves = (await listIncompleteSaves()).slice(0, 20).map((s) => ({
+    basename: s.basename,
+    variantId: s.variantId,
+    playerNames: s.playerNames,
+    moves: s.moves,
+    startedAt: s.startedAt,
+  }));
+  return {
+    kind: 'server-lobby',
+    rooms: listRooms(),
+    resumableSaves: saves,
+  };
 }
 
 const server = http.createServer(async (req, res) => {
@@ -157,28 +170,61 @@ function send(ws, payload) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
 }
 
-function broadcastSync() {
+function inRoomViewFor(room, playerId) {
+  const v = viewFor(room, playerId);
+  v.kind = 'in-room';
+  v.roomId = room.id;
+  v.roomName = room.name;
+  return v;
+}
+
+function broadcastRoom(roomId) {
+  const room = getRoom(roomId);
+  if (!room) return;
   for (const [ws, conn] of connections) {
-    if (conn.playerId) {
-      send(ws, { type: 'sync', view: viewFor(room, conn.playerId) });
-    } else {
-      send(ws, { type: 'sync', view: viewFor(room, null) });
-    }
+    if (conn.roomId !== roomId) continue;
+    send(ws, { type: 'sync', view: inRoomViewFor(room, conn.playerId) });
   }
+}
+
+async function broadcastServerLobby() {
+  const view = await serverLobbyView();
+  for (const [ws, conn] of connections) {
+    if (conn.roomId) continue;
+    send(ws, { type: 'sync', view });
+  }
+}
+
+async function broadcastRoomAndLobby(roomId) {
+  broadcastRoom(roomId);
+  await broadcastServerLobby();
 }
 
 function sendError(ws, error, code = 'error') {
   send(ws, { type: 'error', error, code });
 }
 
-wss.on('connection', (ws) => {
-  const conn = { playerId: null };
+function requireRoom(conn) {
+  if (!conn.roomId) throw new GameError('Not in a room', 'no_room');
+  const room = getRoom(conn.roomId);
+  if (!room) throw new GameError('Room no longer exists', 'no_room');
+  return room;
+}
+
+function requireSeat(conn) {
+  const room = requireRoom(conn);
+  if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+  return room;
+}
+
+wss.on('connection', async (ws) => {
+  const conn = { playerId: null, roomId: null };
   connections.set(ws, conn);
   send(ws, {
     type: 'hello',
     variants: Object.values(VARIANTS).map((v) => ({ id: v.id, name: v.name })),
   });
-  send(ws, { type: 'sync', view: viewFor(room, null) });
+  send(ws, { type: 'sync', view: await serverLobbyView() });
 
   ws.on('message', async (raw) => {
     let msg;
@@ -190,51 +236,100 @@ wss.on('connection', (ws) => {
     }
     try {
       switch (msg.type) {
-        case 'join': {
-          const player = joinRoom(room, { name: msg.name, playerId: msg.playerId });
+        case 'createRoom': {
+          const r = createRoom(msg.roomName);
+          const player = joinRoom(r, { name: msg.playerName, playerId: msg.playerId });
           conn.playerId = player.id;
-          send(ws, { type: 'identity', playerId: player.id });
-          broadcastSync();
+          conn.roomId = r.id;
+          send(ws, { type: 'identity', playerId: player.id, roomId: r.id, roomName: r.name });
+          await broadcastRoomAndLobby(r.id);
+          break;
+        }
+        case 'enterRoom': {
+          const r = getRoom(msg.roomId);
+          if (!r) throw new GameError('Room not found', 'no_room');
+          const player = joinRoom(r, { name: msg.playerName, playerId: msg.playerId });
+          conn.playerId = player.id;
+          conn.roomId = r.id;
+          send(ws, { type: 'identity', playerId: player.id, roomId: r.id, roomName: r.name });
+          await broadcastRoomAndLobby(r.id);
+          break;
+        }
+        case 'leaveRoom': {
+          const prevRoomId = conn.roomId;
+          if (prevRoomId) {
+            const r = getRoom(prevRoomId);
+            if (r && conn.playerId) leaveRoom(r, conn.playerId);
+          }
+          conn.roomId = null;
+          conn.playerId = null;
+          send(ws, { type: 'sync', view: await serverLobbyView() });
+          if (prevRoomId) broadcastRoom(prevRoomId);
+          await broadcastServerLobby();
+          break;
+        }
+        case 'resumeSave': {
+          const fileArg = String(msg.file || '');
+          const filePath = path.isAbsolute(fileArg) ? fileArg : path.join(savedDir(), fileArg);
+          const resumed = await resumeRoom(filePath);
+          const r = addRoom(resumed, msg.roomName);
+          send(ws, { type: 'roomCreated', roomId: r.id, roomName: r.name });
+          await broadcastServerLobby();
+          break;
+        }
+        case 'closeRoom': {
+          const r = requireRoom(conn);
+          if (r.hostId !== conn.playerId) throw new GameError('Only the host can close a room', 'not_host');
+          deleteRoom(r.id);
+          // Disconnect everyone from the room.
+          for (const [otherWs, otherConn] of connections) {
+            if (otherConn.roomId === r.id) {
+              otherConn.roomId = null;
+              otherConn.playerId = null;
+              send(otherWs, { type: 'sync', view: await serverLobbyView() });
+            }
+          }
+          await broadcastServerLobby();
           break;
         }
         case 'configure': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           configureRoom(room, conn.playerId, msg.options || {});
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'start': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           await startGame(room, conn.playerId, { seed: msg.seed });
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'action': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           await applyAction(room, conn.playerId, msg.action);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'abandon': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           await voteAbandon(room, conn.playerId);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'undo': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           await undoLast(room, conn.playerId);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'returnToLobby': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           returnToLobby(room, conn.playerId);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'exportDeck': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           if (room.phase !== 'playing' || room.state?.status !== 'finished') {
             throw new GameError('No finished game to export', 'no_finished_game');
           }
@@ -245,27 +340,27 @@ wss.on('connection', (ws) => {
           break;
         }
         case 'importDeck': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           importDeck(room, conn.playerId, msg.deck);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'clearImportedDeck': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           clearImportedDeck(room, conn.playerId);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'movePlayer': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           movePlayer(room, conn.playerId, msg.targetId, msg.direction);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'rename': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           await renamePlayer(room, conn.playerId, msg.name);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         default:
@@ -281,10 +376,15 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => {
-    if (conn.playerId) leaveRoom(room, conn.playerId);
+  ws.on('close', async () => {
+    const { roomId, playerId } = conn;
+    if (roomId && playerId) {
+      const room = getRoom(roomId);
+      if (room) leaveRoom(room, playerId);
+    }
     connections.delete(ws);
-    broadcastSync();
+    if (roomId) broadcastRoom(roomId);
+    try { await broadcastServerLobby(); } catch (err) { console.error(err); }
   });
 });
 
@@ -292,8 +392,7 @@ wss.on('connection', (ws) => {
 // ESM file via require(), which Node refuses for a module with top-level
 // await. Keeping the await inside main() avoids that restriction.
 async function main() {
-  const resumed = await maybeResumeRoom();
-  if (resumed) room = resumed;
+  await maybeResumeAtBoot();
 
   server.listen(PORT, HOST, () => {
     console.log(`hanabi-room listening on http://${HOST}:${PORT}`);

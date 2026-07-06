@@ -20,14 +20,27 @@
     </header>
     <main id="app">
       <section id="join-screen" class="screen">
-        <h2>Join the game</h2>
+        <h2>Welcome</h2>
         <form id="join-form">
           <label>
             Your name
             <input id="name-input" required maxlength="24" autocomplete="off" />
           </label>
-          <button type="submit">Join</button>
+          <button type="submit">Continue</button>
         </form>
+      </section>
+
+      <section id="server-lobby-screen" class="screen" hidden>
+        <div class="server-lobby-header">
+          <h2>Rooms</h2>
+          <form id="create-room-form">
+            <input id="create-room-name" maxlength="40" placeholder="Room name (optional)" autocomplete="off" />
+            <button type="submit">Create room</button>
+          </form>
+        </div>
+        <div id="rooms-list"></div>
+        <h3>Resumable saved games</h3>
+        <div id="resumable-saves"></div>
       </section>
 
       <section id="lobby-screen" class="screen" hidden>

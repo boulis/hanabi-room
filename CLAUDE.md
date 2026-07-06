@@ -26,8 +26,9 @@ Requires Node ≥ 20 (uses ES modules and `node:test`).
   - `rules.js` — action handlers (play/discard/hint/annotate), turn rotation, end conditions (pure mutations on state)
   - `view.js` — filters state into a per-viewer view (hides own card identities; gates the guarded-card flag on the share option; the note is owner-only and never shared)
   - `savedGame.js` — append-only JSONL game log under `saved-games/`, plus reconstruction (`loadSave`) used by the resume flow
-  - `room.js` — lobby + game-room model: who's host, who's joined, action dispatch
-  - `index.js` — HTTP static server + WebSocket transport; thin shell over `room.js`
+  - `room.js` — a single game room: who's host, who's joined, action dispatch
+  - `rooms.js` — in-memory registry of rooms (`Map<id, room>`) keyed by 6-hex ids, with `createRoom`/`getRoom`/`listRooms`/`addRoom`/`deleteRoom`/`summarizeRoom`. Rooms are ephemeral; only saved-game files persist across server restarts.
+  - `index.js` — HTTP static server + WebSocket transport; routes each connection to at most one room at a time
   Keep game logic in `game.js` / `rules.js` and view filtering in `view.js`. The transport doesn't know game rules.
 - **Per-card hint state**: every card carries `possibleColors`, `possibleNumbers`, `colorClued`, `numberClued`, `lastHints` (recent hint markers touching this card, see below), and `annotations` (a `{ note, guarded }` pair). Formal hints update the constraints; annotations are owner-controlled metadata. Cards in your own hand are sent to you WITHOUT their `color`/`number` fields, but WITH the inferred constraints — that's how you see "this could be red or rainbow" without seeing what it actually is. The `note` field is always private to the owner. The `guarded` boolean is visible to the owner; other players see it only when the lobby option `shareGuarded` is on.
 - **Hint markers (`lastHints`)**: each hint gets a monotonic `hintIndex` from `state.nextHintIndex`. When a hint touches cards, `{ hintIndex, hintType, value }` is appended to each touched card's `lastHints` (newest last). A new hint never clears another hint's markers — multiple recent hints stack so the visualization can convey provenance. Two rules prune markers: (1) **consumption** — when a card leaves the hand (play OR discard, success or misplay), each of its `lastHints` entries is removed from every other card in the same hand (one card from the hint's touched set "using up" the hint clears the whole hint); (2) **cap** — at most `HINT_MARK_LIMIT=4` markers per card; when a touched card would exceed 4, its oldest hintIndex is dropped from every card in the hand. The client renders newest-at-center fanning to the right with overlap.
@@ -72,9 +73,18 @@ Both modes also end on the third fuse (immediate loss) or perfect score.
 
 ## WebSocket protocol
 
-Server → client: `hello` (variant list), `identity` (your assigned `playerId`), `sync` (filtered view), `error`.
+Server → client: `hello` (variant list), `identity` (your assigned `playerId` plus the `roomId` and `roomName` you were placed in), `sync` (filtered view — either a `server-lobby` view or an `in-room` view), `error`, `roomCreated` (a resumed save landed in a fresh room; the client uses it to auto-enter), `deckExport`.
+
+A view is one of:
+- `kind: 'server-lobby'` — sent to connections that aren't in a room. Contains `rooms: [{ id, name, status, variantId, players, turn, ... }]` and `resumableSaves: [{ basename, variantId, playerNames, moves, ... }]`.
+- `kind: 'in-room'` — everything else you see today (lobby / playing / finished). Also carries `roomId` and `roomName` at the top level.
+
 Client → server:
-- `join { name, playerId? }`
+- `createRoom { roomName?, playerName, playerId? }` — creates a fresh room and auto-joins the caller.
+- `enterRoom { roomId, playerName, playerId? }` — joins an existing room.
+- `leaveRoom` — drop back to the server lobby.
+- `resumeSave { file, roomName? }` — spins up a new room from a saved game and returns `roomCreated`; the client then sends `enterRoom` for it.
+- `closeRoom` — host only; removes the room and kicks everyone back to the lobby.
 - `configure { options }` (host only)
 - `start { seed? }` (host only; works in lobby OR when a finished game is on screen)
 - `action { action: { type: 'play'|'discard'|'hint'|'annotate', ... } }`

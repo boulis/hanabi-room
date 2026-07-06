@@ -1,5 +1,6 @@
 const statusEl = document.getElementById('status');
 const joinScreen = document.getElementById('join-screen');
+const serverLobbyScreen = document.getElementById('server-lobby-screen');
 const lobbyScreen = document.getElementById('lobby-screen');
 const gameScreen = document.getElementById('game-screen');
 const joinForm = document.getElementById('join-form');
@@ -7,6 +8,7 @@ const nameInput = document.getElementById('name-input');
 
 const PLAYER_KEY = 'hanabi-room.playerId';
 const NAME_KEY = 'hanabi-room.name';
+const ROOM_KEY = 'hanabi-room.roomId';
 const ART_KEY = 'hanabi-room.useArt';
 const VERBOSE_KEY = 'hanabi-room.verbose';
 const TAP_KEY = 'hanabi-room.tap';
@@ -32,6 +34,7 @@ applySize(localStorage.getItem(SIZE_KEY) || 'M');
 
 let ws = null;
 let playerId = localStorage.getItem(PLAYER_KEY) || null;
+let roomId = localStorage.getItem(ROOM_KEY) || null;
 let view = null;
 
 function connect() {
@@ -39,8 +42,11 @@ function connect() {
   ws = new WebSocket(url);
   ws.addEventListener('open', () => {
     statusEl.textContent = 'connected';
-    if (playerId && nameInput.value) {
-      send({ type: 'join', name: nameInput.value, playerId });
+    // If we remember a name + room, try to re-enter it. If the room is gone,
+    // the server will error and we'll land in the server-lobby view.
+    const savedName = nameInput.value.trim() || localStorage.getItem(NAME_KEY) || '';
+    if (savedName && roomId) {
+      send({ type: 'enterRoom', roomId, playerName: savedName, playerId });
     }
   });
   ws.addEventListener('close', () => {
@@ -67,6 +73,19 @@ function handleMessage(msg) {
     case 'identity':
       playerId = msg.playerId;
       localStorage.setItem(PLAYER_KEY, playerId);
+      if (msg.roomId) {
+        roomId = msg.roomId;
+        localStorage.setItem(ROOM_KEY, roomId);
+      }
+      break;
+    case 'roomCreated':
+      // Emitted when a save was resumed into a fresh room; auto-enter it.
+      send({
+        type: 'enterRoom',
+        roomId: msg.roomId,
+        playerName: nameInput.value.trim() || localStorage.getItem(NAME_KEY) || '',
+        playerId,
+      });
       break;
     case 'sync':
       view = msg.view;
@@ -78,6 +97,14 @@ function handleMessage(msg) {
     case 'error':
       console.warn('server error:', msg.code, msg.error);
       flashError(msg.error);
+      if (msg.code === 'no_room' && roomId) {
+        // The room we thought we were in is gone; forget it so the lobby is
+        // the natural landing spot.
+        roomId = null;
+        playerId = null;
+        localStorage.removeItem(ROOM_KEY);
+        localStorage.removeItem(PLAYER_KEY);
+      }
       break;
   }
 }
@@ -105,7 +132,18 @@ joinForm.addEventListener('submit', (e) => {
   const name = nameInput.value.trim();
   if (!name) return;
   localStorage.setItem(NAME_KEY, name);
-  send({ type: 'join', name, playerId });
+  // Nothing else to send — the server-lobby is already open. Render will
+  // switch screens now that we have a name in storage.
+  render();
+});
+
+document.getElementById('create-room-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const name = (localStorage.getItem(NAME_KEY) || nameInput.value.trim() || '').trim();
+  if (!name) return;
+  const roomName = document.getElementById('create-room-name').value.trim();
+  send({ type: 'createRoom', roomName, playerName: name, playerId });
+  document.getElementById('create-room-name').value = '';
 });
 
 document.getElementById('opt-variant').addEventListener('change', (e) => {
@@ -290,8 +328,14 @@ function triggerDownload(data, filename) {
 function render() {
   if (!view) return;
   renderHeader();
-  if (!playerId) {
+  const savedName = localStorage.getItem(NAME_KEY) || '';
+  if (!savedName) {
     show(joinScreen);
+    return;
+  }
+  if (view.kind === 'server-lobby') {
+    show(serverLobbyScreen);
+    renderServerLobby(view);
     return;
   }
   if (view.status === 'lobby') {
@@ -303,8 +347,108 @@ function render() {
   }
 }
 
+function renderServerLobby(v) {
+  const listEl = document.getElementById('rooms-list');
+  listEl.innerHTML = '';
+  const savedName = localStorage.getItem(NAME_KEY) || '';
+  const rooms = v.rooms || [];
+  if (rooms.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'lobby-empty';
+    empty.textContent = 'No rooms yet — create one below.';
+    listEl.append(empty);
+  }
+  for (const r of rooms) {
+    const row = document.createElement('div');
+    row.className = 'room-row status-' + r.status;
+    const label = document.createElement('div');
+    label.className = 'room-label';
+    const title = document.createElement('div');
+    title.className = 'room-title';
+    title.textContent = r.name;
+    label.append(title);
+    const meta = document.createElement('div');
+    meta.className = 'room-meta';
+    const playerNames = r.players.map((p) => (p.online ? p.name : `${p.name} (offline)`)).join(', ') || '(empty)';
+    const statusText = r.status === 'lobby'
+      ? `lobby · ${r.variantId || 'no variant'}`
+      : r.status === 'playing'
+        ? `playing · turn ${r.turn} · ${r.variantId}`
+        : `finished · ${r.variantId}`;
+    meta.textContent = `${statusText} — ${playerNames}`;
+    label.append(meta);
+    row.append(label);
+    const enter = document.createElement('button');
+    enter.type = 'button';
+    enter.textContent = 'Enter';
+    enter.disabled = !savedName;
+    enter.addEventListener('click', () => {
+      send({ type: 'enterRoom', roomId: r.id, playerName: savedName, playerId });
+    });
+    row.append(enter);
+    listEl.append(row);
+  }
+
+  const savesEl = document.getElementById('resumable-saves');
+  savesEl.innerHTML = '';
+  const saves = v.resumableSaves || [];
+  if (saves.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'lobby-empty';
+    empty.textContent = 'No incomplete saves.';
+    savesEl.append(empty);
+  }
+  for (const s of saves) {
+    const row = document.createElement('div');
+    row.className = 'save-row';
+    const label = document.createElement('div');
+    label.className = 'save-label';
+    const title = document.createElement('div');
+    title.className = 'save-title';
+    title.textContent = s.basename;
+    label.append(title);
+    const meta = document.createElement('div');
+    meta.className = 'save-meta';
+    meta.textContent = `${s.variantId} · ${s.moves} moves · ${(s.playerNames || []).join(', ')}`;
+    label.append(meta);
+    row.append(label);
+    const resume = document.createElement('button');
+    resume.type = 'button';
+    resume.textContent = 'Resume';
+    resume.disabled = !savedName;
+    resume.addEventListener('click', () => {
+      send({ type: 'resumeSave', file: s.basename });
+    });
+    row.append(resume);
+    savesEl.append(row);
+  }
+}
+
 function renderHeader() {
   const meEl = document.getElementById('me');
+  const savedName = localStorage.getItem(NAME_KEY) || '';
+  // In the server-lobby view we only have a stored name (no seat / playerId
+  // yet). Still surface it in the header so the user can rename or see who
+  // they'll be identified as.
+  if (view?.kind === 'server-lobby') {
+    if (!savedName) { meEl.hidden = true; return; }
+    meEl.hidden = false;
+    meEl.textContent = `you are ${savedName}`;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'change';
+    btn.addEventListener('click', () => {
+      const next = prompt('Your name:', savedName);
+      if (next == null) return;
+      const trimmed = next.trim();
+      if (!trimmed || trimmed === savedName) return;
+      localStorage.setItem(NAME_KEY, trimmed);
+      nameInput.value = trimmed;
+      render();
+    });
+    meEl.append(' ', btn);
+    return;
+  }
   const players = view?.players ?? [];
   const me = players.find((p) => p.id === playerId);
   if (!me) {
@@ -326,10 +470,27 @@ function renderHeader() {
     nameInput.value = trimmed;
   });
   meEl.append(' ', btn);
+  if (view?.kind === 'in-room' && view.roomName) {
+    const roomLabel = document.createElement('span');
+    roomLabel.className = 'header-room';
+    roomLabel.textContent = ` · in ${view.roomName}`;
+    meEl.append(roomLabel);
+    const leaveBtn = document.createElement('button');
+    leaveBtn.type = 'button';
+    leaveBtn.textContent = 'leave room';
+    leaveBtn.addEventListener('click', () => {
+      roomId = null;
+      playerId = null;
+      localStorage.removeItem(ROOM_KEY);
+      localStorage.removeItem(PLAYER_KEY);
+      send({ type: 'leaveRoom' });
+    });
+    meEl.append(' ', leaveBtn);
+  }
 }
 
 function show(screen) {
-  for (const s of [joinScreen, lobbyScreen, gameScreen]) {
+  for (const s of [joinScreen, serverLobbyScreen, lobbyScreen, gameScreen]) {
     s.hidden = s !== screen;
   }
 }
