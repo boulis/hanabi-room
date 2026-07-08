@@ -90,6 +90,8 @@ Client → server:
 - `configure { options }` (host only)
 - `start { seed? }` (host only; works in lobby OR when a finished game is on screen)
 - `action { action: { type: 'play'|'discard'|'hint'|'annotate', ... } }`
+- `undo` — roll back the most recent play/discard/hint; only the player who took it can undo it. The undone action's log entries are kept, flagged `undone: true` (clients strike them out with an [UNDO] badge); saves record undo as a distinct event and replay reproduces the struck entries.
+- `requestUndo` — toggle a request that the current undo owner (top of the undo stack) undoes. Transient (never saved); cleared by any action, undo, or new game. The owner's view gets `undoRequests: [names]`; others get `canRequestUndo`/`undoRequestedByMe`.
 - `abandon` — cast a vote to abandon the current game; on the second distinct vote the game is marked finished with `endReason: 'abandoned'` (same game-over screen as a natural end, so players can review or export the deck order before starting a new one). Voting twice toggles your own vote.
 - `exportDeck` — any player may request the deck order of the finished game; the server replies with `deckExport { data, filename }` for the client to save as a file. Rejected if the game isn't finished (would otherwise leak the remaining draw pile).
 
