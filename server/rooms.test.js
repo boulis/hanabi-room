@@ -9,10 +9,11 @@ import {
   createRoom,
   deleteRoom,
   getRoom,
+  isRoomIdle,
   listRooms,
   summarizeRoom,
 } from './rooms.js';
-import { joinRoom, startGame, applyAction } from './room.js';
+import { joinRoom, leaveRoom, startGame, applyAction } from './room.js';
 
 // Best-effort isolation: every test purges the registry before running.
 function purge() {
@@ -86,6 +87,38 @@ test('addRoom accepts an externally-built room (e.g. from a resumed save)', () =
   assert.match(added.id, /^[0-9a-f]{6}$/);
   assert.equal(added.name, 'Imported');
   assert.equal(getRoom(added.id), added);
+});
+
+test('isRoomIdle: true when empty or all seats offline, false with anyone online', async () => {
+  await withTmpSaveDir(async () => {
+    purge();
+    const r = createRoom('Idle');
+    assert.equal(isRoomIdle(r), true, 'no players at all');
+    const alice = joinRoom(r, { name: 'Alice' });
+    joinRoom(r, { name: 'Bob' });
+    assert.equal(isRoomIdle(r), false, 'players online');
+    // In the lobby phase, leaving removes the seat entirely.
+    leaveRoom(r, alice.id);
+    assert.equal(isRoomIdle(r), false, 'Bob still online');
+    // In the playing phase, leaving only marks the seat offline.
+    const carol = joinRoom(r, { name: 'Carol' });
+    await startGame(r, r.hostId, { seed: 1 });
+    leaveRoom(r, r.players[0].id);
+    leaveRoom(r, carol.id);
+    assert.equal(isRoomIdle(r), true, 'all seats offline');
+  });
+});
+
+test('summarizeRoom carries creatorId; addRoom falls back to hostId for resumed rooms', () => {
+  purge();
+  const r = createRoom('Mine');
+  const alice = joinRoom(r, { name: 'Alice' });
+  r.creatorId = alice.id; // as the transport does after the creator joins
+  assert.equal(summarizeRoom(r).creatorId, alice.id);
+
+  const resumed = { players: [], options: {}, id: null, name: null, createdAt: null, hostId: 'h1', creatorId: null };
+  addRoom(resumed, 'Resumed');
+  assert.equal(resumed.creatorId, 'h1', 'resumed room creator defaults to the save header host');
 });
 
 test('deleteRoom removes a room and getRoom returns undefined thereafter', () => {

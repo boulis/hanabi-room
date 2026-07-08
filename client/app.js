@@ -386,6 +386,20 @@ function renderServerLobby(v) {
       send({ type: 'enterRoom', roomId: r.id, playerName: savedName, playerId });
     });
     row.append(enter);
+    // Deletable when you created the room, or when nobody is in it (no
+    // players, or every seat offline). The server enforces the same rule.
+    const idle = r.players.every((p) => !p.online);
+    if (idle || (playerId && r.creatorId === playerId)) {
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'room-delete';
+      del.textContent = 'Delete';
+      del.addEventListener('click', () => {
+        if (!confirm(`Delete room "${r.name}"?`)) return;
+        send({ type: 'deleteRoom', roomId: r.id, playerId });
+      });
+      row.append(del);
+    }
     listEl.append(row);
   }
 

@@ -18,6 +18,9 @@ export function createRoom(roomName) {
   room.id = id;
   room.name = (roomName && roomName.trim()) ? roomName.trim().slice(0, 40) : `Room ${id}`;
   room.createdAt = Date.now();
+  // Set by the transport once the creating player has joined; lets that
+  // player delete the room later from the server lobby.
+  room.creatorId = null;
   rooms.set(id, room);
   return room;
 }
@@ -42,6 +45,9 @@ export function addRoom(room, roomName) {
     room.name = (roomName && roomName.trim()) ? roomName.trim().slice(0, 40) : `Room ${room.id}`;
   }
   if (!room.createdAt) room.createdAt = Date.now();
+  // Resumed rooms have no live creator connection; treat the save's host as
+  // the creator so they can clean the room up from the server lobby.
+  if (room.creatorId === undefined || room.creatorId === null) room.creatorId = room.hostId ?? null;
   rooms.set(room.id, room);
   return room;
 }
@@ -49,6 +55,12 @@ export function addRoom(room, roomName) {
 function statusOf(room) {
   if (room.state) return room.state.status; // 'playing' | 'finished'
   return 'lobby';
+}
+
+// A room is idle when nobody is present: no players at all, or every seat
+// gone offline. Idle rooms may be deleted by anyone from the server lobby.
+export function isRoomIdle(room) {
+  return room.players.every((p) => !p.online);
 }
 
 export function summarizeRoom(room) {
@@ -59,6 +71,7 @@ export function summarizeRoom(room) {
     status: statusOf(room),
     variantId: room.options?.variantId ?? null,
     hostId: room.hostId,
+    creatorId: room.creatorId ?? null,
     players: room.players.map((p) => ({ id: p.id, name: p.name, online: p.online })),
     turn: room.state?.turn ?? 0,
   };

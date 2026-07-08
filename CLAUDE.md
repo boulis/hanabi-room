@@ -85,6 +85,7 @@ Client → server:
 - `leaveRoom` — drop back to the server lobby.
 - `resumeSave { file, roomName? }` — spins up a new room from a saved game and returns `roomCreated`; the client then sends `enterRoom` for it.
 - `closeRoom` — host only; removes the room and kicks everyone back to the lobby.
+- `deleteRoom { roomId, playerId }` — sent from the server lobby (where the connection holds no seat, so the client passes its persistent `playerId`). Allowed when the caller is the room's creator (`creatorId`, stamped at `createRoom`; falls back to the save's host for resumed rooms) or when the room is idle (no players, or every seat offline). Anyone still connected to the room is kicked back to the server lobby.
 - `configure { options }` (host only)
 - `start { seed? }` (host only; works in lobby OR when a finished game is on screen)
 - `action { action: { type: 'play'|'discard'|'hint'|'annotate', ... } }`

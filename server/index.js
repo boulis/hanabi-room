@@ -23,7 +23,7 @@ import {
   viewFor,
   voteAbandon,
 } from './room.js';
-import { addRoom, createRoom, deleteRoom, getRoom, listRooms } from './rooms.js';
+import { addRoom, createRoom, deleteRoom, getRoom, isRoomIdle, listRooms } from './rooms.js';
 import { listIncompleteSaves, savedDir } from './savedGame.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -204,6 +204,18 @@ function sendError(ws, error, code = 'error') {
   send(ws, { type: 'error', error, code });
 }
 
+// Drops every connection seated in a (just-deleted) room back to the server
+// lobby.
+async function kickRoomConnections(roomId) {
+  for (const [ws, conn] of connections) {
+    if (conn.roomId === roomId) {
+      conn.roomId = null;
+      conn.playerId = null;
+      send(ws, { type: 'sync', view: await serverLobbyView() });
+    }
+  }
+}
+
 function requireRoom(conn) {
   if (!conn.roomId) throw new GameError('Not in a room', 'no_room');
   const room = getRoom(conn.roomId);
@@ -239,6 +251,7 @@ wss.on('connection', async (ws) => {
         case 'createRoom': {
           const r = createRoom(msg.roomName);
           const player = joinRoom(r, { name: msg.playerName, playerId: msg.playerId });
+          r.creatorId = player.id;
           conn.playerId = player.id;
           conn.roomId = r.id;
           send(ws, { type: 'identity', playerId: player.id, roomId: r.id, roomName: r.name });
@@ -281,14 +294,21 @@ wss.on('connection', async (ws) => {
           const r = requireRoom(conn);
           if (r.hostId !== conn.playerId) throw new GameError('Only the host can close a room', 'not_host');
           deleteRoom(r.id);
-          // Disconnect everyone from the room.
-          for (const [otherWs, otherConn] of connections) {
-            if (otherConn.roomId === r.id) {
-              otherConn.roomId = null;
-              otherConn.playerId = null;
-              send(otherWs, { type: 'sync', view: await serverLobbyView() });
-            }
+          await kickRoomConnections(r.id);
+          await broadcastServerLobby();
+          break;
+        }
+        case 'deleteRoom': {
+          // Sent from the server lobby, where the connection holds no seat —
+          // the client passes its persistent playerId to prove creatorship.
+          const r = getRoom(msg.roomId);
+          if (!r) throw new GameError('Room not found', 'no_room');
+          const isCreator = !!msg.playerId && r.creatorId === msg.playerId;
+          if (!isCreator && !isRoomIdle(r)) {
+            throw new GameError('Only the creator can delete a room with players in it', 'not_creator');
           }
+          deleteRoom(r.id);
+          await kickRoomConnections(r.id);
           await broadcastServerLobby();
           break;
         }
