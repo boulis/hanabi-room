@@ -23,8 +23,8 @@ import {
   viewFor,
   voteAbandon,
 } from './room.js';
-import { addRoom, createRoom, deleteRoom, getRoom, isRoomIdle, listRooms } from './rooms.js';
-import { listIncompleteSaves, savedDir } from './savedGame.js';
+import { addRoom, allRooms, createRoom, deleteRoom, getRoom, isRoomIdle, listRooms } from './rooms.js';
+import { deleteSave, listIncompleteSaves, savedDir } from './savedGame.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIR = path.resolve(__dirname, '..', 'client');
@@ -309,6 +309,31 @@ wss.on('connection', async (ws) => {
           }
           deleteRoom(r.id);
           await kickRoomConnections(r.id);
+          await broadcastServerLobby();
+          break;
+        }
+        case 'deleteSave': {
+          // Anyone on the tailnet may delete a saved game: saves carry no
+          // durable owner identity, and the move-to-trash keeps it reversible
+          // by the host. Refuse while an open room is appending to the file —
+          // appendFile would silently recreate a headerless save.
+          const basename = path.basename(String(msg.file || ''));
+          if (!basename.endsWith('.jsonl') || basename.startsWith('.')) {
+            throw new GameError('Bad save filename', 'bad_save');
+          }
+          const filePath = path.resolve(savedDir(), basename);
+          const inUse = allRooms().some(
+            (r) => r.savePath && path.resolve(r.savePath) === filePath,
+          );
+          if (inUse) {
+            throw new GameError('Save is in use by an open room', 'save_in_use');
+          }
+          try {
+            await deleteSave(basename);
+          } catch (err) {
+            if (err.code === 'ENOENT') throw new GameError('Save not found', 'no_save');
+            throw err;
+          }
           await broadcastServerLobby();
           break;
         }

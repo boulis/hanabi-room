@@ -392,7 +392,7 @@ function renderServerLobby(v) {
     if (idle || (playerId && r.creatorId === playerId)) {
       const del = document.createElement('button');
       del.type = 'button';
-      del.className = 'room-delete';
+      del.className = 'delete-button';
       del.textContent = 'Delete';
       del.addEventListener('click', () => {
         if (!confirm(`Delete room "${r.name}"?`)) return;
@@ -434,6 +434,17 @@ function renderServerLobby(v) {
       send({ type: 'resumeSave', file: s.basename });
     });
     row.append(resume);
+    // Anyone may delete a save; the server moves it to saved-games/trash/
+    // (recoverable by the host) and refuses if an open room is playing it.
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'delete-button';
+    del.textContent = 'Delete';
+    del.addEventListener('click', () => {
+      if (!confirm(`Delete saved game "${s.basename}"?`)) return;
+      send({ type: 'deleteSave', file: s.basename });
+    });
+    row.append(del);
     savesEl.append(row);
   }
 }

@@ -239,6 +239,25 @@ export async function summarizeSave(filePath) {
   };
 }
 
+// Soft-delete: move the file into saved-games/trash/ instead of unlinking,
+// so a stray click can be undone by the host from the terminal. The trash
+// subdirectory is invisible to listSaves (readdir entries ending in .jsonl).
+export async function deleteSave(basename) {
+  if (
+    !basename ||
+    basename !== path.basename(basename) ||
+    basename.startsWith('.') ||
+    !basename.endsWith('.jsonl')
+  ) {
+    throw new Error(`Bad save filename: ${basename}`);
+  }
+  const trashDir = path.join(savedDir(), 'trash');
+  await fs.mkdir(trashDir, { recursive: true });
+  const dest = path.join(trashDir, basename);
+  await fs.rename(path.join(savedDir(), basename), dest);
+  return dest;
+}
+
 export async function listIncompleteSaves(limit = Infinity) {
   const names = await listSaves();
   const out = [];

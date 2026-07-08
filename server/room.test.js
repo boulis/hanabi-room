@@ -22,6 +22,7 @@ import {
   voteAbandon,
 } from './room.js';
 import { exportDeckOrder } from './game.js';
+import { deleteSave, listIncompleteSaves } from './savedGame.js';
 
 async function withTmpSaveDir(fn) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'hanabi-saves-'));
@@ -482,6 +483,29 @@ test('save: each action appends an event line', async () => {
     assert.equal(ev.kind, 'action');
     assert.equal(ev.playerId, alice.id);
     assert.equal(ev.action.type, 'discard');
+  });
+});
+
+test('save: deleteSave moves the file to trash/ and it stops being listed', async () => {
+  await withTmpSaveDir(async (dir) => {
+    const { room } = await setupRoom();
+    const basename = path.basename(room.savePath);
+    assert.equal((await listIncompleteSaves()).length, 1);
+    const dest = await deleteSave(basename);
+    assert.equal(dest, path.join(dir, 'trash', basename));
+    const trashed = await fs.readFile(dest, 'utf8');
+    assert.ok(trashed.includes('"kind":"start"'), 'file content preserved in trash');
+    assert.equal((await listIncompleteSaves()).length, 0, 'no longer listed');
+    await assert.rejects(() => deleteSave(basename), /ENOENT/, 'second delete fails cleanly');
+  });
+});
+
+test('save: deleteSave rejects path traversal and non-save filenames', async () => {
+  await withTmpSaveDir(async () => {
+    await assert.rejects(() => deleteSave('../escape.jsonl'), /Bad save filename/);
+    await assert.rejects(() => deleteSave('.hidden.jsonl'), /Bad save filename/);
+    await assert.rejects(() => deleteSave('notes.txt'), /Bad save filename/);
+    await assert.rejects(() => deleteSave(''), /Bad save filename/);
   });
 });
 
