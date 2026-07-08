@@ -6,6 +6,7 @@ import {
   discardAction,
   hintAction,
   playAction,
+  undoneLogEntries,
 } from './rules.js';
 import { lobbyView, viewState } from './view.js';
 import {
@@ -33,6 +34,7 @@ export function createRoom() {
     sockets: new Map(),
     abandonVotes: new Set(),
     undoStack: [],
+    undoRequests: new Set(),
     savePath: null,
     importedDeck: null,
   };
@@ -207,6 +209,7 @@ export async function startGame(room, playerId, { seed } = {}) {
   room.phase = 'playing';
   room.abandonVotes.clear();
   room.undoStack = [];
+  room.undoRequests.clear();
   room.savePath = null;
   // Imported deck is one-shot — clear after the game starts using it.
   room.importedDeck = null;
@@ -227,6 +230,7 @@ export function returnToLobby(room, playerId) {
   room.phase = 'lobby';
   room.state = null;
   room.undoStack = [];
+  room.undoRequests.clear();
   room.savePath = null;
   room.abandonVotes.clear();
 }
@@ -289,6 +293,8 @@ export async function applyAction(room, playerId, action) {
     if (snapshotPushed) room.undoStack.pop();
     throw err;
   }
+  // A new action changes who can undo, so pending requests are stale.
+  if (action.type !== 'annotate') room.undoRequests.clear();
   await safeAppend(room, { kind: 'action', playerId, action });
   if (room.state.status === 'finished') {
     // Keep savePath set: an undo + continuation after game-over should still
@@ -306,8 +312,27 @@ export async function undoLast(room, playerId) {
     throw new GameError('Only the player who took the most recent action can undo it', 'not_your_undo');
   }
   room.undoStack.pop();
+  // Keep the undone action visible: its log entries (everything past the
+  // snapshot's log) come back flagged so clients can strike them out.
+  const struck = undoneLogEntries(room.state.log, top.snapshot.log);
   room.state = top.snapshot;
+  room.state.log.push(...struck);
+  room.undoRequests.clear();
   await safeAppend(room, { kind: 'undo', playerId });
+}
+
+export function requestUndo(room, playerId) {
+  if (room.phase !== 'playing') throw new GameError('No active game', 'no_game');
+  if (room.state.status !== 'playing') throw new GameError('Game is not in progress', 'not_playing');
+  if (!findPlayer(room, playerId)) throw new GameError('Not in this game', 'not_seated');
+  const top = room.undoStack[room.undoStack.length - 1];
+  if (!top) throw new GameError('Nothing to undo', 'nothing_to_undo');
+  if (top.playerId === playerId) {
+    throw new GameError('You can undo yourself — no need to request', 'own_undo');
+  }
+  // Toggle, so a request can be retracted with a second click.
+  if (room.undoRequests.has(playerId)) room.undoRequests.delete(playerId);
+  else room.undoRequests.add(playerId);
 }
 
 export function viewFor(room, playerId) {
@@ -325,6 +350,16 @@ export function viewFor(room, playerId) {
   };
   const topUndo = room.undoStack[room.undoStack.length - 1];
   v.canUndo = !!(topUndo && topUndo.playerId === playerId);
+  v.canRequestUndo = !!(
+    topUndo &&
+    topUndo.playerId !== playerId &&
+    idx >= 0 &&
+    room.state.status === 'playing'
+  );
+  v.undoRequestedByMe = playerId ? room.undoRequests.has(playerId) : false;
+  v.undoRequests = [...room.undoRequests]
+    .map((id) => room.state.players.find((p) => p.id === id)?.name)
+    .filter(Boolean);
   return v;
 }
 

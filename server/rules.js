@@ -93,6 +93,15 @@ function pushLog(state, event) {
   state.log.push({ turn: state.turn, ...event });
 }
 
+// The log entries an undone action contributed: everything past the snapshot's
+// log (a strict prefix of the current log — actions only append, and undo
+// re-appends these marked entries), flagged so clients can strike them out.
+export function undoneLogEntries(currentLog, snapshotLog) {
+  return currentLog
+    .slice(snapshotLog.length)
+    .map((e) => (e.undone ? e : { ...e, undone: true }));
+}
+
 function consumeHintMarks(hand, leavingCard) {
   for (const h of leavingCard.lastHints) {
     dropHintMarkFromHand(hand, h.hintIndex);

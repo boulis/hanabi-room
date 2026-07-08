@@ -16,6 +16,7 @@ import {
   leaveRoom,
   movePlayer,
   renamePlayer,
+  requestUndo,
   resumeRoom,
   returnToLobby,
   startGame,
@@ -365,6 +366,12 @@ wss.on('connection', async (ws) => {
           const room = requireSeat(conn);
           await undoLast(room, conn.playerId);
           await broadcastRoomAndLobby(room.id);
+          break;
+        }
+        case 'requestUndo': {
+          const room = requireSeat(conn);
+          requestUndo(room, conn.playerId);
+          broadcastRoom(room.id);
           break;
         }
         case 'returnToLobby': {

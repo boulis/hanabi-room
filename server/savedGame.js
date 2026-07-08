@@ -7,6 +7,7 @@ import {
   discardAction,
   hintAction,
   playAction,
+  undoneLogEntries,
 } from './rules.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -163,9 +164,13 @@ function applyEvent(state, ev, ctx) {
     case 'undo': {
       const top = undoStack.pop();
       if (!top) throw new Error(`undo event with empty stack`);
+      // Same as the live undo path: keep the undone action's log entries,
+      // struck out, so a resumed game shows the identical log.
+      const struck = undoneLogEntries(state.log, top.snapshot.log);
       // Overwrite each property of state in place so the outer reference stays valid.
       for (const k of Object.keys(state)) delete state[k];
       Object.assign(state, top.snapshot);
+      state.log.push(...struck);
       break;
     }
     case 'rename': {

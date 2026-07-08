@@ -192,6 +192,9 @@ document.getElementById('abandon-button').addEventListener('click', () => {
 document.getElementById('undo-button').addEventListener('click', () => {
   send({ type: 'undo' });
 });
+document.getElementById('request-undo-button').addEventListener('click', () => {
+  send({ type: 'requestUndo' });
+});
 
 let lastAnimatedActionTurn = null;
 
@@ -790,13 +793,41 @@ function renderGame() {
   for (const e of v.log.slice().reverse()) {
     const div = document.createElement('div');
     div.className = 'log-entry';
-    div.textContent = formatLog(e);
+    if (e.undone) {
+      div.classList.add('undone');
+      const text = document.createElement('span');
+      text.className = 'undone-text';
+      text.textContent = formatLog(e);
+      const badge = document.createElement('span');
+      badge.className = 'undo-badge';
+      badge.textContent = '[UNDO]';
+      div.append(text, ' ', badge);
+    } else {
+      div.textContent = formatLog(e);
+    }
     log.append(div);
   }
 
   renderDiscard();
   const undoBtn = document.getElementById('undo-button');
   undoBtn.hidden = !v.canUndo;
+  const requested = v.undoRequests || [];
+  undoBtn.classList.toggle('requested', v.canUndo && requested.length > 0);
+  const reqBtn = document.getElementById('request-undo-button');
+  reqBtn.hidden = !(v.canRequestUndo && v.status === 'playing');
+  reqBtn.textContent = v.undoRequestedByMe ? 'Cancel undo request' : 'Request undo';
+  reqBtn.classList.toggle('requested', !!v.undoRequestedByMe);
+  const reqNote = document.getElementById('undo-request-note');
+  if (v.canUndo && requested.length > 0) {
+    reqNote.hidden = false;
+    const names = requested.length > 1
+      ? `${requested.slice(0, -1).join(', ')} and ${requested.at(-1)}`
+      : requested[0];
+    reqNote.textContent = `${names} ${requested.length > 1 ? 'have' : 'has'} requested you undo`;
+  } else {
+    reqNote.hidden = true;
+    reqNote.textContent = '';
+  }
   const abandonBtn = document.getElementById('abandon-button');
   if (v.status === 'playing' && v.abandonVotes) {
     abandonBtn.hidden = false;
@@ -1137,6 +1168,9 @@ function renderDiscard() {
 function latestActionEntry(log) {
   for (let i = log.length - 1; i >= 0; i--) {
     const e = log[i];
+    // Undone actions are kept in the log (struck out) but are no longer the
+    // "latest action" — the banner, bubbles, and animations ignore them.
+    if (e.undone) continue;
     if (e.type === 'play' || e.type === 'discard' || e.type === 'hint') return e;
   }
   return null;

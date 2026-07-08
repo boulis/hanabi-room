@@ -14,6 +14,7 @@ import {
   leaveRoom,
   movePlayer,
   renamePlayer,
+  requestUndo,
   resumeRoom,
   returnToLobby,
   startGame,
@@ -245,6 +246,102 @@ test('undo: sequential undos walk back across players', async () => {
     await undoLast(room, alice.id);
     assert.equal(room.state.currentPlayer, 0, 'alice is current again');
     assert.equal(room.undoStack.length, 0);
+  });
+});
+
+test('undo: undone log entries stay in the log, struck out', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice } = await setupRoom();
+    room.state.hintTokens = 4;
+    const before = room.state.log.length;
+    await applyAction(room, alice.id, { type: 'discard', cardIndex: 0 });
+    const added = room.state.log.slice(before);
+    assert.ok(added.length >= 1, 'discard logged');
+    await undoLast(room, alice.id);
+    const tail = room.state.log.slice(before);
+    assert.equal(tail.length, added.length, 'undone entries kept');
+    assert.ok(tail.every((e) => e.undone === true), 'all flagged undone');
+    assert.deepEqual(
+      tail.map((e) => e.type),
+      added.map((e) => e.type),
+      'same entries, same order',
+    );
+    // Tokens and hand are rolled back even though the log remembers.
+    assert.equal(room.state.hintTokens, 4);
+  });
+});
+
+test('undo: chained undos across players keep all struck entries in order', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    room.state.hintTokens = 4;
+    const before = room.state.log.length;
+    await applyAction(room, alice.id, { type: 'discard', cardIndex: 0 });
+    const aliceCount = room.state.log.length - before;
+    await applyAction(room, bob.id, { type: 'discard', cardIndex: 0 });
+    await undoLast(room, bob.id);
+    await undoLast(room, alice.id);
+    const tail = room.state.log.slice(before);
+    assert.ok(tail.every((e) => e.undone === true));
+    // Alice's struck entries come first, then Bob's.
+    assert.equal(tail[0].playerIndex ?? tail[0].fromIndex, 0);
+    assert.equal(tail[aliceCount].playerIndex ?? tail[aliceCount].fromIndex, 1);
+  });
+});
+
+test('undo: resume replays struck log entries identically', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    // Spend a token legitimately (recorded in the save) so discarding is legal.
+    const bobN = room.state.players[1].hand[0].number;
+    await applyAction(room, alice.id, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: bobN });
+    await applyAction(room, bob.id, { type: 'discard', cardIndex: 0 });
+    await undoLast(room, bob.id);
+    await applyAction(room, bob.id, { type: 'discard', cardIndex: 1 });
+    // Annotations reference card ids; they must survive the resume too.
+    await applyAction(room, bob.id, {
+      type: 'annotate', cardId: room.state.players[1].hand[2].id, note: 'save me',
+    });
+    const resumed = await resumeRoom(room.savePath);
+    assert.deepEqual(resumed.state.log, room.state.log, 'resumed log matches live log');
+    assert.ok(room.state.log.some((e) => e.undone), 'struck entry present');
+    assert.equal(
+      resumed.state.players[1].hand[2].annotations.note,
+      'save me',
+      'annotation lands on the same card after resume',
+    );
+  });
+});
+
+test('requestUndo: toggles, gates on ownership, clears on action and undo', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    room.state.hintTokens = 4;
+    // Nothing to undo yet.
+    assert.throws(() => requestUndo(room, bob.id), GameError);
+    await applyAction(room, alice.id, { type: 'discard', cardIndex: 0 });
+    // Alice owns the undo — she can't request it from herself.
+    assert.throws(() => requestUndo(room, alice.id), GameError);
+    requestUndo(room, bob.id);
+    let v = viewFor(room, alice.id);
+    assert.equal(v.canUndo, true);
+    assert.deepEqual(v.undoRequests, ['Bob']);
+    assert.equal(viewFor(room, bob.id).undoRequestedByMe, true);
+    assert.equal(viewFor(room, bob.id).canRequestUndo, true);
+    assert.equal(viewFor(room, alice.id).canRequestUndo, false);
+    // Toggle off and back on.
+    requestUndo(room, bob.id);
+    assert.deepEqual(viewFor(room, alice.id).undoRequests, []);
+    requestUndo(room, bob.id);
+    // The requested undo clears the request.
+    await undoLast(room, alice.id);
+    assert.deepEqual(viewFor(room, alice.id).undoRequests, []);
+    // A fresh action also clears any pending requests.
+    await applyAction(room, alice.id, { type: 'discard', cardIndex: 0 });
+    requestUndo(room, bob.id);
+    assert.equal(room.undoRequests.size, 1);
+    await undoLast(room, alice.id);
+    assert.equal(room.undoRequests.size, 0);
   });
 });
 
