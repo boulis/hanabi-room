@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node server/index.js",
+    "bot": "node bot.mjs",
     "test": "node --test server/*.test.js"
   },
   "dependencies": {

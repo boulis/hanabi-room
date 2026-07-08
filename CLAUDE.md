@@ -126,6 +126,16 @@ The five supported variants:
 
 When adding a new variant, add it to `VARIANTS` and add a row to the deck-size test in `server/game.test.js`. Test invariants (deck size, suit composition) — they catch typos in the distribution arrays.
 
+## Bot player
+
+`node bot.mjs` (or `npm run bot --`) runs a self-contained rule-based bot that joins as a normal WebSocket client. Decision logic lives in `server/botBrain.js` as a pure function `decide(view, conventions)` — it sees only the same filtered view a human gets, so it cannot cheat by construction. Transport, reconnect, and CLI flags live in `bot.mjs`.
+
+Conventions (the `standard` set in `CONVENTION_SETS`, selectable via `--conventions`): oldest card is leftmost; a colour hint marks the *newest touched* card for play (tracked via `lastHints` markers, which the server consumes when any card of that hint leaves the hand); a number hint means *keep* unless a card becomes provably playable; discard priority is provably-useless card → chop (oldest untouched) → forced. It also saves the next player's critical chop (last remaining copy) with a number hint, and stalls with a harmless number hint at full tokens.
+
+Flags: `--server URL` (default localhost:3000), `--room ID` or `--create [--room-name X]` (default: join the newest lobby room, else create), `--name`, `--delay MS` (thinking pause, default 900), `--autostart N` (start when N players are seated, only if the bot is host), `--seed S`, `--conventions standard`.
+
+Testing: `server/botBrain.test.js` crafts exact decks (dealing is round-robin: player 0 gets draws 0,2,4,…) to pin each convention, plus bot-vs-bot full games on every variant that must end legally — `rules.js` throws on any illegal action, so a completed game doubles as a legality proof. Typical scores: ~20–22/25 on `simple`, perfect games on good seeds.
+
 ## Card art
 
 User-provided card images go in `client/cards/` with the naming convention `{color}-{number}.{ext}` (e.g. `red-3.png`, `rainbow-5.webp`, `black-1.svg`). The client always requests `/cards/{color}-{number}` (no extension); the server probes for `.png`, `.webp`, `.jpg`, `.jpeg`, `.avif`, `.svg`, and `.gif` in that order and serves whichever it finds, so the host can drop any supported format without touching code.
