@@ -230,11 +230,25 @@ function animateLeavingCard(v, latest) {
   const y = handRect.top;
 
   const ghost = document.createElement('div');
-  ghost.className = 'card ghost-leave';
   ghost.dataset.color = latest.card.color;
   ghost.style.left = `${x}px`;
   ghost.style.top = `${y}px`;
-  if (latest.type === 'play' && latest.success === false) ghost.classList.add('misplay');
+  // A successful play flies to its pile; discards and misplays (which end up
+  // in the discard pile) keep the float-up-and-fade animation.
+  const pile = latest.type === 'play' && latest.success !== false
+    ? document.querySelector(`#game-piles .pile[data-color="${latest.card.color}"]`)
+    : null;
+  if (pile) {
+    ghost.className = 'card ghost-play';
+    // Move the ghost's center onto the pile's center; the keyframes scale it
+    // down to pile size (60/96) around that center so it lands flush.
+    const pr = pile.getBoundingClientRect();
+    ghost.style.setProperty('--fly-x', `${pr.left + pr.width / 2 - (x + cardWidth / 2)}px`);
+    ghost.style.setProperty('--fly-y', `${pr.top + pr.height / 2 - (y + 72)}px`);
+  } else {
+    ghost.className = 'card ghost-leave';
+    if (latest.type === 'play' && latest.success === false) ghost.classList.add('misplay');
+  }
   const face = document.createElement('div');
   face.className = 'card-face';
   face.textContent = String(latest.card.number);

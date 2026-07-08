@@ -880,6 +880,26 @@ input, select {
 .card.ghost-leave.misplay {
   box-shadow: 0 0 0 2px #d23a3a, 0 4px 12px rgba(0, 0, 0, 0.35);
 }
+.card.ghost-play {
+  position: fixed;
+  width: 96px;
+  min-height: 144px;
+  pointer-events: none;
+  z-index: 95;
+  animation: ghost-play 0.9s cubic-bezier(0.3, 0.05, 0.25, 1) forwards;
+  transform-origin: 50% 50%;
+}
+/* Lift off the hand, swoop to the pile (--fly-x/--fly-y set per card),
+   shrink to pile size (60/96 = 0.625), then fade so the real pile — already
+   re-rendered with the new top card — takes over. */
+@keyframes ghost-play {
+  0%   { transform: translate(0, 0) scale(1); opacity: 1; }
+  18%  { transform: translate(calc(var(--fly-x) * 0.12), calc(var(--fly-y) * 0.12 - 34px)) scale(1.08); opacity: 1; }
+  72%  { transform: translate(var(--fly-x), var(--fly-y)) scale(0.625); opacity: 1; }
+  86%  { transform: translate(var(--fly-x), var(--fly-y)) scale(0.625); opacity: 1; }
+  100% { transform: translate(var(--fly-x), var(--fly-y)) scale(0.625); opacity: 0; }
+}
+
 @keyframes ghost-leave {
   0%   { transform: translate(0, 0)     scale(1.00); opacity: 1.00; }
   6%   { transform: translate(0, -7px)  scale(1.03); opacity: 1.00; }
