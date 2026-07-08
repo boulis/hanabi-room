@@ -120,3 +120,19 @@ test('createInitialState rejects bad endRule and player count', () => {
   const ok = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }];
   assert.throws(() => createInitialState({ variantId: 'simple', players: ok, endRule: 'wat' }));
 });
+
+test('card ids match between a seeded deal and its explicit-deck reconstruction', () => {
+  const players = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }];
+  const live = createInitialState({ variantId: 'rainbow', players, seed: 777 });
+  // A save's replay path: rebuild from the header's draw-order list. Saved
+  // events reference card ids (annotate), so ids must agree card-for-card.
+  const replay = createInitialState({
+    variantId: 'rainbow', players, deckCards: live.initialDeckCards,
+  });
+  const snapshot = (s) => s.players.map((p) => p.hand.map((c) => ({ id: c.id, color: c.color, number: c.number })));
+  assert.deepEqual(snapshot(replay), snapshot(live));
+  assert.deepEqual(
+    replay.deck.map((c) => ({ id: c.id, color: c.color, number: c.number })),
+    live.deck.map((c) => ({ id: c.id, color: c.color, number: c.number })),
+  );
+});

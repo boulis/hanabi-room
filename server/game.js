@@ -66,6 +66,11 @@ export function createInitialState({
   const deck = deckCards
     ? cardsFromDrawOrder(variantId, deckCards)
     : shuffledDeck(variantId, finalSeed);
+  // Normalize ids to deck position: a seed-shuffled deck carries ids assigned
+  // in suit order, but replaying the same game from the save header's deck
+  // list (cardsFromDrawOrder) assigns them by position. Saved events reference
+  // card ids (annotate), so both paths must agree.
+  deck.forEach((c, i) => { c.id = i; });
   // Capture the draw-order snapshot before dealing pops anything off.
   const initialDeckCards = deck.slice().reverse().map((c) => `${c.color}_${c.number}`);
   const size = handSize(players.length);
