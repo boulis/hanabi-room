@@ -177,9 +177,27 @@ function findStallHint(view, hand) {
 export function decide(view, conventions = STANDARD_CONVENTIONS) {
   const me = view.viewerIndex;
   const myHand = view.players[me].hand;
-  const others = view.players.map((p, i) => ({ ...p, index: i })).filter((p) => p.index !== me);
   const nextIndex = (me + 1) % view.players.length;
   const lastFuse = view.fuseTokens === 1;
+
+  // The one danger we can see coming: the next player, with nothing to play,
+  // will discard their chop — and it's the last copy of a needed card.
+  let urgentSave = null;
+  if (view.hintTokens > 0 && conventions.numberHintSaves) {
+    const next = view.players[nextIndex];
+    const chop = chopIndex(next.hand);
+    if (chop >= 0 && isCritical(view, next.hand[chop]) && !hasPendingPlay(view, next.hand)) {
+      urgentSave = {
+        action: { type: 'hint', toPlayerIndex: nextIndex, hintType: 'number', value: next.hand[chop].number },
+        reason: `save ${next.hand[chop].color} ${next.hand[chop].number} on chop`,
+      };
+    }
+  }
+
+  // 0. The save outranks even our own play: the play keeps for next turn,
+  //    the endangered card doesn't. Exception: in the final round a deferred
+  //    play may never happen, so plays come first there.
+  if (urgentSave && view.finalTurn === null) return urgentSave;
 
   // 1. Play a card we can prove is playable.
   for (let i = 0; i < myHand.length; i++) {
@@ -199,20 +217,11 @@ export function decide(view, conventions = STANDARD_CONVENTIONS) {
     }
   }
 
-  if (view.hintTokens > 0) {
-    // 3. Save the next player's chop if it's the last copy of a needed card
-    //    and they have nothing better to do than discard it.
-    if (conventions.numberHintSaves) {
-      const next = view.players[nextIndex];
-      const chop = chopIndex(next.hand);
-      if (chop >= 0 && isCritical(view, next.hand[chop]) && !hasPendingPlay(view, next.hand)) {
-        return {
-          action: { type: 'hint', toPlayerIndex: nextIndex, hintType: 'number', value: next.hand[chop].number },
-          reason: `save ${next.hand[chop].color} ${next.hand[chop].number} on chop`,
-        };
-      }
-    }
+  // 3. Final-round case: nothing of our own to play after all, so the save
+  //    (deferred at step 0) is back on the table.
+  if (urgentSave) return urgentSave;
 
+  if (view.hintTokens > 0) {
     // 4. Give a play hint (closest player first; colour hints preferred).
     for (let step = 1; step < view.players.length; step++) {
       const idx = (me + step) % view.players.length;

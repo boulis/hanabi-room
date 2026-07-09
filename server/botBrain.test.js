@@ -85,6 +85,33 @@ test('bot: saves the next player\'s critical chop with a number hint', () => {
   assert.deepEqual(action, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 5 }, reason);
 });
 
+test('bot: urgent save outranks its own playable card', () => {
+  const s = craftedState(
+    ['green_1', 'blue_3', 'red_2', 'white_2', 'red_4'],
+    ['yellow_5', 'red_4', 'blue_4', 'green_3', 'white_2'],
+  );
+  hintAction(s, 0, 1, 'number', 4); // harmless keep-hint; chop stays yellow_5
+  hintAction(s, 1, 0, 'number', 1); // now player 0 KNOWS card 0 is playable
+  const { action, reason } = decide(viewState(s, 0));
+  assert.deepEqual(
+    action,
+    { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 5 },
+    `should save the critical chop before playing (got: ${reason})`,
+  );
+});
+
+test('bot: in the final round its own play outranks the save', () => {
+  const s = craftedState(
+    ['green_1', 'blue_3', 'red_2', 'white_2', 'red_4'],
+    ['yellow_5', 'red_4', 'blue_4', 'green_3', 'white_2'],
+  );
+  hintAction(s, 0, 1, 'number', 4);
+  hintAction(s, 1, 0, 'number', 1);
+  s.finalTurn = s.turn + 2; // deck exhausted — every remaining play counts
+  const { action, reason } = decide(viewState(s, 0));
+  assert.deepEqual(action, { type: 'play', cardIndex: 0 }, reason);
+});
+
 test('bot: discards a provably useless card ahead of the chop', () => {
   const s = craftedState(
     ['yellow_4', 'blue_3', 'green_2', 'white_2', 'red_4'],
