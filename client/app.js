@@ -94,6 +94,9 @@ function handleMessage(msg) {
     case 'deckExport':
       triggerDownload(msg.data, msg.filename);
       break;
+    case 'reaction':
+      showReaction(msg.playerIndex, msg.emoji);
+      break;
     case 'error':
       console.warn('server error:', msg.code, msg.error);
       flashError(msg.error);
@@ -172,6 +175,36 @@ document.getElementById('start-button').addEventListener('click', () => {
 document.getElementById('add-bot-button').addEventListener('click', () => {
   send({ type: 'addBot' });
 });
+document.getElementById('reaction-bar').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-emoji]');
+  if (btn) send({ type: 'react', emoji: btn.dataset.emoji });
+});
+
+// Reactions are ephemeral overlays over a player's row: shown for 2s, then
+// gone. Kept in a map so a re-render mid-lifetime re-attaches the bubble.
+const REACTION_MS = 2000;
+const activeReactions = new Map(); // playerIndex -> { emoji, until }
+
+function showReaction(playerIndex, emoji) {
+  activeReactions.set(playerIndex, { emoji, until: Date.now() + REACTION_MS });
+  attachReactionBubble(playerIndex);
+}
+
+function attachReactionBubble(playerIndex) {
+  const row = document.querySelector(`#game-hands .player-row[data-seat="${playerIndex}"]`);
+  if (!row) return;
+  row.querySelector('.reaction-bubble')?.remove();
+  const r = activeReactions.get(playerIndex);
+  if (!r || Date.now() >= r.until) {
+    activeReactions.delete(playerIndex);
+    return;
+  }
+  const bubble = document.createElement('div');
+  bubble.className = 'reaction-bubble';
+  bubble.textContent = r.emoji;
+  row.append(bubble);
+  setTimeout(() => bubble.remove(), r.until - Date.now());
+}
 
 document.getElementById('import-deck-file').addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
@@ -808,6 +841,8 @@ function renderGame() {
     row.dataset.seat = String(i);
     hands.append(row);
   }
+  // Re-attach any reaction bubble still mid-lifetime (renders wipe the rows).
+  for (const idx of [...activeReactions.keys()]) attachReactionBubble(idx);
 
   const log = document.getElementById('game-log');
   log.innerHTML = '';

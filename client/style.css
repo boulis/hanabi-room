@@ -495,9 +495,41 @@ input, select {
 #game-hands[data-count="5"] .player-row[data-seat="4"] { grid-area: p4; justify-self: start; }
 
 .player-row {
+  position: relative; /* anchor for reaction bubbles */
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.5rem 0.75rem;
+}
+
+#reaction-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  justify-content: center;
+}
+#reaction-bar button {
+  font-size: 1.25rem;
+  line-height: 1;
+  padding: 0.2rem 0.35rem;
+  border-radius: 8px;
+}
+
+.reaction-bubble {
+  position: absolute;
+  top: -18px;
+  right: 16px;
+  font-size: 2.6rem;
+  z-index: 60;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
+  animation: reaction-pop 2s ease forwards;
+}
+@keyframes reaction-pop {
+  0%   { transform: scale(0.3) translateY(12px); opacity: 0; }
+  12%  { transform: scale(1.18) translateY(0);   opacity: 1; }
+  22%  { transform: scale(1);                    opacity: 1; }
+  70%  { transform: scale(1) translateY(-2px);   opacity: 1; }
+  100% { transform: scale(0.95) translateY(-14px); opacity: 0; }
 }
 
 #import-deck-row { display: grid; gap: 0.25rem; }

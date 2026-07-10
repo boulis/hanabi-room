@@ -80,6 +80,11 @@ async function tryServeCard(rel, res) {
 
 const connections = new Map();
 
+// Ephemeral reactions: validated and relayed to the room, never stored —
+// they are not game state and don't appear in saves.
+const REACTION_EMOJI = ['👏', '🤔', '❓', '😱', '🎉'];
+const REACTION_THROTTLE_MS = 500;
+
 function prompt(question) {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -249,9 +254,16 @@ wss.on('connection', async (ws) => {
     type: 'hello',
     variants: Object.values(VARIANTS).map((v) => ({ id: v.id, name: v.name })),
   });
-  send(ws, { type: 'sync', view: await serverLobbyView() });
+  // The message listener must be attached before any await: a client that
+  // sends right after connecting (reconnect, bot, script) would otherwise
+  // have its message dropped while the saves directory is being scanned.
+  // Handlers await `greeted` so the initial lobby sync still arrives first.
+  const greeted = serverLobbyView()
+    .then((view) => send(ws, { type: 'sync', view }))
+    .catch((err) => console.error('initial lobby sync failed:', err));
 
   ws.on('message', async (raw) => {
+    await greeted;
     let msg;
     try {
       msg = JSON.parse(raw.toString());
@@ -439,6 +451,26 @@ wss.on('connection', async (ws) => {
           const room = requireSeat(conn);
           await renamePlayer(room, conn.playerId, msg.name);
           await broadcastRoomAndLobby(room.id);
+          break;
+        }
+        case 'react': {
+          const room = requireSeat(conn);
+          if (room.phase !== 'playing') {
+            throw new GameError('Reactions need a game on screen', 'not_playing');
+          }
+          if (!REACTION_EMOJI.includes(msg.emoji)) {
+            throw new GameError('Unknown reaction', 'bad_reaction');
+          }
+          const idx = room.state.players.findIndex((p) => p.id === conn.playerId);
+          if (idx < 0) throw new GameError('Not in this game', 'not_seated');
+          const now = Date.now();
+          if (now - (conn.lastReactionAt || 0) < REACTION_THROTTLE_MS) break; // drop spam silently
+          conn.lastReactionAt = now;
+          for (const [otherWs, otherConn] of connections) {
+            if (otherConn.roomId === room.id) {
+              send(otherWs, { type: 'reaction', playerIndex: idx, emoji: msg.emoji });
+            }
+          }
           break;
         }
         default:
