@@ -215,7 +215,8 @@ export async function startGame(room, playerId, { seed } = {}) {
   // Imported deck is one-shot — clear after the game starts using it.
   room.importedDeck = null;
   try {
-    room.savePath = await openSave(room.state, room.hostId);
+    const botIds = new Set(room.players.filter((p) => p.isBot).map((p) => p.id));
+    room.savePath = await openSave(room.state, room.hostId, botIds);
   } catch (err) {
     console.error('Failed to open save file:', err);
   }
@@ -382,7 +383,10 @@ export async function resumeRoom(filePath) {
     shareGuarded: header.shareGuarded,
     allowEmptyHints: header.allowEmptyHints,
   };
-  room.players = state.players.map((p) => ({ id: p.id, name: p.name, online: false }));
+  room.players = state.players.map((p) => {
+    const h = header.players.find((x) => x.id === p.id);
+    return { id: p.id, name: p.name, online: false, isBot: !!h?.isBot };
+  });
   room.hostId = header.hostId;
   room.state = state;
   room.undoStack = undoStack;

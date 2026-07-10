@@ -28,6 +28,7 @@ import { addRoom, allRooms, createRoom, deleteRoom, getRoom, isRoomIdle, listRoo
 import {
   MAX_TOTAL_BOTS,
   addBot,
+  adoptRoomBots,
   initBots,
   pokeBots,
   removeBot,
@@ -133,6 +134,7 @@ async function maybeResumeAtBoot() {
   try {
     const resumed = await resumeRoom(filePath);
     const r = addRoom(resumed, `Resumed ${path.basename(filePath)}`);
+    adoptRoomBots(r);
     console.log(`Resumed ${path.basename(filePath)} into room ${r.id} — ${r.players.length} players, turn ${r.state.turn}.`);
   } catch (err) {
     console.error(`Could not resume ${filePath}: ${err.message}`);
@@ -336,6 +338,7 @@ wss.on('connection', async (ws) => {
           const filePath = path.isAbsolute(fileArg) ? fileArg : path.join(savedDir(), fileArg);
           const resumed = await resumeRoom(filePath);
           const r = addRoom(resumed, msg.roomName);
+          adoptRoomBots(r);
           send(ws, { type: 'roomCreated', roomId: r.id, roomName: r.name });
           await broadcastServerLobby();
           break;
@@ -434,6 +437,7 @@ wss.on('connection', async (ws) => {
             branched = await branchSave(basename, upto);
             const resumed = await resumeRoom(branched);
             const r = addRoom(resumed, msg.roomName || `Branch of ${basename}`);
+            adoptRoomBots(r);
             send(ws, { type: 'roomCreated', roomId: r.id, roomName: r.name });
           } catch (err) {
             // Don't leave a junk branch file behind (e.g. branching past the

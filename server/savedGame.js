@@ -33,7 +33,7 @@ function timestampSlug(d = new Date()) {
   );
 }
 
-export async function openSave(state, hostId) {
+export async function openSave(state, hostId, botIds = new Set()) {
   await ensureSavedDir();
   const filename = `${timestampSlug()}-${state.variantId}.jsonl`;
   const filePath = path.join(savedDir(), filename);
@@ -46,7 +46,12 @@ export async function openSave(state, hostId) {
     shareGuarded: state.shareGuarded,
     allowEmptyHints: state.allowEmptyHints,
     hostId,
-    players: state.players.map((p) => ({ id: p.id, name: p.name })),
+    // isBot marks seats a resume/branch should re-staff with server bots.
+    players: state.players.map((p) => ({
+      id: p.id,
+      name: p.name,
+      ...(botIds.has(p.id) ? { isBot: true } : {}),
+    })),
     deck: state.initialDeckCards,
   };
   await fs.writeFile(filePath, JSON.stringify(header) + '\n');

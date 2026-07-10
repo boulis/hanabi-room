@@ -64,6 +64,25 @@ export function removeBot(room, playerId) {
   leaveRoom(room, playerId);
 }
 
+// Re-staff bot seats in a room built from a save (resume or branch). New
+// saves mark bot seats with isBot in the header; older saves lack the flag,
+// so if no seat carries it we fall back to recognizing the built-in bot
+// names. Seats beyond the global cap stay offline (a human can claim them).
+export function adoptRoomBots(room) {
+  const flagged = room.players.some((p) => p.isBot);
+  for (const p of room.players) {
+    if (!flagged && BOT_NAMES.includes(p.name)) p.isBot = true;
+    if (!p.isBot || bots.has(p.id)) continue;
+    if (bots.size >= MAX_TOTAL_BOTS) {
+      console.error(`bot limit reached; seat "${p.name}" in room ${room.id} stays offline`);
+      p.isBot = false;
+      continue;
+    }
+    p.online = true;
+    bots.set(p.id, { roomId: room.id, timer: null, graceUntil: 0 });
+  }
+}
+
 // Room got deleted/closed — free its bots against the global cap.
 export function removeRoomBots(roomId) {
   for (const [id, b] of bots) {

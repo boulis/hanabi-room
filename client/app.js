@@ -77,6 +77,10 @@ function handleMessage(msg) {
         roomId = msg.roomId;
         localStorage.setItem(ROOM_KEY, roomId);
       }
+      // Fresh room, fresh animation baseline — a stale one (e.g. from replay
+      // stepping before a branch) would silently swallow animations for
+      // turns it thinks it has already shown.
+      lastAnimatedActionTurn = null;
       break;
     case 'roomCreated':
       // Emitted when a save was resumed into a fresh room; auto-enter it.
@@ -226,6 +230,7 @@ function onReplayView(msg) {
 function closeReplay(restore = true) {
   if (!replay) return;
   replay = null;
+  lastAnimatedActionTurn = null; // replay stepping must not suppress live animations
   document.getElementById('replay-bar').hidden = true;
   if (restore && preReplayView) {
     view = preReplayView;
@@ -564,9 +569,9 @@ function renderServerLobby(v) {
       send({ type: 'enterRoom', roomId: r.id, playerName: savedName, playerId });
     });
     row.append(enter);
-    // Deletable when you created the room, or when nobody is in it (no
-    // players, or every seat offline). The server enforces the same rule.
-    const idle = r.players.every((p) => !p.online);
+    // Deletable when you created the room, or when no human is in it (no
+    // players, or every seat offline or a bot). Mirrors the server's rule.
+    const idle = r.players.every((p) => !p.online || p.isBot);
     if (idle || (playerId && r.creatorId === playerId)) {
       const del = document.createElement('button');
       del.type = 'button';

@@ -11,6 +11,7 @@ process.env.HANABI_BOT_UNDO_GRACE_MS = '30';
 const {
   MAX_TOTAL_BOTS,
   addBot,
+  adoptRoomBots,
   initBots,
   pokeBots,
   removeBot,
@@ -18,7 +19,8 @@ const {
   resetBots,
   totalBots,
 } = await import('./bots.js');
-const { applyAction, joinRoom, requestUndo, startGame } = await import('./room.js');
+const { applyAction, joinRoom, requestUndo, resumeRoom, startGame } = await import('./room.js');
+const { branchSave } = await import('./savedGame.js');
 const { GameError } = await import('./rules.js');
 const { createRoom, deleteRoom, allRooms, isRoomIdle } = await import('./rooms.js');
 
@@ -150,6 +152,85 @@ test('bots take their turns automatically once poked', async () => {
     // Both bots act in sequence; the turn should come back to the human.
     await waitFor(() => room.state.currentPlayer === 0 && room.state.turn === 3, 'turn back to human');
     assert.equal(room.state.turn, 3, 'both bot turns taken');
+    resetBots();
+  });
+});
+
+test('adopt: branched/resumed rooms re-staff bot seats and they play on', async () => {
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    const room = createRoom('Original');
+    const human = joinRoom(room, { name: 'Ann' });
+    addBot(room);
+    initBots(async () => {});
+    await startGame(room, human.id, { seed: 5 });
+    const botHand = room.state.players[1].hand;
+    await applyAction(room, human.id, {
+      type: 'hint', toPlayerIndex: 1, hintType: 'number', value: botHand[0].number,
+    });
+    const basename = path.basename(room.savePath);
+    removeRoomBots(room.id);
+    assert.equal(totalBots(), 0);
+
+    // Branch after the first move; the bot seat comes back as a live bot.
+    const branchedPath = await branchSave(basename, 1);
+    const branched = await resumeRoom(branchedPath);
+    branched.id = 'branch1';
+    initBots(async () => pokeBots(branched));
+    adoptRoomBots(branched);
+    assert.equal(totalBots(), 1, 'bot seat adopted');
+    const botSeat = branched.players[1];
+    assert.equal(botSeat.isBot, true);
+    assert.equal(botSeat.online, true, 'adopted bots are online');
+    assert.equal(branched.players[0].online, false, 'human seat stays offline');
+
+    // It's the bot's turn at the branch point — poking makes it act.
+    assert.equal(branched.state.currentPlayer, 1);
+    pokeBots(branched);
+    await waitFor(() => branched.state.turn === 2, 'adopted bot took its turn');
+    resetBots();
+  });
+});
+
+test('adopt: legacy saves without isBot flags fall back to bot roster names', async () => {
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    // "Robo" here is a plain human seat, producing a header without isBot
+    // flags — like a save from before the flag existed.
+    const room = createRoom('Legacy');
+    const ann = joinRoom(room, { name: 'Ann' });
+    joinRoom(room, { name: 'Robo' });
+    await startGame(room, ann.id, { seed: 5 });
+    const resumed = await resumeRoom(room.savePath);
+    resumed.id = 'legacy1';
+    adoptRoomBots(resumed);
+    assert.equal(totalBots(), 1, 'roster-named seat adopted as a bot');
+    assert.equal(resumed.players[1].isBot, true);
+    resetBots();
+  });
+});
+
+test('adopt: seats beyond the global cap stay offline and human-claimable', async () => {
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    const room = createRoom('Full');
+    const ann = joinRoom(room, { name: 'Ann' });
+    addBot(room);
+    await startGame(room, ann.id, { seed: 5 });
+    const resumed = await resumeRoom(room.savePath);
+    resumed.id = 'capped1';
+    removeRoomBots(room.id);
+    // Fill the cap elsewhere before adopting.
+    const filler = createRoom('Filler');
+    for (let i = 0; i < 5; i++) addBot(filler);
+    const filler2 = createRoom('Filler2');
+    for (let i = 0; i < MAX_TOTAL_BOTS - 5; i++) addBot(filler2);
+    adoptRoomBots(resumed);
+    assert.equal(resumed.players[1].isBot, false, 'seat demoted, not adopted');
+    assert.equal(resumed.players[1].online, false, 'left claimable by a human');
     resetBots();
   });
 });
