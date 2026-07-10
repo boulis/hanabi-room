@@ -250,9 +250,56 @@ function maybeAnimateAction(v) {
   }
   if (latest.turn <= lastAnimatedActionTurn) return;
   lastAnimatedActionTurn = latest.turn;
-  if (latest.type !== 'play' && latest.type !== 'discard') return;
   // Defer one frame so the post-action DOM is in place before we measure.
+  if (latest.type === 'hint') {
+    requestAnimationFrame(() => animateHint(latest));
+    return;
+  }
+  if (latest.type !== 'play' && latest.type !== 'discard') return;
   requestAnimationFrame(() => animateLeavingCard(v, latest));
+}
+
+// A hint flies as a large chip (colour disc or number) from the hinter's row
+// to the receiver's — landing on the touched cards — then fades. Makes "who
+// hinted whom" legible without reading the latest-action panel.
+function animateHint(latest) {
+  const rows = document.querySelectorAll('#game-hands .player-row');
+  const from = rows[latest.fromIndex];
+  const to = rows[latest.toIndex];
+  if (!from || !to) return;
+  const fr = from.getBoundingClientRect();
+  const startX = fr.left + fr.width / 2;
+  const startY = fr.top + fr.height / 2;
+
+  // Land on the centre of the touched cards; fall back to the row centre
+  // (e.g. an allowed empty hint touches nothing).
+  const tr = to.getBoundingClientRect();
+  let endX = tr.left + tr.width / 2;
+  let endY = tr.top + tr.height / 2;
+  const cards = to.querySelectorAll('.hand > *');
+  const touched = (latest.touchedIndexes || []).map((i) => cards[i]).filter(Boolean);
+  if (touched.length > 0) {
+    const rects = touched.map((el) => el.getBoundingClientRect());
+    endX = rects.reduce((a, r) => a + r.left + r.width / 2, 0) / rects.length;
+    endY = rects.reduce((a, r) => a + r.top + r.height / 2, 0) / rects.length;
+  }
+
+  const SIZE = 56; // keep in sync with .hint-fly .latest-hint-chip CSS
+  const fly = document.createElement('div');
+  fly.className = 'hint-fly';
+  fly.append(renderHintChip(latest.hintType, latest.value));
+  fly.style.left = `${startX - SIZE / 2}px`;
+  fly.style.top = `${startY - SIZE / 2}px`;
+  fly.style.setProperty('--fly-x', `${endX - startX}px`);
+  fly.style.setProperty('--fly-y', `${endY - startY}px`);
+  document.body.append(fly);
+  setTimeout(() => fly.remove(), 1600);
+
+  // Pulse the receiver's row as the chip arrives.
+  setTimeout(() => {
+    to.classList.add('hint-received');
+    setTimeout(() => to.classList.remove('hint-received'), 800);
+  }, 800);
 }
 
 function animateLeavingCard(v, latest) {
