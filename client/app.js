@@ -351,17 +351,18 @@ function animateHint(latest) {
   const startX = fr.left + fr.width / 2;
   const startY = fr.top + fr.height / 2;
 
-  // Land on the centre of the touched cards; fall back to the row centre
-  // (e.g. an allowed empty hint touches nothing).
+  // Land on the newest touched card (the one the conventions mark for play);
+  // fall back to the row centre (e.g. an allowed empty hint touches nothing).
   const tr = to.getBoundingClientRect();
   let endX = tr.left + tr.width / 2;
   let endY = tr.top + tr.height / 2;
   const cards = to.querySelectorAll('.hand > *');
-  const touched = (latest.touchedIndexes || []).map((i) => cards[i]).filter(Boolean);
-  if (touched.length > 0) {
-    const rects = touched.map((el) => el.getBoundingClientRect());
-    endX = rects.reduce((a, r) => a + r.left + r.width / 2, 0) / rects.length;
-    endY = rects.reduce((a, r) => a + r.top + r.height / 2, 0) / rects.length;
+  const newest = Math.max(...(latest.touchedIndexes || [-1]));
+  const target = newest >= 0 ? cards[newest] : null;
+  if (target) {
+    const r = target.getBoundingClientRect();
+    endX = r.left + r.width / 2;
+    endY = r.top + r.height / 2;
   }
 
   const SIZE = 56; // keep in sync with .hint-fly .latest-hint-chip CSS
