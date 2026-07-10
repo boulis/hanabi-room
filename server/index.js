@@ -25,6 +25,15 @@ import {
   voteAbandon,
 } from './room.js';
 import { addRoom, allRooms, createRoom, deleteRoom, getRoom, isRoomIdle, listRooms } from './rooms.js';
+import {
+  MAX_TOTAL_BOTS,
+  addBot,
+  initBots,
+  pokeBots,
+  removeBot,
+  removeRoomBots,
+  totalBots,
+} from './bots.js';
 import { deleteSave, listIncompleteSaves, savedDir } from './savedGame.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -176,6 +185,7 @@ function inRoomViewFor(room, playerId) {
   v.kind = 'in-room';
   v.roomId = room.id;
   v.roomName = room.name;
+  if (v.status === 'lobby') v.botSlotsFree = MAX_TOTAL_BOTS - totalBots();
   return v;
 }
 
@@ -186,6 +196,8 @@ function broadcastRoom(roomId) {
     if (conn.roomId !== roomId) continue;
     send(ws, { type: 'sync', view: inRoomViewFor(room, conn.playerId) });
   }
+  // Every state change flows through here — let resident bots react.
+  pokeBots(room);
 }
 
 async function broadcastServerLobby() {
@@ -295,8 +307,21 @@ wss.on('connection', async (ws) => {
           const r = requireRoom(conn);
           if (r.hostId !== conn.playerId) throw new GameError('Only the host can close a room', 'not_host');
           deleteRoom(r.id);
+          removeRoomBots(r.id);
           await kickRoomConnections(r.id);
           await broadcastServerLobby();
+          break;
+        }
+        case 'addBot': {
+          const room = requireSeat(conn);
+          addBot(room);
+          await broadcastRoomAndLobby(room.id);
+          break;
+        }
+        case 'removeBot': {
+          const room = requireSeat(conn);
+          removeBot(room, msg.playerId);
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'deleteRoom': {
@@ -309,6 +334,7 @@ wss.on('connection', async (ws) => {
             throw new GameError('Only the creator can delete a room with players in it', 'not_creator');
           }
           deleteRoom(r.id);
+          removeRoomBots(r.id);
           await kickRoomConnections(r.id);
           await broadcastServerLobby();
           break;
@@ -444,6 +470,7 @@ wss.on('connection', async (ws) => {
 // ESM file via require(), which Node refuses for a module with top-level
 // await. Keeping the await inside main() avoids that restriction.
 async function main() {
+  initBots(async (roomId) => broadcastRoomAndLobby(roomId));
   await maybeResumeAtBoot();
 
   server.listen(PORT, HOST, () => {

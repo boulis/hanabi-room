@@ -57,10 +57,11 @@ function statusOf(room) {
   return 'lobby';
 }
 
-// A room is idle when nobody is present: no players at all, or every seat
-// gone offline. Idle rooms may be deleted by anyone from the server lobby.
+// A room is idle when no human is present: no players at all, or every seat
+// gone offline. Bots are server-resident (always "online") and don't keep a
+// room alive. Idle rooms may be deleted by anyone from the server lobby.
 export function isRoomIdle(room) {
-  return room.players.every((p) => !p.online);
+  return room.players.every((p) => !p.online || p.isBot);
 }
 
 export function summarizeRoom(room) {
@@ -72,7 +73,7 @@ export function summarizeRoom(room) {
     variantId: room.options?.variantId ?? null,
     hostId: room.hostId,
     creatorId: room.creatorId ?? null,
-    players: room.players.map((p) => ({ id: p.id, name: p.name, online: p.online })),
+    players: room.players.map((p) => ({ id: p.id, name: p.name, online: p.online, isBot: !!p.isBot })),
     turn: room.state?.turn ?? 0,
   };
 }

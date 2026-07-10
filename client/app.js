@@ -169,6 +169,9 @@ function readSeedInput() {
 document.getElementById('start-button').addEventListener('click', () => {
   send({ type: 'start', seed: readSeedInput() });
 });
+document.getElementById('add-bot-button').addEventListener('click', () => {
+  send({ type: 'addBot' });
+});
 
 document.getElementById('import-deck-file').addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
@@ -386,7 +389,9 @@ function renderServerLobby(v) {
     label.append(title);
     const meta = document.createElement('div');
     meta.className = 'room-meta';
-    const playerNames = r.players.map((p) => (p.online ? p.name : `${p.name} (offline)`)).join(', ') || '(empty)';
+    const playerNames = r.players
+      .map((p) => (p.isBot ? `🤖 ${p.name}` : p.online ? p.name : `${p.name} (offline)`))
+      .join(', ') || '(empty)';
     const statusText = r.status === 'lobby'
       ? `lobby · ${r.variantId || 'no variant'}`
       : r.status === 'playing'
@@ -547,11 +552,21 @@ function renderLobby() {
     const tags = [];
     if (p.id === playerId) tags.push('you');
     if (p.id === view.hostId) tags.push('host');
-    if (!p.online) tags.push('offline');
+    if (p.isBot) tags.push('bot');
+    else if (!p.online) tags.push('offline');
     const tagStr = tags.length ? ` (${tags.join(', ')})` : '';
     const label = document.createElement('span');
-    label.textContent = `${i + 1}. ${p.name} [${p.id}]${tagStr}`;
+    label.textContent = `${i + 1}. ${p.isBot ? '🤖 ' : ''}${p.name} [${p.id}]${tagStr}`;
     li.append(label);
+    if (p.isBot) {
+      // Anyone may remove a bot.
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = 'Remove';
+      remove.className = 'delete-button';
+      remove.addEventListener('click', () => send({ type: 'removeBot', playerId: p.id }));
+      li.append(remove);
+    }
     if (isHost && view.players.length > 1) {
       const up = document.createElement('button');
       up.type = 'button';
@@ -570,6 +585,12 @@ function renderLobby() {
     }
     listEl.append(li);
   });
+  const addBotBtn = document.getElementById('add-bot-button');
+  const slotsFree = view.botSlotsFree ?? 0;
+  addBotBtn.disabled = view.players.length >= 5 || slotsFree <= 0;
+  addBotBtn.textContent = slotsFree > 0
+    ? '+ Add bot'
+    : '+ Add bot (server bot limit reached)';
   document.getElementById('opt-variant').disabled = !isHost;
   document.getElementById('opt-endRule').disabled = !isHost;
   document.getElementById('opt-shareGuarded').disabled = !isHost;
@@ -849,7 +870,7 @@ function renderPlayerRow(player, index, isMyTurn) {
   const head = document.createElement('header');
   const name = document.createElement('span');
   name.className = 'player-name';
-  name.textContent = player.name + (index === view.viewerIndex ? ' (you)' : '');
+  name.textContent = (player.isBot ? '🤖 ' : '') + player.name + (index === view.viewerIndex ? ' (you)' : '');
   head.append(name);
   if (index === view.currentPlayer && view.status === 'playing') {
     const marker = document.createElement('span');

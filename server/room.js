@@ -116,7 +116,8 @@ export function leaveRoom(room, playerId) {
   if (room.phase === 'lobby') {
     room.players = room.players.filter((x) => x.id !== playerId);
     if (room.hostId === playerId) {
-      room.hostId = room.players[0]?.id ?? null;
+      // Prefer a human host — a bot host could neither configure nor start.
+      room.hostId = (room.players.find((x) => !x.isBot) ?? room.players[0])?.id ?? null;
     }
   } else {
     p.online = false;
@@ -341,6 +342,9 @@ export function viewFor(room, playerId) {
   }
   const idx = playerIndex(room, playerId);
   const v = viewState(room.state, idx);
+  // Game-state players don't carry the bot flag; the room roster does.
+  const botIds = new Set(room.players.filter((p) => p.isBot).map((p) => p.id));
+  for (const p of v.players) p.isBot = botIds.has(p.id);
   v.hostId = room.hostId;
   v.options = room.options;
   v.abandonVotes = {
