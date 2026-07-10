@@ -197,9 +197,9 @@ document.getElementById('reaction-bar').addEventListener('click', (e) => {
   if (btn) send({ type: 'react', emoji: btn.dataset.emoji });
 });
 
-// Reactions are ephemeral overlays over a player's row: shown for 2s, then
+// Reactions are ephemeral overlays over a player's row: shown briefly, then
 // gone. Kept in a map so a re-render mid-lifetime re-attaches the bubble.
-const REACTION_MS = 2000;
+const REACTION_MS = 3000;
 const activeReactions = new Map(); // playerIndex -> { emoji, until }
 
 function showReaction(playerIndex, emoji) {
@@ -282,6 +282,9 @@ function attachReactionBubble(playerIndex) {
   const bubble = document.createElement('div');
   bubble.className = 'reaction-bubble';
   bubble.textContent = r.emoji;
+  // Keep the CSS animation length tied to REACTION_MS so a re-attached
+  // bubble (mid-lifetime re-render) doesn't get cut off before it fades.
+  bubble.style.animationDuration = `${REACTION_MS}ms`;
   row.append(bubble);
   setTimeout(() => bubble.remove(), r.until - Date.now());
 }
