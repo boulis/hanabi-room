@@ -1171,7 +1171,16 @@ function renderPlayerRow(player, index, isMyTurn) {
   row.append(hand);
 
   if (isMyTurn && index !== view.viewerIndex && player.hand.length > 0) {
-    row.append(renderHintControls(index));
+    if (tapMode) {
+      // Tapping a card offers a hint matching that card (see renderCard);
+      // tapping anywhere else in the row (header, gaps, padding) offers the
+      // full colour/number picker — useful for a hint that touches nothing.
+      // Cards call stopPropagation, so only "empty space" clicks reach here.
+      row.classList.add('tap-hint-row');
+      row.addEventListener('click', () => openHintPicker(index));
+    } else {
+      row.append(renderHintControls(index));
+    }
   }
   return row;
 }
@@ -1287,6 +1296,14 @@ function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
     el.append(note);
   }
 
+  if (!isMine && tapMode && isMyTurn && view.status === 'playing') {
+    el.classList.add('tap-target');
+    el.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      openHintCardActions(card, ownerIndex);
+    });
+  }
+
   if (isMine && view.status === 'playing') {
     if (tapMode) {
       el.classList.add('tap-target');
@@ -1372,6 +1389,85 @@ function openCardActions(card, cardIndex, isMyTurn) {
 
 function closeCardActions() {
   document.getElementById('card-action-overlay').hidden = true;
+}
+
+// Tap-to-act, tapping an opponent's card: offer the two hints that touch it.
+function openHintCardActions(card, targetIndex) {
+  const overlay = document.getElementById('card-action-overlay');
+  const pop = document.getElementById('card-action-popover');
+  pop.innerHTML = '';
+
+  const title = document.createElement('div');
+  title.className = 'popover-title';
+  title.textContent = 'Give a hint';
+  pop.append(title);
+
+  const disabled = view.hintTokens <= 0;
+  const sendHint = (hintType, value) => {
+    send({ type: 'action', action: { type: 'hint', toPlayerIndex: targetIndex, hintType, value } });
+    closeCardActions();
+  };
+
+  // Some suits (black, rainbow) are never directly hintable by colour — skip
+  // the button rather than show a permanently-disabled option.
+  if (view.hintableColors.includes(card.color)) {
+    const colorBtn = document.createElement('button');
+    colorBtn.type = 'button';
+    colorBtn.className = 'big-action hint-color-action';
+    colorBtn.dataset.color = card.color;
+    colorBtn.textContent = `Hint colour: ${card.color}`;
+    colorBtn.disabled = disabled;
+    colorBtn.addEventListener('click', () => sendHint('color', card.color));
+    pop.append(colorBtn);
+  }
+
+  const numberBtn = document.createElement('button');
+  numberBtn.type = 'button';
+  numberBtn.className = 'big-action hint-number-action';
+  numberBtn.textContent = `Hint number: ${card.number}`;
+  numberBtn.disabled = disabled;
+  numberBtn.addEventListener('click', () => sendHint('number', card.number));
+  pop.append(numberBtn);
+
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'big-action cancel';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', closeCardActions);
+  pop.append(cancel);
+
+  overlay.hidden = false;
+}
+
+// Tap-to-act, tapping a player's empty space: every hintable colour and
+// number, for a hint that touches nothing in particular (or just to pick
+// freely rather than from one card).
+function openHintPicker(targetIndex) {
+  const overlay = document.getElementById('card-action-overlay');
+  const pop = document.getElementById('card-action-popover');
+  pop.innerHTML = '';
+
+  const title = document.createElement('div');
+  title.className = 'popover-title';
+  title.textContent = 'Give a hint';
+  pop.append(title);
+
+  const controls = renderHintControls(targetIndex);
+  // Close the popover after the hint is sent — renderHintControls' buttons
+  // send the action directly, so wrap with a capture-phase listener.
+  controls.addEventListener('click', (ev) => {
+    if (ev.target.closest('.chip')) closeCardActions();
+  });
+  pop.append(controls);
+
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'big-action cancel';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', closeCardActions);
+  pop.append(cancel);
+
+  overlay.hidden = false;
 }
 
 function renderPossible(colors, numbers, manual) {
