@@ -76,7 +76,7 @@ Both modes also end on the third fuse (immediate loss) or perfect score.
 Server → client: `hello` (variant list), `identity` (your assigned `playerId` plus the `roomId` and `roomName` you were placed in), `sync` (filtered view — either a `server-lobby` view or an `in-room` view), `error`, `roomCreated` (a resumed save landed in a fresh room; the client uses it to auto-enter), `deckExport`.
 
 A view is one of:
-- `kind: 'server-lobby'` — sent to connections that aren't in a room. Contains `rooms: [{ id, name, status, variantId, players, turn, ... }]` and `resumableSaves: [{ basename, variantId, playerNames, moves, ... }]`.
+- `kind: 'server-lobby'` — sent to connections that aren't in a room. Contains `rooms: [{ id, name, status, variantId, players, turn, ... }]`, `resumableSaves: [{ basename, variantId, playerNames, moves, ... }]`, and `library` — every save summarized (date, status, score/maxScore, players, tags; `seed` only when finished, since a live seed leaks the deck). Library summaries replay each file once and are cached by mtime (`listLibrary` in `savedGame.js`); the client renders them in a collapsed `<details>` "Game library" section with Replay / Copy seed / Tags / Delete per row.
 - `kind: 'in-room'` — everything else you see today (lobby / playing / finished). Also carries `roomId` and `roomName` at the top level.
 
 Client → server:
@@ -84,6 +84,9 @@ Client → server:
 - `enterRoom { roomId, playerName, playerId? }` — joins an existing room.
 - `leaveRoom` — drop back to the server lobby.
 - `resumeSave { file, roomName? }` — spins up a new room from a saved game and returns `roomCreated`; the client then sends `enterRoom` for it.
+- `replaySave { file, upto }` — stateless replay stepping: the server rebuilds the state after the first `upto` events of the save and replies `replayView { file, upto, total, view }`, where the view is omniscient (`viewerIndex: -1` reveals all hands). Refused with `save_in_use` while a live room holds the file. The client shows it on the game screen with a step bar.
+- `branchSave { file, upto, roomName? }` — "play from move N": copies the save's header plus its first `upto` events into a fresh `…-branch-….jsonl` save, resumes it into a new room (players offline, reclaimed by name), and replies `roomCreated`. The original save is untouched; the branch persists independently. Rejected (`bad_branch`) if the truncated game is already finished.
+- `tagSave { file, tags }` — set a save's tags (≤8, ≤24 chars each), stored in the sidecar `saved-games/tags.json` so the JSONL format stays pure replay data. Tags show in the library list.
 - `deleteSave { file }` — anyone may delete an incomplete save from the server lobby (saves carry no durable owner identity, and the tailnet is trusted). It's a soft delete: the file moves to `saved-games/trash/`, recoverable by the host from the terminal. Refused with `save_in_use` while an open room is appending to that file.
 - `closeRoom` — host only; removes the room and kicks everyone back to the lobby.
 - `deleteRoom { roomId, playerId }` — sent from the server lobby (where the connection holds no seat, so the client passes its persistent `playerId`). Allowed when the caller is the room's creator (`creatorId`, stamped at `createRoom`; falls back to the save's host for resumed rooms) or when the room is idle (no players, or every seat offline). Anyone still connected to the room is kicked back to the server lobby.

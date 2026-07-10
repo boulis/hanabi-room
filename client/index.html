@@ -41,6 +41,10 @@
         <div id="rooms-list"></div>
         <h3>Resumable saved games</h3>
         <div id="resumable-saves"></div>
+        <details id="library-section">
+          <summary>Game library</summary>
+          <div id="library-list"></div>
+        </details>
       </section>
 
       <section id="lobby-screen" class="screen" hidden>
@@ -84,6 +88,16 @@
       </section>
 
       <section id="game-screen" class="screen" hidden>
+        <div id="replay-bar" hidden>
+          <span class="replay-title">Replay</span>
+          <button id="replay-first" type="button" title="Start">⏮</button>
+          <button id="replay-prev" type="button" title="Back one move">◀</button>
+          <span id="replay-pos"></span>
+          <button id="replay-next" type="button" title="Forward one move">▶</button>
+          <button id="replay-last" type="button" title="End">⏭</button>
+          <button id="replay-branch" type="button" title="Open a new room continuing from this point">Play from here</button>
+          <button id="replay-close" type="button">Close replay</button>
+        </div>
         <div class="game-toprow">
           <div id="game-meta"></div>
           <span id="undo-request-note" hidden></span>

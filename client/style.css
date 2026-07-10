@@ -619,6 +619,40 @@ input, select {
 
 .header-room { opacity: 0.75; margin-right: 0.25rem; }
 
+#library-section { margin-top: 1.25rem; }
+#library-section > summary {
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 1.05rem;
+  padding: 0.25rem 0;
+}
+#library-list { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.6rem; }
+.library-row button { white-space: nowrap; }
+.save-tags { margin-top: 0.2rem; display: flex; gap: 0.3rem; flex-wrap: wrap; }
+.tag-chip {
+  font-size: 0.75rem;
+  padding: 0.05rem 0.5rem;
+  border-radius: 99px;
+  background: rgba(43, 106, 209, 0.14);
+  color: #2b6ad1;
+  border: 1px solid rgba(43, 106, 209, 0.35);
+}
+
+#replay-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid #d2691e;
+  border-radius: 8px;
+  background: rgba(210, 105, 30, 0.08);
+}
+#replay-bar[hidden] { display: none; }
+#replay-bar .replay-title { font-weight: bold; color: #d2691e; }
+#replay-pos { min-width: 7.5rem; text-align: center; font-variant-numeric: tabular-nums; }
+#replay-branch { margin-left: auto; border-color: #2b6ad1; color: #2b6ad1; }
+
 .lobby-player {
   display: flex;
   align-items: center;

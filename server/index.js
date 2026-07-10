@@ -34,7 +34,16 @@ import {
   removeRoomBots,
   totalBots,
 } from './bots.js';
-import { deleteSave, listIncompleteSaves, savedDir } from './savedGame.js';
+import {
+  branchSave,
+  deleteSave,
+  listIncompleteSaves,
+  listLibrary,
+  loadSave,
+  savedDir,
+  setSaveTags,
+} from './savedGame.js';
+import { viewState } from './view.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIR = path.resolve(__dirname, '..', 'client');
@@ -142,7 +151,23 @@ async function serverLobbyView() {
     kind: 'server-lobby',
     rooms: listRooms(),
     resumableSaves: saves,
+    library: await listLibrary(),
   };
+}
+
+// A save file an open room is still appending to must not be deleted,
+// replayed (it would reveal live hidden information), or branched.
+function saveInUse(basename) {
+  const filePath = path.resolve(savedDir(), basename);
+  return allRooms().some((r) => r.savePath && path.resolve(r.savePath) === filePath);
+}
+
+function requireSaveBasename(file) {
+  const basename = path.basename(String(file || ''));
+  if (!basename.endsWith('.jsonl') || basename.startsWith('.')) {
+    throw new GameError('Bad save filename', 'bad_save');
+  }
+  return basename;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -356,15 +381,8 @@ wss.on('connection', async (ws) => {
           // durable owner identity, and the move-to-trash keeps it reversible
           // by the host. Refuse while an open room is appending to the file —
           // appendFile would silently recreate a headerless save.
-          const basename = path.basename(String(msg.file || ''));
-          if (!basename.endsWith('.jsonl') || basename.startsWith('.')) {
-            throw new GameError('Bad save filename', 'bad_save');
-          }
-          const filePath = path.resolve(savedDir(), basename);
-          const inUse = allRooms().some(
-            (r) => r.savePath && path.resolve(r.savePath) === filePath,
-          );
-          if (inUse) {
+          const basename = requireSaveBasename(msg.file);
+          if (saveInUse(basename)) {
             throw new GameError('Save is in use by an open room', 'save_in_use');
           }
           try {
@@ -372,6 +390,66 @@ wss.on('connection', async (ws) => {
           } catch (err) {
             if (err.code === 'ENOENT') throw new GameError('Save not found', 'no_save');
             throw err;
+          }
+          await broadcastServerLobby();
+          break;
+        }
+        case 'replaySave': {
+          // Stateless step-through of a saved game: rebuild the state after
+          // the first `upto` events and return an omniscient view (viewer -1
+          // sees every hand — it's a review, not a live game).
+          const basename = requireSaveBasename(msg.file);
+          if (saveInUse(basename)) {
+            throw new GameError('Game is still being played in a room', 'save_in_use');
+          }
+          const upto = Math.max(0, Math.floor(Number(msg.upto) || 0));
+          let loaded;
+          try {
+            loaded = await loadSave(path.join(savedDir(), basename), { maxEvents: upto });
+          } catch (err) {
+            throw new GameError(`Cannot replay ${basename}: ${err.message}`, 'bad_save');
+          }
+          const v = viewState(loaded.state, -1);
+          v.kind = 'replay';
+          send(ws, {
+            type: 'replayView',
+            file: basename,
+            upto: Math.min(upto, loaded.totalEvents),
+            total: loaded.totalEvents,
+            view: v,
+          });
+          break;
+        }
+        case 'branchSave': {
+          // "Start again after move N": copy header + first N events into a
+          // fresh save, then open it in a new room via the resume path. The
+          // original save is untouched; the branch persists on its own.
+          const basename = requireSaveBasename(msg.file);
+          if (saveInUse(basename)) {
+            throw new GameError('Game is still being played in a room', 'save_in_use');
+          }
+          const upto = Math.max(0, Math.floor(Number(msg.upto) || 0));
+          let branched;
+          try {
+            branched = await branchSave(basename, upto);
+            const resumed = await resumeRoom(branched);
+            const r = addRoom(resumed, msg.roomName || `Branch of ${basename}`);
+            send(ws, { type: 'roomCreated', roomId: r.id, roomName: r.name });
+          } catch (err) {
+            // Don't leave a junk branch file behind (e.g. branching past the
+            // game's end resumes to 'finished' and is rejected).
+            if (branched) await fs.rm(branched, { force: true });
+            throw new GameError(`Cannot branch ${basename}: ${err.message}`, 'bad_branch');
+          }
+          await broadcastServerLobby();
+          break;
+        }
+        case 'tagSave': {
+          const basename = requireSaveBasename(msg.file);
+          try {
+            await setSaveTags(basename, msg.tags);
+          } catch (err) {
+            throw new GameError(err.message, 'bad_tags');
           }
           await broadcastServerLobby();
           break;

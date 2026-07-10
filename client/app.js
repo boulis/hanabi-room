@@ -88,6 +88,16 @@ function handleMessage(msg) {
       });
       break;
     case 'sync':
+      if (replay) {
+        if (msg.view.kind === 'server-lobby') {
+          // Keep the lobby fresh behind the replay; don't disturb it.
+          preReplayView = msg.view;
+          break;
+        }
+        // An in-room sync means we joined a room (e.g. "Play from here") —
+        // the live game takes over.
+        closeReplay(false);
+      }
       view = msg.view;
       render();
       break;
@@ -96,6 +106,9 @@ function handleMessage(msg) {
       break;
     case 'reaction':
       showReaction(msg.playerIndex, msg.emoji);
+      break;
+    case 'replayView':
+      onReplayView(msg);
       break;
     case 'error':
       console.warn('server error:', msg.code, msg.error);
@@ -188,6 +201,68 @@ const activeReactions = new Map(); // playerIndex -> { emoji, until }
 function showReaction(playerIndex, emoji) {
   activeReactions.set(playerIndex, { emoji, until: Date.now() + REACTION_MS });
   attachReactionBubble(playerIndex);
+}
+
+// --- Replay mode: step through a saved game on the game screen. The server
+// rebuilds the state after `upto` events per request; we just render views.
+let replay = null;        // { file, upto, total }
+let preReplayView = null; // the server-lobby view to restore on close
+
+function openReplay(file) {
+  replay = { file, upto: 0, total: 0 };
+  preReplayView = view;
+  lastAnimatedActionTurn = null; // fresh baseline; steps animate like live play
+  send({ type: 'replaySave', file, upto: 0 });
+}
+
+function onReplayView(msg) {
+  if (!replay || replay.file !== msg.file) return; // stale response
+  replay.upto = msg.upto;
+  replay.total = msg.total;
+  view = msg.view;
+  render();
+}
+
+function closeReplay(restore = true) {
+  if (!replay) return;
+  replay = null;
+  document.getElementById('replay-bar').hidden = true;
+  if (restore && preReplayView) {
+    view = preReplayView;
+    preReplayView = null;
+    render();
+  } else {
+    preReplayView = null;
+  }
+}
+
+function replayStep(upto) {
+  if (!replay) return;
+  const clamped = Math.max(0, Math.min(upto, replay.total));
+  send({ type: 'replaySave', file: replay.file, upto: clamped });
+}
+
+document.getElementById('replay-first').addEventListener('click', () => replayStep(0));
+document.getElementById('replay-prev').addEventListener('click', () => replayStep(replay ? replay.upto - 1 : 0));
+document.getElementById('replay-next').addEventListener('click', () => replayStep(replay ? replay.upto + 1 : 0));
+document.getElementById('replay-last').addEventListener('click', () => replayStep(replay ? replay.total : 0));
+document.getElementById('replay-close').addEventListener('click', () => closeReplay());
+document.getElementById('replay-branch').addEventListener('click', () => {
+  if (!replay) return;
+  if (!confirm(`Open a new room continuing this game from move ${replay.upto}?`)) return;
+  send({ type: 'branchSave', file: replay.file, upto: replay.upto });
+});
+
+function renderReplayBar() {
+  const bar = document.getElementById('replay-bar');
+  bar.hidden = !replay;
+  if (!replay) return;
+  document.getElementById('replay-pos').textContent = `move ${replay.upto} / ${replay.total}`;
+  document.getElementById('replay-first').disabled = replay.upto === 0;
+  document.getElementById('replay-prev').disabled = replay.upto === 0;
+  document.getElementById('replay-next').disabled = replay.upto >= replay.total;
+  document.getElementById('replay-last').disabled = replay.upto >= replay.total;
+  document.getElementById('replay-branch').disabled = view?.status !== 'playing';
 }
 
 function attachReactionBubble(playerIndex) {
@@ -444,6 +519,7 @@ function render() {
   } else {
     show(gameScreen);
     renderGame();
+    renderReplayBar();
   }
 }
 
@@ -548,6 +624,115 @@ function renderServerLobby(v) {
     });
     row.append(del);
     savesEl.append(row);
+  }
+
+  renderLibrary(v.library || []);
+}
+
+async function copyText(text) {
+  // navigator.clipboard needs a secure context; the app runs on plain http
+  // over the tailnet, so fall back to the legacy path.
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.append(ta);
+    ta.select();
+    const done = document.execCommand('copy');
+    ta.remove();
+    return done;
+  }
+}
+
+function renderLibrary(entries) {
+  const listEl = document.getElementById('library-list');
+  listEl.innerHTML = '';
+  if (entries.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'lobby-empty';
+    empty.textContent = 'No saved games yet.';
+    listEl.append(empty);
+    return;
+  }
+  for (const e of entries) {
+    const row = document.createElement('div');
+    row.className = 'save-row library-row';
+    const label = document.createElement('div');
+    label.className = 'save-label';
+
+    const title = document.createElement('div');
+    title.className = 'save-title';
+    const when = e.startedAt ? new Date(e.startedAt).toLocaleString() : e.basename;
+    const status = e.status === 'unreadable'
+      ? 'unreadable'
+      : e.status === 'in-progress'
+        ? `in progress · ${e.moves} moves`
+        : `${e.status} · ${e.score}/${e.maxScore}`;
+    title.textContent = `${when} — ${status}`;
+    label.append(title);
+
+    const meta = document.createElement('div');
+    meta.className = 'save-meta';
+    meta.textContent = `${e.variantId ?? ''}${e.playerNames ? ' · ' + e.playerNames.join(', ') : ''}`;
+    label.append(meta);
+
+    if (e.tags && e.tags.length) {
+      const tagsEl = document.createElement('div');
+      tagsEl.className = 'save-tags';
+      for (const t of e.tags) {
+        const chip = document.createElement('span');
+        chip.className = 'tag-chip';
+        chip.textContent = t;
+        tagsEl.append(chip);
+      }
+      label.append(tagsEl);
+    }
+    row.append(label);
+
+    if (e.status !== 'unreadable') {
+      const replayBtn = document.createElement('button');
+      replayBtn.type = 'button';
+      replayBtn.textContent = 'Replay';
+      replayBtn.addEventListener('click', () => openReplay(e.basename));
+      row.append(replayBtn);
+
+      if (e.seed != null) {
+        const seedBtn = document.createElement('button');
+        seedBtn.type = 'button';
+        seedBtn.textContent = 'Copy seed';
+        seedBtn.title = `Seed ${e.seed} — paste into the lobby seed box to re-deal this deck`;
+        seedBtn.addEventListener('click', async () => {
+          const done = await copyText(String(e.seed));
+          statusEl.textContent = done ? `seed ${e.seed} copied` : `seed: ${e.seed}`;
+          setTimeout(() => { statusEl.textContent = 'connected'; }, 2500);
+        });
+        row.append(seedBtn);
+      }
+
+      const tagBtn = document.createElement('button');
+      tagBtn.type = 'button';
+      tagBtn.textContent = 'Tags';
+      tagBtn.addEventListener('click', () => {
+        const next = prompt('Tags (comma-separated):', (e.tags || []).join(', '));
+        if (next == null) return;
+        send({ type: 'tagSave', file: e.basename, tags: next.split(',').map((t) => t.trim()).filter(Boolean) });
+      });
+      row.append(tagBtn);
+    }
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'delete-button';
+    del.textContent = 'Delete';
+    del.addEventListener('click', () => {
+      if (!confirm(`Delete saved game from ${e.startedAt ? new Date(e.startedAt).toLocaleString() : e.basename}?`)) return;
+      send({ type: 'deleteSave', file: e.basename });
+    });
+    row.append(del);
+
+    listEl.append(row);
   }
 }
 

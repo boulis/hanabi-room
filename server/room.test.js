@@ -23,7 +23,15 @@ import {
   voteAbandon,
 } from './room.js';
 import { exportDeckOrder } from './game.js';
-import { deleteSave, listIncompleteSaves } from './savedGame.js';
+import {
+  branchSave,
+  deleteSave,
+  listIncompleteSaves,
+  listLibrary,
+  loadSave,
+  readAllTags,
+  setSaveTags,
+} from './savedGame.js';
 
 async function withTmpSaveDir(fn) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'hanabi-saves-'));
@@ -603,6 +611,80 @@ test('save: deleteSave rejects path traversal and non-save filenames', async () 
     await assert.rejects(() => deleteSave('.hidden.jsonl'), /Bad save filename/);
     await assert.rejects(() => deleteSave('notes.txt'), /Bad save filename/);
     await assert.rejects(() => deleteSave(''), /Bad save filename/);
+  });
+});
+
+test('library: loadSave maxEvents truncates; totalEvents counts everything', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    const bobN = room.state.players[1].hand[0].number;
+    await applyAction(room, alice.id, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: bobN });
+    await applyAction(room, bob.id, { type: 'discard', cardIndex: 0 });
+    const aliceN = room.state.players[0].hand[0].number;
+    await applyAction(room, bob.id, { type: 'annotate', cardId: room.state.players[1].hand[0].id, note: 'x' });
+    const partial = await loadSave(room.savePath, { maxEvents: 2 });
+    assert.equal(partial.totalEvents, 3);
+    assert.equal(partial.events.length, 2);
+    assert.equal(partial.state.turn, 2, 'state reflects only the applied events');
+    const full = await loadSave(room.savePath);
+    assert.equal(full.totalEvents, 3);
+    assert.equal(full.events.length, 3);
+  });
+});
+
+test('library: listLibrary summarizes score, status, players; hides live seeds', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    const bobN = room.state.players[1].hand[0].number;
+    await applyAction(room, alice.id, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: bobN });
+    let lib = await listLibrary();
+    assert.equal(lib.length, 1);
+    assert.equal(lib[0].status, 'in-progress');
+    assert.equal(lib[0].seed, null, 'seed hidden while unfinished');
+    assert.deepEqual(lib[0].playerNames, ['Alice', 'Bob']);
+    assert.equal(lib[0].moves, 1);
+    // Finish by abandon votes → seed becomes visible, status reflects reason.
+    await voteAbandon(room, alice.id);
+    await voteAbandon(room, bob.id);
+    lib = await listLibrary();
+    assert.equal(lib[0].status, 'abandoned');
+    assert.equal(lib[0].seed, 12345);
+    assert.equal(typeof lib[0].score, 'number');
+  });
+});
+
+test('library: tags round-trip and vanish when the save is deleted', async () => {
+  await withTmpSaveDir(async () => {
+    const { room } = await setupRoom();
+    const basename = path.basename(room.savePath);
+    await setSaveTags(basename, [' epic ', 'epic', 'close call', '']);
+    assert.deepEqual((await listLibrary())[0].tags, ['epic', 'close call']);
+    room.savePath = null; // release the file so deleteSave's caller may act
+    await deleteSave(basename);
+    assert.deepEqual(await readAllTags(), {}, 'tags entry dropped');
+  });
+});
+
+test('branch: copies header + first N events into a fresh resumable save', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    const bobN = room.state.players[1].hand[0].number;
+    await applyAction(room, alice.id, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: bobN });
+    await applyAction(room, bob.id, { type: 'discard', cardIndex: 0 });
+    const original = await fs.readFile(room.savePath, 'utf8');
+
+    const branched = await branchSave(path.basename(room.savePath), 1);
+    const resumed = await resumeRoom(branched);
+    assert.equal(resumed.state.turn, 1, 'branched game sits after the first event');
+    assert.equal(resumed.players.length, 2);
+    assert.ok(resumed.players.every((p) => !p.online));
+    assert.equal(await fs.readFile(room.savePath, 'utf8'), original, 'original untouched');
+
+    // The branch is a normal save: playing continues in its own file.
+    const carol = resumed.players[1];
+    await applyAction(resumed, carol.id, { type: 'discard', cardIndex: 0 });
+    const branchedLines = (await fs.readFile(branched, 'utf8')).split('\n').filter(Boolean);
+    assert.equal(branchedLines.length, 3, 'header + copied event + new action');
   });
 });
 
