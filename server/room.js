@@ -317,7 +317,12 @@ export async function undoLast(room, playerId) {
   // Keep the undone action visible: its log entries (everything past the
   // snapshot's log) come back flagged so clients can strike them out.
   const struck = undoneLogEntries(room.state.log, top.snapshot.log);
+  // The snapshot's nextLogSeq is the pre-action value — restoring it wholesale
+  // would let the replacement action's pushLog calls reuse seqs already used
+  // by the struck entries above. Keep it monotonic across the whole game.
+  const nextLogSeq = Math.max(room.state.nextLogSeq, top.snapshot.nextLogSeq);
   room.state = top.snapshot;
+  room.state.nextLogSeq = nextLogSeq;
   room.state.log.push(...struck);
   room.undoRequests.clear();
   await safeAppend(room, { kind: 'undo', playerId });

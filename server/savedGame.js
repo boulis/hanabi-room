@@ -177,9 +177,14 @@ function applyEvent(state, ev, ctx) {
       // Same as the live undo path: keep the undone action's log entries,
       // struck out, so a resumed game shows the identical log.
       const struck = undoneLogEntries(state.log, top.snapshot.log);
+      // Keep nextLogSeq monotonic across the whole replay — see the matching
+      // comment in room.js's undoLast for why restoring the snapshot's value
+      // wholesale would let the next action reuse a struck entry's seq.
+      const nextLogSeq = Math.max(state.nextLogSeq, top.snapshot.nextLogSeq);
       // Overwrite each property of state in place so the outer reference stays valid.
       for (const k of Object.keys(state)) delete state[k];
       Object.assign(state, top.snapshot);
+      state.nextLogSeq = nextLogSeq;
       state.log.push(...struck);
       break;
     }

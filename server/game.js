@@ -100,6 +100,7 @@ export function createInitialState({
     log: [],
     endReason: null,
     nextHintIndex: 0,
+    nextLogSeq: 0,
     startedAt: Date.now(),
     endedAt: null,
     initialDeckCards,

@@ -279,6 +279,29 @@ test('undo: undone log entries stay in the log, struck out', async () => {
   });
 });
 
+test('undo: the replacement action gets a fresh seq even though it reuses the same turn number', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice } = await setupRoom();
+    room.state.hintTokens = 4;
+    await applyAction(room, alice.id, { type: 'discard', cardIndex: 0 });
+    const undoneEntry = room.state.log.findLast((e) => e.type === 'discard');
+    await undoLast(room, alice.id);
+    const struckEntry = room.state.log.findLast((e) => e.type === 'discard');
+    assert.equal(struckEntry.undone, true);
+    assert.equal(struckEntry.seq, undoneEntry.seq, 'the struck copy keeps its original seq');
+
+    // Alice plays instead this time — the replacement action lands on the
+    // exact same turn number as the undone discard, but must still get a
+    // higher seq, or a client's animation-dedupe (keyed on the log) would
+    // wrongly treat it as already shown. This is the regression this test
+    // guards: before seq existed, turn was the only signal and it repeats.
+    await applyAction(room, alice.id, { type: 'play', cardIndex: 0 });
+    const replacement = room.state.log.find((e) => e.type === 'play');
+    assert.equal(replacement.turn, undoneEntry.turn, 'same turn number as the undone action');
+    assert.ok(replacement.seq > undoneEntry.seq, 'but a strictly higher seq');
+  });
+});
+
 test('undo: chained undos across players keep all struck entries in order', async () => {
   await withTmpSaveDir(async () => {
     const { room, alice, bob } = await setupRoom();

@@ -80,7 +80,7 @@ function handleMessage(msg) {
       // Fresh room, fresh animation baseline — a stale one (e.g. from replay
       // stepping before a branch) would silently swallow animations for
       // turns it thinks it has already shown.
-      lastAnimatedActionTurn = null;
+      lastAnimatedActionSeq = null;
       break;
     case 'roomCreated':
       // Emitted when a save was resumed into a fresh room; auto-enter it.
@@ -215,7 +215,7 @@ let preReplayView = null; // the server-lobby view to restore on close
 function openReplay(file) {
   replay = { file, upto: 0, total: 0 };
   preReplayView = view;
-  lastAnimatedActionTurn = null; // fresh baseline; steps animate like live play
+  lastAnimatedActionSeq = null; // fresh baseline; steps animate like live play
   send({ type: 'replaySave', file, upto: 0 });
 }
 
@@ -230,7 +230,7 @@ function onReplayView(msg) {
 function closeReplay(restore = true) {
   if (!replay) return;
   replay = null;
-  lastAnimatedActionTurn = null; // replay stepping must not suppress live animations
+  lastAnimatedActionSeq = null; // replay stepping must not suppress live animations
   document.getElementById('replay-bar').hidden = true;
   if (restore && preReplayView) {
     view = preReplayView;
@@ -315,24 +315,29 @@ document.getElementById('request-undo-button').addEventListener('click', () => {
   send({ type: 'requestUndo' });
 });
 
-let lastAnimatedActionTurn = null;
+// Keyed on the log entry's seq (a monotonic id assigned server-side), not its
+// turn number: after an undo, the replacement action reuses the same turn
+// number as the action it replaced, so turn alone can't tell "a new action
+// landed" from "the log just got its struck entries re-appended" — which
+// used to make the replacement action's animation silently not fire.
+let lastAnimatedActionSeq = null;
 
 function maybeAnimateAction(v) {
   const latest = latestActionEntry(v.log);
   if (!latest) {
     // No action yet (game just started or restarted). Re-baseline so the
     // first action in the new game does animate.
-    lastAnimatedActionTurn = -1;
+    lastAnimatedActionSeq = -1;
     return;
   }
-  if (lastAnimatedActionTurn === null) {
+  if (lastAnimatedActionSeq === null) {
     // First time we're seeing actions (fresh connect mid-game). Baseline
     // silently — don't replay history with animations.
-    lastAnimatedActionTurn = latest.turn;
+    lastAnimatedActionSeq = latest.seq;
     return;
   }
-  if (latest.turn <= lastAnimatedActionTurn) return;
-  lastAnimatedActionTurn = latest.turn;
+  if (latest.seq <= lastAnimatedActionSeq) return;
+  lastAnimatedActionSeq = latest.seq;
   // Defer one frame so the post-action DOM is in place before we measure.
   if (latest.type === 'hint') {
     requestAnimationFrame(() => animateHint(latest));
