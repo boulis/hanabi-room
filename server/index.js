@@ -13,7 +13,9 @@ import {
   configureRoom,
   importDeck,
   joinRoom,
+  joinSpectator,
   leaveRoom,
+  leaveSpectator,
   movePlayer,
   renamePlayer,
   requestUndo,
@@ -256,6 +258,7 @@ async function kickRoomConnections(roomId) {
     if (conn.roomId === roomId) {
       conn.roomId = null;
       conn.playerId = null;
+      conn.isSpectator = false;
       send(ws, { type: 'sync', view: await serverLobbyView() });
     }
   }
@@ -270,12 +273,15 @@ function requireRoom(conn) {
 
 function requireSeat(conn) {
   const room = requireRoom(conn);
-  if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+  // Spectators hold conn.playerId (their spectator id, for view lookups and
+  // cleanup) but never a seat — this single guard keeps every action
+  // handler below (play/hint/undo/react/configure/...) off-limits to them.
+  if (!conn.playerId || conn.isSpectator) throw new GameError('Not joined', 'not_joined');
   return room;
 }
 
 wss.on('connection', async (ws) => {
-  const conn = { playerId: null, roomId: null };
+  const conn = { playerId: null, roomId: null, isSpectator: false };
   connections.set(ws, conn);
   send(ws, {
     type: 'hello',
@@ -306,6 +312,7 @@ wss.on('connection', async (ws) => {
           r.creatorId = player.id;
           conn.playerId = player.id;
           conn.roomId = r.id;
+          conn.isSpectator = false;
           send(ws, { type: 'identity', playerId: player.id, roomId: r.id, roomName: r.name });
           await broadcastRoomAndLobby(r.id);
           break;
@@ -316,7 +323,25 @@ wss.on('connection', async (ws) => {
           const player = joinRoom(r, { name: msg.playerName, playerId: msg.playerId });
           conn.playerId = player.id;
           conn.roomId = r.id;
+          conn.isSpectator = false;
           send(ws, { type: 'identity', playerId: player.id, roomId: r.id, roomName: r.name });
+          await broadcastRoomAndLobby(r.id);
+          break;
+        }
+        case 'spectateRoom': {
+          const r = getRoom(msg.roomId);
+          if (!r) throw new GameError('Room not found', 'no_room');
+          const spectator = joinSpectator(r, { name: msg.playerName });
+          conn.playerId = spectator.id;
+          conn.roomId = r.id;
+          conn.isSpectator = true;
+          send(ws, {
+            type: 'identity',
+            playerId: spectator.id,
+            roomId: r.id,
+            roomName: r.name,
+            isSpectator: true,
+          });
           await broadcastRoomAndLobby(r.id);
           break;
         }
@@ -324,10 +349,14 @@ wss.on('connection', async (ws) => {
           const prevRoomId = conn.roomId;
           if (prevRoomId) {
             const r = getRoom(prevRoomId);
-            if (r && conn.playerId) leaveRoom(r, conn.playerId);
+            if (r && conn.playerId) {
+              if (conn.isSpectator) leaveSpectator(r, conn.playerId);
+              else leaveRoom(r, conn.playerId);
+            }
           }
           conn.roomId = null;
           conn.playerId = null;
+          conn.isSpectator = false;
           send(ws, { type: 'sync', view: await serverLobbyView() });
           if (prevRoomId) broadcastRoom(prevRoomId);
           await broadcastServerLobby();
@@ -569,10 +598,13 @@ wss.on('connection', async (ws) => {
   });
 
   ws.on('close', async () => {
-    const { roomId, playerId } = conn;
+    const { roomId, playerId, isSpectator } = conn;
     if (roomId && playerId) {
       const room = getRoom(roomId);
-      if (room) leaveRoom(room, playerId);
+      if (room) {
+        if (isSpectator) leaveSpectator(room, playerId);
+        else leaveRoom(room, playerId);
+      }
     }
     connections.delete(ws);
     if (roomId) broadcastRoom(roomId);

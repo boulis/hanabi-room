@@ -75,6 +75,8 @@ export function summarizeRoom(room) {
     creatorId: room.creatorId ?? null,
     players: room.players.map((p) => ({ id: p.id, name: p.name, online: p.online, isBot: !!p.isBot })),
     turn: room.state?.turn ?? 0,
+    allowSpectators: !!room.options?.allowSpectators,
+    spectatorCount: room.spectators?.size ?? 0,
   };
 }
 

@@ -9,6 +9,7 @@ const nameInput = document.getElementById('name-input');
 const PLAYER_KEY = 'hanabi-room.playerId';
 const NAME_KEY = 'hanabi-room.name';
 const ROOM_KEY = 'hanabi-room.roomId';
+const SPECTATE_KEY = 'hanabi-room.spectating';
 const ART_KEY = 'hanabi-room.useArt';
 const VERBOSE_KEY = 'hanabi-room.verbose';
 const TAP_KEY = 'hanabi-room.tap';
@@ -35,6 +36,10 @@ applySize(localStorage.getItem(SIZE_KEY) || 'M');
 let ws = null;
 let playerId = localStorage.getItem(PLAYER_KEY) || null;
 let roomId = localStorage.getItem(ROOM_KEY) || null;
+// Spectators are never persisted by id (a fresh spectator record is cheap to
+// create) — just whether we were watching a room, so a reload rejoins the
+// same way instead of trying to reclaim a seat that was never ours.
+let isSpectating = localStorage.getItem(SPECTATE_KEY) === 'on';
 let view = null;
 
 function connect() {
@@ -46,7 +51,8 @@ function connect() {
     // the server will error and we'll land in the server-lobby view.
     const savedName = nameInput.value.trim() || localStorage.getItem(NAME_KEY) || '';
     if (savedName && roomId) {
-      send({ type: 'enterRoom', roomId, playerName: savedName, playerId });
+      if (isSpectating) send({ type: 'spectateRoom', roomId, playerName: savedName });
+      else send({ type: 'enterRoom', roomId, playerName: savedName, playerId });
     }
   });
   ws.addEventListener('close', () => {
@@ -77,6 +83,9 @@ function handleMessage(msg) {
         roomId = msg.roomId;
         localStorage.setItem(ROOM_KEY, roomId);
       }
+      isSpectating = !!msg.isSpectator;
+      if (isSpectating) localStorage.setItem(SPECTATE_KEY, 'on');
+      else localStorage.removeItem(SPECTATE_KEY);
       // Fresh room, fresh animation baseline — a stale one (e.g. from replay
       // stepping before a branch) would silently swallow animations for
       // turns it thinks it has already shown.
@@ -122,8 +131,10 @@ function handleMessage(msg) {
         // the natural landing spot.
         roomId = null;
         playerId = null;
+        isSpectating = false;
         localStorage.removeItem(ROOM_KEY);
         localStorage.removeItem(PLAYER_KEY);
+        localStorage.removeItem(SPECTATE_KEY);
       }
       break;
   }
@@ -177,6 +188,9 @@ document.getElementById('opt-shareGuarded').addEventListener('change', (e) => {
 });
 document.getElementById('opt-allowEmptyHints').addEventListener('change', (e) => {
   send({ type: 'configure', options: { allowEmptyHints: e.target.checked } });
+});
+document.getElementById('opt-allowSpectators').addEventListener('change', (e) => {
+  send({ type: 'configure', options: { allowSpectators: e.target.checked } });
 });
 function readSeedInput() {
   const raw = document.getElementById('opt-seed').value.trim();
@@ -567,7 +581,8 @@ function renderServerLobby(v) {
       : r.status === 'playing'
         ? `playing · turn ${r.turn} · ${r.variantId}`
         : `finished · ${r.variantId}`;
-    meta.textContent = `${statusText} — ${playerNames}`;
+    const watchingText = r.spectatorCount > 0 ? ` · 👀 ${r.spectatorCount} watching` : '';
+    meta.textContent = `${statusText} — ${playerNames}${watchingText}`;
     label.append(meta);
     row.append(label);
     const enter = document.createElement('button');
@@ -578,6 +593,19 @@ function renderServerLobby(v) {
       send({ type: 'enterRoom', roomId: r.id, playerName: savedName, playerId });
     });
     row.append(enter);
+    // A clearly distinct action from "Enter" — spectators watch, they don't
+    // take a seat. Only offered when the host has opted the room in.
+    if (r.allowSpectators) {
+      const spectate = document.createElement('button');
+      spectate.type = 'button';
+      spectate.className = 'spectate-button';
+      spectate.textContent = 'Spectator';
+      spectate.disabled = !savedName;
+      spectate.addEventListener('click', () => {
+        send({ type: 'spectateRoom', roomId: r.id, playerName: savedName });
+      });
+      row.append(spectate);
+    }
     // Deletable when you created the room, or when no human is in it (no
     // players, or every seat offline or a bot). Mirrors the server's rule.
     const idle = r.players.every((p) => !p.online || p.isBot);
@@ -750,6 +778,30 @@ function renderLibrary(entries) {
   }
 }
 
+// Shared by both the player and spectator header branches: leaving clears
+// every bit of persisted room identity, including whether we were spectating
+// (otherwise the next reconnect would try to spectateRoom into thin air).
+function leaveRoomAndClearState() {
+  roomId = null;
+  playerId = null;
+  isSpectating = false;
+  localStorage.removeItem(ROOM_KEY);
+  localStorage.removeItem(PLAYER_KEY);
+  localStorage.removeItem(SPECTATE_KEY);
+  send({ type: 'leaveRoom' });
+}
+
+// "👀 watching: …" — shown to everyone in the room (players and spectators
+// alike), so nobody is being watched without knowing it.
+function appendSpectatorsList(meEl, v) {
+  const specs = v.spectators || [];
+  if (specs.length === 0) return;
+  const el = document.createElement('span');
+  el.className = 'header-spectators';
+  el.textContent = ` · 👀 watching: ${specs.map((s) => s.name).join(', ')}`;
+  meEl.append(el);
+}
+
 function renderHeader() {
   const meEl = document.getElementById('me');
   const savedName = localStorage.getItem(NAME_KEY) || '';
@@ -773,6 +825,24 @@ function renderHeader() {
       render();
     });
     meEl.append(' ', btn);
+    return;
+  }
+  if (view?.isSpectator) {
+    const mySpec = (view.spectators || []).find((s) => s.id === playerId);
+    meEl.hidden = false;
+    meEl.textContent = `spectating as ${mySpec?.name || savedName}`;
+    if (view.kind === 'in-room' && view.roomName) {
+      const roomLabel = document.createElement('span');
+      roomLabel.className = 'header-room';
+      roomLabel.textContent = ` · in ${view.roomName}`;
+      meEl.append(roomLabel);
+    }
+    const leaveBtn = document.createElement('button');
+    leaveBtn.type = 'button';
+    leaveBtn.textContent = 'leave room';
+    leaveBtn.addEventListener('click', leaveRoomAndClearState);
+    meEl.append(' ', leaveBtn);
+    appendSpectatorsList(meEl, view);
     return;
   }
   const players = view?.players ?? [];
@@ -804,14 +874,9 @@ function renderHeader() {
     const leaveBtn = document.createElement('button');
     leaveBtn.type = 'button';
     leaveBtn.textContent = 'leave room';
-    leaveBtn.addEventListener('click', () => {
-      roomId = null;
-      playerId = null;
-      localStorage.removeItem(ROOM_KEY);
-      localStorage.removeItem(PLAYER_KEY);
-      send({ type: 'leaveRoom' });
-    });
+    leaveBtn.addEventListener('click', leaveRoomAndClearState);
     meEl.append(' ', leaveBtn);
+    appendSpectatorsList(meEl, view);
   }
 }
 
@@ -825,6 +890,7 @@ function renderLobby() {
   const listEl = document.getElementById('lobby-players');
   listEl.innerHTML = '';
   const isHost = view.hostId === playerId;
+  const isSpectator = !!view.isSpectator;
   view.players.forEach((p, i) => {
     const li = document.createElement('div');
     li.className = 'lobby-player';
@@ -837,8 +903,8 @@ function renderLobby() {
     const label = document.createElement('span');
     label.textContent = `${i + 1}. ${p.isBot ? '🤖 ' : ''}${p.name} [${p.id}]${tagStr}`;
     li.append(label);
-    if (p.isBot) {
-      // Anyone may remove a bot.
+    if (p.isBot && !isSpectator) {
+      // Anyone seated may remove a bot — spectators aren't seated.
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.textContent = 'Remove';
@@ -865,6 +931,7 @@ function renderLobby() {
     listEl.append(li);
   });
   const addBotBtn = document.getElementById('add-bot-button');
+  addBotBtn.hidden = isSpectator;
   const slotsFree = view.botSlotsFree ?? 0;
   addBotBtn.disabled = view.players.length >= 5 || slotsFree <= 0;
   addBotBtn.textContent = slotsFree > 0
@@ -874,11 +941,13 @@ function renderLobby() {
   document.getElementById('opt-endRule').disabled = !isHost;
   document.getElementById('opt-shareGuarded').disabled = !isHost;
   document.getElementById('opt-allowEmptyHints').disabled = !isHost;
+  document.getElementById('opt-allowSpectators').disabled = !isHost;
   document.getElementById('start-button').disabled = !isHost || view.players.length < 2;
   document.getElementById('opt-variant').value = view.options.variantId;
   document.getElementById('opt-endRule').value = view.options.endRule;
   document.getElementById('opt-shareGuarded').checked = view.options.shareGuarded;
   document.getElementById('opt-allowEmptyHints').checked = view.options.allowEmptyHints;
+  document.getElementById('opt-allowSpectators').checked = view.options.allowSpectators;
   const importFile = document.getElementById('import-deck-file');
   importFile.disabled = !isHost;
   const importStatus = document.getElementById('import-deck-status');
@@ -904,6 +973,9 @@ function renderGame() {
   const v = view;
   maybeAnimateAction(v);
   maybeFireworks(v);
+  // Reactions are a player-to-player thing; spectators (and replay, which
+  // never sets isSpectator either) watch without joining in.
+  document.getElementById('reaction-bar').hidden = v.kind !== 'in-room' || !!v.isSpectator;
   const meta = document.getElementById('game-meta');
   meta.innerHTML = '';
   const timerItem = document.createElement('div');
@@ -1131,7 +1203,7 @@ function renderGame() {
     reqNote.textContent = '';
   }
   const abandonBtn = document.getElementById('abandon-button');
-  if (v.status === 'playing' && v.abandonVotes) {
+  if (v.status === 'playing' && v.abandonVotes && !v.isSpectator) {
     abandonBtn.hidden = false;
     const { count, threshold, me } = v.abandonVotes;
     abandonBtn.textContent = me

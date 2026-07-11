@@ -20,6 +20,7 @@ const DEFAULT_OPTIONS = {
   endRule: 'lax',
   shareGuarded: false,
   allowEmptyHints: false,
+  allowSpectators: false,
 };
 
 const ABANDON_THRESHOLD = 2;
@@ -37,12 +38,19 @@ export function createRoom() {
     undoRequests: new Set(),
     savePath: null,
     importedDeck: null,
+    // Spectators get an omniscient, read-only view — never part of
+    // state.players, so game logic (rules.js) never has to know about them.
+    spectators: new Map(),
   };
 }
 
 const UNDOABLE_ACTIONS = new Set(['play', 'discard', 'hint']);
 
 function newPlayerId() {
+  return randomUUID().slice(0, 8);
+}
+
+function newSpectatorId() {
   return randomUUID().slice(0, 8);
 }
 
@@ -93,6 +101,24 @@ export function joinRoom(room, { name, playerId }) {
   room.players.push(player);
   if (!room.hostId) room.hostId = id;
   return player;
+}
+
+// Spectators may join in any phase (lobby or playing) — watching the lobby
+// fill up has no hidden information to protect, and once the game starts
+// they get an omniscient view via viewFor (playerIndex resolves to -1 for a
+// spectator id, which is exactly the "reveal everything" viewer index).
+export function joinSpectator(room, { name }) {
+  if (!room.options.allowSpectators) {
+    throw new GameError('Spectating is not allowed in this room', 'spectators_disabled');
+  }
+  const id = newSpectatorId();
+  const spectator = { id, name: name || id };
+  room.spectators.set(id, spectator);
+  return spectator;
+}
+
+export function leaveSpectator(room, spectatorId) {
+  room.spectators.delete(spectatorId);
 }
 
 export async function renamePlayer(room, playerId, newName) {
@@ -175,6 +201,9 @@ export function configureRoom(room, playerId, partial) {
   }
   if (next.allowEmptyHints !== undefined && typeof next.allowEmptyHints !== 'boolean') {
     throw new GameError('allowEmptyHints must be boolean', 'bad_empty_hints');
+  }
+  if (next.allowSpectators !== undefined && typeof next.allowSpectators !== 'boolean') {
+    throw new GameError('allowSpectators must be boolean', 'bad_allow_spectators');
   }
   room.options = next;
 }
@@ -342,9 +371,16 @@ export function requestUndo(room, playerId) {
   else room.undoRequests.add(playerId);
 }
 
+function spectatorList(room) {
+  return [...room.spectators.values()].map((s) => ({ id: s.id, name: s.name }));
+}
+
 export function viewFor(room, playerId) {
   if (room.phase === 'lobby') {
-    return lobbyView(room);
+    const v = lobbyView(room);
+    v.spectators = spectatorList(room);
+    v.isSpectator = room.spectators.has(playerId);
+    return v;
   }
   const idx = playerIndex(room, playerId);
   const v = viewState(room.state, idx);
@@ -353,6 +389,8 @@ export function viewFor(room, playerId) {
   for (const p of v.players) p.isBot = botIds.has(p.id);
   v.hostId = room.hostId;
   v.options = room.options;
+  v.spectators = spectatorList(room);
+  v.isSpectator = room.spectators.has(playerId);
   v.abandonVotes = {
     count: room.abandonVotes.size,
     threshold: ABANDON_THRESHOLD,
@@ -387,6 +425,10 @@ export async function resumeRoom(filePath) {
     endRule: header.endRule,
     shareGuarded: header.shareGuarded,
     allowEmptyHints: header.allowEmptyHints,
+    // Not persisted in the save header (it's a room-social setting, not
+    // game state) — resumed/branched rooms default it back off, same as a
+    // freshly created room; the host can re-enable it from the lobby.
+    allowSpectators: false,
   };
   room.players = state.players.map((p) => {
     const h = header.players.find((x) => x.id === p.id);

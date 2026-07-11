@@ -11,7 +11,9 @@ import {
   createRoom,
   importDeck,
   joinRoom,
+  joinSpectator,
   leaveRoom,
+  leaveSpectator,
   movePlayer,
   renamePlayer,
   requestUndo,
@@ -805,5 +807,109 @@ test('resume: refuses a save that has already ended', async () => {
     const files = await fs.readdir(process.env.HANABI_SAVED_DIR);
     const filePath = path.join(process.env.HANABI_SAVED_DIR, files[0]);
     await assert.rejects(() => resumeRoom(filePath), /already ended/);
+  });
+});
+
+test('spectate: disallowed by default; enabling it via configure lets anyone watch', async () => {
+  await withTmpSaveDir(async () => {
+    const room = createRoom();
+    const alice = joinRoom(room, { name: 'Alice' });
+    assert.throws(() => joinSpectator(room, { name: 'Watcher' }), /not allowed/);
+    configureRoom(room, alice.id, { allowSpectators: true });
+    const watcher = joinSpectator(room, { name: 'Watcher' });
+    assert.ok(watcher.id);
+    assert.equal(watcher.name, 'Watcher');
+    assert.equal(room.spectators.size, 1);
+  });
+});
+
+test('spectate: configureRoom validates allowSpectators as boolean', () => {
+  const room = createRoom();
+  const alice = joinRoom(room, { name: 'Alice' });
+  assert.throws(() => configureRoom(room, alice.id, { allowSpectators: 'yes' }), GameError);
+});
+
+test('spectate: a spectator gets an omniscient, read-only view during play', async () => {
+  await withTmpSaveDir(async () => {
+    const room = createRoom();
+    const alice = joinRoom(room, { name: 'Alice' });
+    const bob = joinRoom(room, { name: 'Bob' });
+    configureRoom(room, alice.id, { allowSpectators: true });
+    await startGame(room, alice.id, { seed: 12345 });
+    const watcher = joinSpectator(room, { name: 'Watcher' });
+
+    const v = viewFor(room, watcher.id);
+    assert.equal(v.isSpectator, true);
+    assert.equal(v.viewerIndex, -1, 'omniscient viewer index, like replay');
+    // Every hand is fully revealed — including what would be "your own" hand
+    // for a seated player.
+    for (const p of v.players) {
+      for (const c of p.hand) {
+        assert.ok(c.color, `card should be revealed: ${JSON.stringify(c)}`);
+        assert.ok(c.number);
+      }
+    }
+    // No seat means no undo/abandon rights.
+    assert.equal(v.canUndo, false);
+    assert.equal(v.canRequestUndo, false);
+    assert.equal(v.abandonVotes.me, false);
+    // The spectator list is visible to everyone in the room.
+    assert.deepEqual(v.spectators.map((s) => s.name), ['Watcher']);
+    assert.deepEqual(viewFor(room, alice.id).spectators.map((s) => s.name), ['Watcher']);
+  });
+});
+
+test('spectate: cannot act — every seat-gated action rejects a spectator id', async () => {
+  await withTmpSaveDir(async () => {
+    const room = createRoom();
+    const alice = joinRoom(room, { name: 'Alice' });
+    const bob = joinRoom(room, { name: 'Bob' });
+    configureRoom(room, alice.id, { allowSpectators: true });
+    await startGame(room, alice.id, { seed: 12345 });
+    const watcher = joinSpectator(room, { name: 'Watcher' });
+
+    await assert.rejects(
+      () => applyAction(room, watcher.id, { type: 'discard', cardIndex: 0 }),
+      GameError,
+      'spectator id is not a seat, so applyAction rejects it the same way an unknown id would',
+    );
+    await assert.rejects(() => voteAbandon(room, watcher.id), GameError);
+    await assert.rejects(() => undoLast(room, watcher.id), GameError);
+    assert.throws(() => requestUndo(room, watcher.id), GameError);
+  });
+});
+
+test('spectate: can join and watch a room still in its pre-game lobby', () => {
+  const room = createRoom();
+  const alice = joinRoom(room, { name: 'Alice' });
+  configureRoom(room, alice.id, { allowSpectators: true });
+  const watcher = joinSpectator(room, { name: 'Watcher' });
+  const v = viewFor(room, watcher.id);
+  assert.equal(v.status, 'lobby');
+  assert.equal(v.isSpectator, true);
+  assert.deepEqual(v.spectators.map((s) => s.name), ['Watcher']);
+});
+
+test('spectate: leaveSpectator removes them; joinSpectator without a name falls back to the id', async () => {
+  await withTmpSaveDir(async () => {
+    const room = createRoom();
+    const alice = joinRoom(room, { name: 'Alice' });
+    configureRoom(room, alice.id, { allowSpectators: true });
+    const watcher = joinSpectator(room, {});
+    assert.equal(watcher.name, watcher.id, 'falls back to id when no name given');
+    assert.equal(room.spectators.size, 1);
+    leaveSpectator(room, watcher.id);
+    assert.equal(room.spectators.size, 0);
+    // Idempotent — leaving twice (e.g. a duplicate close event) is a no-op.
+    leaveSpectator(room, watcher.id);
+    assert.equal(room.spectators.size, 0);
+  });
+});
+
+test('spectate: resumeRoom defaults allowSpectators back off', async () => {
+  await withTmpSaveDir(async () => {
+    const { room } = await setupRoom();
+    const resumed = await resumeRoom(room.savePath);
+    assert.equal(resumed.options.allowSpectators, false);
   });
 });
