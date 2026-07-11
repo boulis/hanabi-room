@@ -6,6 +6,7 @@ import {
   discardAction,
   hintAction,
   playAction,
+  undoneLogEntries,
 } from './rules.js';
 import { lobbyView, viewState } from './view.js';
 import {
@@ -19,6 +20,7 @@ const DEFAULT_OPTIONS = {
   endRule: 'lax',
   shareGuarded: false,
   allowEmptyHints: false,
+  allowSpectators: false,
 };
 
 const ABANDON_THRESHOLD = 2;
@@ -33,14 +35,22 @@ export function createRoom() {
     sockets: new Map(),
     abandonVotes: new Set(),
     undoStack: [],
+    undoRequests: new Set(),
     savePath: null,
     importedDeck: null,
+    // Spectators get an omniscient, read-only view — never part of
+    // state.players, so game logic (rules.js) never has to know about them.
+    spectators: new Map(),
   };
 }
 
 const UNDOABLE_ACTIONS = new Set(['play', 'discard', 'hint']);
 
 function newPlayerId() {
+  return randomUUID().slice(0, 8);
+}
+
+function newSpectatorId() {
   return randomUUID().slice(0, 8);
 }
 
@@ -93,6 +103,24 @@ export function joinRoom(room, { name, playerId }) {
   return player;
 }
 
+// Spectators may join in any phase (lobby or playing) — watching the lobby
+// fill up has no hidden information to protect, and once the game starts
+// they get an omniscient view via viewFor (playerIndex resolves to -1 for a
+// spectator id, which is exactly the "reveal everything" viewer index).
+export function joinSpectator(room, { name }) {
+  if (!room.options.allowSpectators) {
+    throw new GameError('Spectating is not allowed in this room', 'spectators_disabled');
+  }
+  const id = newSpectatorId();
+  const spectator = { id, name: name || id };
+  room.spectators.set(id, spectator);
+  return spectator;
+}
+
+export function leaveSpectator(room, spectatorId) {
+  room.spectators.delete(spectatorId);
+}
+
 export async function renamePlayer(room, playerId, newName) {
   const p = findPlayer(room, playerId);
   if (!p) throw new GameError('Not in this room', 'not_seated');
@@ -114,7 +142,8 @@ export function leaveRoom(room, playerId) {
   if (room.phase === 'lobby') {
     room.players = room.players.filter((x) => x.id !== playerId);
     if (room.hostId === playerId) {
-      room.hostId = room.players[0]?.id ?? null;
+      // Prefer a human host — a bot host could neither configure nor start.
+      room.hostId = (room.players.find((x) => !x.isBot) ?? room.players[0])?.id ?? null;
     }
   } else {
     p.online = false;
@@ -173,6 +202,9 @@ export function configureRoom(room, playerId, partial) {
   if (next.allowEmptyHints !== undefined && typeof next.allowEmptyHints !== 'boolean') {
     throw new GameError('allowEmptyHints must be boolean', 'bad_empty_hints');
   }
+  if (next.allowSpectators !== undefined && typeof next.allowSpectators !== 'boolean') {
+    throw new GameError('allowSpectators must be boolean', 'bad_allow_spectators');
+  }
   room.options = next;
 }
 
@@ -207,11 +239,13 @@ export async function startGame(room, playerId, { seed } = {}) {
   room.phase = 'playing';
   room.abandonVotes.clear();
   room.undoStack = [];
+  room.undoRequests.clear();
   room.savePath = null;
   // Imported deck is one-shot — clear after the game starts using it.
   room.importedDeck = null;
   try {
-    room.savePath = await openSave(room.state, room.hostId);
+    const botIds = new Set(room.players.filter((p) => p.isBot).map((p) => p.id));
+    room.savePath = await openSave(room.state, room.hostId, botIds);
   } catch (err) {
     console.error('Failed to open save file:', err);
   }
@@ -227,6 +261,7 @@ export function returnToLobby(room, playerId) {
   room.phase = 'lobby';
   room.state = null;
   room.undoStack = [];
+  room.undoRequests.clear();
   room.savePath = null;
   room.abandonVotes.clear();
 }
@@ -289,6 +324,8 @@ export async function applyAction(room, playerId, action) {
     if (snapshotPushed) room.undoStack.pop();
     throw err;
   }
+  // A new action changes who can undo, so pending requests are stale.
+  if (action.type !== 'annotate') room.undoRequests.clear();
   await safeAppend(room, { kind: 'action', playerId, action });
   if (room.state.status === 'finished') {
     // Keep savePath set: an undo + continuation after game-over should still
@@ -306,18 +343,54 @@ export async function undoLast(room, playerId) {
     throw new GameError('Only the player who took the most recent action can undo it', 'not_your_undo');
   }
   room.undoStack.pop();
+  // Keep the undone action visible: its log entries (everything past the
+  // snapshot's log) come back flagged so clients can strike them out.
+  const struck = undoneLogEntries(room.state.log, top.snapshot.log);
+  // The snapshot's nextLogSeq is the pre-action value — restoring it wholesale
+  // would let the replacement action's pushLog calls reuse seqs already used
+  // by the struck entries above. Keep it monotonic across the whole game.
+  const nextLogSeq = Math.max(room.state.nextLogSeq, top.snapshot.nextLogSeq);
   room.state = top.snapshot;
+  room.state.nextLogSeq = nextLogSeq;
+  room.state.log.push(...struck);
+  room.undoRequests.clear();
   await safeAppend(room, { kind: 'undo', playerId });
+}
+
+export function requestUndo(room, playerId) {
+  if (room.phase !== 'playing') throw new GameError('No active game', 'no_game');
+  if (room.state.status !== 'playing') throw new GameError('Game is not in progress', 'not_playing');
+  if (!findPlayer(room, playerId)) throw new GameError('Not in this game', 'not_seated');
+  const top = room.undoStack[room.undoStack.length - 1];
+  if (!top) throw new GameError('Nothing to undo', 'nothing_to_undo');
+  if (top.playerId === playerId) {
+    throw new GameError('You can undo yourself — no need to request', 'own_undo');
+  }
+  // Toggle, so a request can be retracted with a second click.
+  if (room.undoRequests.has(playerId)) room.undoRequests.delete(playerId);
+  else room.undoRequests.add(playerId);
+}
+
+function spectatorList(room) {
+  return [...room.spectators.values()].map((s) => ({ id: s.id, name: s.name }));
 }
 
 export function viewFor(room, playerId) {
   if (room.phase === 'lobby') {
-    return lobbyView(room);
+    const v = lobbyView(room);
+    v.spectators = spectatorList(room);
+    v.isSpectator = room.spectators.has(playerId);
+    return v;
   }
   const idx = playerIndex(room, playerId);
   const v = viewState(room.state, idx);
+  // Game-state players don't carry the bot flag; the room roster does.
+  const botIds = new Set(room.players.filter((p) => p.isBot).map((p) => p.id));
+  for (const p of v.players) p.isBot = botIds.has(p.id);
   v.hostId = room.hostId;
   v.options = room.options;
+  v.spectators = spectatorList(room);
+  v.isSpectator = room.spectators.has(playerId);
   v.abandonVotes = {
     count: room.abandonVotes.size,
     threshold: ABANDON_THRESHOLD,
@@ -325,6 +398,16 @@ export function viewFor(room, playerId) {
   };
   const topUndo = room.undoStack[room.undoStack.length - 1];
   v.canUndo = !!(topUndo && topUndo.playerId === playerId);
+  v.canRequestUndo = !!(
+    topUndo &&
+    topUndo.playerId !== playerId &&
+    idx >= 0 &&
+    room.state.status === 'playing'
+  );
+  v.undoRequestedByMe = playerId ? room.undoRequests.has(playerId) : false;
+  v.undoRequests = [...room.undoRequests]
+    .map((id) => room.state.players.find((p) => p.id === id)?.name)
+    .filter(Boolean);
   return v;
 }
 
@@ -342,8 +425,15 @@ export async function resumeRoom(filePath) {
     endRule: header.endRule,
     shareGuarded: header.shareGuarded,
     allowEmptyHints: header.allowEmptyHints,
+    // Not persisted in the save header (it's a room-social setting, not
+    // game state) — resumed/branched rooms default it back off, same as a
+    // freshly created room; the host can re-enable it from the lobby.
+    allowSpectators: false,
   };
-  room.players = state.players.map((p) => ({ id: p.id, name: p.name, online: false }));
+  room.players = state.players.map((p) => {
+    const h = header.players.find((x) => x.id === p.id);
+    return { id: p.id, name: p.name, online: false, isBot: !!h?.isBot };
+  });
   room.hostId = header.hostId;
   room.state = state;
   room.undoStack = undoStack;

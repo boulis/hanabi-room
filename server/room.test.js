@@ -11,9 +11,12 @@ import {
   createRoom,
   importDeck,
   joinRoom,
+  joinSpectator,
   leaveRoom,
+  leaveSpectator,
   movePlayer,
   renamePlayer,
+  requestUndo,
   resumeRoom,
   returnToLobby,
   startGame,
@@ -22,6 +25,15 @@ import {
   voteAbandon,
 } from './room.js';
 import { exportDeckOrder } from './game.js';
+import {
+  branchSave,
+  deleteSave,
+  listIncompleteSaves,
+  listLibrary,
+  loadSave,
+  readAllTags,
+  setSaveTags,
+} from './savedGame.js';
 
 async function withTmpSaveDir(fn) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'hanabi-saves-'));
@@ -244,6 +256,125 @@ test('undo: sequential undos walk back across players', async () => {
     await undoLast(room, alice.id);
     assert.equal(room.state.currentPlayer, 0, 'alice is current again');
     assert.equal(room.undoStack.length, 0);
+  });
+});
+
+test('undo: undone log entries stay in the log, struck out', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice } = await setupRoom();
+    room.state.hintTokens = 4;
+    const before = room.state.log.length;
+    await applyAction(room, alice.id, { type: 'discard', cardIndex: 0 });
+    const added = room.state.log.slice(before);
+    assert.ok(added.length >= 1, 'discard logged');
+    await undoLast(room, alice.id);
+    const tail = room.state.log.slice(before);
+    assert.equal(tail.length, added.length, 'undone entries kept');
+    assert.ok(tail.every((e) => e.undone === true), 'all flagged undone');
+    assert.deepEqual(
+      tail.map((e) => e.type),
+      added.map((e) => e.type),
+      'same entries, same order',
+    );
+    // Tokens and hand are rolled back even though the log remembers.
+    assert.equal(room.state.hintTokens, 4);
+  });
+});
+
+test('undo: the replacement action gets a fresh seq even though it reuses the same turn number', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice } = await setupRoom();
+    room.state.hintTokens = 4;
+    await applyAction(room, alice.id, { type: 'discard', cardIndex: 0 });
+    const undoneEntry = room.state.log.findLast((e) => e.type === 'discard');
+    await undoLast(room, alice.id);
+    const struckEntry = room.state.log.findLast((e) => e.type === 'discard');
+    assert.equal(struckEntry.undone, true);
+    assert.equal(struckEntry.seq, undoneEntry.seq, 'the struck copy keeps its original seq');
+
+    // Alice plays instead this time — the replacement action lands on the
+    // exact same turn number as the undone discard, but must still get a
+    // higher seq, or a client's animation-dedupe (keyed on the log) would
+    // wrongly treat it as already shown. This is the regression this test
+    // guards: before seq existed, turn was the only signal and it repeats.
+    await applyAction(room, alice.id, { type: 'play', cardIndex: 0 });
+    const replacement = room.state.log.find((e) => e.type === 'play');
+    assert.equal(replacement.turn, undoneEntry.turn, 'same turn number as the undone action');
+    assert.ok(replacement.seq > undoneEntry.seq, 'but a strictly higher seq');
+  });
+});
+
+test('undo: chained undos across players keep all struck entries in order', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    room.state.hintTokens = 4;
+    const before = room.state.log.length;
+    await applyAction(room, alice.id, { type: 'discard', cardIndex: 0 });
+    const aliceCount = room.state.log.length - before;
+    await applyAction(room, bob.id, { type: 'discard', cardIndex: 0 });
+    await undoLast(room, bob.id);
+    await undoLast(room, alice.id);
+    const tail = room.state.log.slice(before);
+    assert.ok(tail.every((e) => e.undone === true));
+    // Alice's struck entries come first, then Bob's.
+    assert.equal(tail[0].playerIndex ?? tail[0].fromIndex, 0);
+    assert.equal(tail[aliceCount].playerIndex ?? tail[aliceCount].fromIndex, 1);
+  });
+});
+
+test('undo: resume replays struck log entries identically', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    // Spend a token legitimately (recorded in the save) so discarding is legal.
+    const bobN = room.state.players[1].hand[0].number;
+    await applyAction(room, alice.id, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: bobN });
+    await applyAction(room, bob.id, { type: 'discard', cardIndex: 0 });
+    await undoLast(room, bob.id);
+    await applyAction(room, bob.id, { type: 'discard', cardIndex: 1 });
+    // Annotations reference card ids; they must survive the resume too.
+    await applyAction(room, bob.id, {
+      type: 'annotate', cardId: room.state.players[1].hand[2].id, note: 'save me',
+    });
+    const resumed = await resumeRoom(room.savePath);
+    assert.deepEqual(resumed.state.log, room.state.log, 'resumed log matches live log');
+    assert.ok(room.state.log.some((e) => e.undone), 'struck entry present');
+    assert.equal(
+      resumed.state.players[1].hand[2].annotations.note,
+      'save me',
+      'annotation lands on the same card after resume',
+    );
+  });
+});
+
+test('requestUndo: toggles, gates on ownership, clears on action and undo', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    room.state.hintTokens = 4;
+    // Nothing to undo yet.
+    assert.throws(() => requestUndo(room, bob.id), GameError);
+    await applyAction(room, alice.id, { type: 'discard', cardIndex: 0 });
+    // Alice owns the undo — she can't request it from herself.
+    assert.throws(() => requestUndo(room, alice.id), GameError);
+    requestUndo(room, bob.id);
+    let v = viewFor(room, alice.id);
+    assert.equal(v.canUndo, true);
+    assert.deepEqual(v.undoRequests, ['Bob']);
+    assert.equal(viewFor(room, bob.id).undoRequestedByMe, true);
+    assert.equal(viewFor(room, bob.id).canRequestUndo, true);
+    assert.equal(viewFor(room, alice.id).canRequestUndo, false);
+    // Toggle off and back on.
+    requestUndo(room, bob.id);
+    assert.deepEqual(viewFor(room, alice.id).undoRequests, []);
+    requestUndo(room, bob.id);
+    // The requested undo clears the request.
+    await undoLast(room, alice.id);
+    assert.deepEqual(viewFor(room, alice.id).undoRequests, []);
+    // A fresh action also clears any pending requests.
+    await applyAction(room, alice.id, { type: 'discard', cardIndex: 0 });
+    requestUndo(room, bob.id);
+    assert.equal(room.undoRequests.size, 1);
+    await undoLast(room, alice.id);
+    assert.equal(room.undoRequests.size, 0);
   });
 });
 
@@ -485,6 +616,103 @@ test('save: each action appends an event line', async () => {
   });
 });
 
+test('save: deleteSave moves the file to trash/ and it stops being listed', async () => {
+  await withTmpSaveDir(async (dir) => {
+    const { room } = await setupRoom();
+    const basename = path.basename(room.savePath);
+    assert.equal((await listIncompleteSaves()).length, 1);
+    const dest = await deleteSave(basename);
+    assert.equal(dest, path.join(dir, 'trash', basename));
+    const trashed = await fs.readFile(dest, 'utf8');
+    assert.ok(trashed.includes('"kind":"start"'), 'file content preserved in trash');
+    assert.equal((await listIncompleteSaves()).length, 0, 'no longer listed');
+    await assert.rejects(() => deleteSave(basename), /ENOENT/, 'second delete fails cleanly');
+  });
+});
+
+test('save: deleteSave rejects path traversal and non-save filenames', async () => {
+  await withTmpSaveDir(async () => {
+    await assert.rejects(() => deleteSave('../escape.jsonl'), /Bad save filename/);
+    await assert.rejects(() => deleteSave('.hidden.jsonl'), /Bad save filename/);
+    await assert.rejects(() => deleteSave('notes.txt'), /Bad save filename/);
+    await assert.rejects(() => deleteSave(''), /Bad save filename/);
+  });
+});
+
+test('library: loadSave maxEvents truncates; totalEvents counts everything', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    const bobN = room.state.players[1].hand[0].number;
+    await applyAction(room, alice.id, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: bobN });
+    await applyAction(room, bob.id, { type: 'discard', cardIndex: 0 });
+    const aliceN = room.state.players[0].hand[0].number;
+    await applyAction(room, bob.id, { type: 'annotate', cardId: room.state.players[1].hand[0].id, note: 'x' });
+    const partial = await loadSave(room.savePath, { maxEvents: 2 });
+    assert.equal(partial.totalEvents, 3);
+    assert.equal(partial.events.length, 2);
+    assert.equal(partial.state.turn, 2, 'state reflects only the applied events');
+    const full = await loadSave(room.savePath);
+    assert.equal(full.totalEvents, 3);
+    assert.equal(full.events.length, 3);
+  });
+});
+
+test('library: listLibrary summarizes score, status, players; hides live seeds', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    const bobN = room.state.players[1].hand[0].number;
+    await applyAction(room, alice.id, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: bobN });
+    let lib = await listLibrary();
+    assert.equal(lib.length, 1);
+    assert.equal(lib[0].status, 'in-progress');
+    assert.equal(lib[0].seed, null, 'seed hidden while unfinished');
+    assert.deepEqual(lib[0].playerNames, ['Alice', 'Bob']);
+    assert.equal(lib[0].moves, 1);
+    // Finish by abandon votes → seed becomes visible, status reflects reason.
+    await voteAbandon(room, alice.id);
+    await voteAbandon(room, bob.id);
+    lib = await listLibrary();
+    assert.equal(lib[0].status, 'abandoned');
+    assert.equal(lib[0].seed, 12345);
+    assert.equal(typeof lib[0].score, 'number');
+  });
+});
+
+test('library: tags round-trip and vanish when the save is deleted', async () => {
+  await withTmpSaveDir(async () => {
+    const { room } = await setupRoom();
+    const basename = path.basename(room.savePath);
+    await setSaveTags(basename, [' epic ', 'epic', 'close call', '']);
+    assert.deepEqual((await listLibrary())[0].tags, ['epic', 'close call']);
+    room.savePath = null; // release the file so deleteSave's caller may act
+    await deleteSave(basename);
+    assert.deepEqual(await readAllTags(), {}, 'tags entry dropped');
+  });
+});
+
+test('branch: copies header + first N events into a fresh resumable save', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    const bobN = room.state.players[1].hand[0].number;
+    await applyAction(room, alice.id, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: bobN });
+    await applyAction(room, bob.id, { type: 'discard', cardIndex: 0 });
+    const original = await fs.readFile(room.savePath, 'utf8');
+
+    const branched = await branchSave(path.basename(room.savePath), 1);
+    const resumed = await resumeRoom(branched);
+    assert.equal(resumed.state.turn, 1, 'branched game sits after the first event');
+    assert.equal(resumed.players.length, 2);
+    assert.ok(resumed.players.every((p) => !p.online));
+    assert.equal(await fs.readFile(room.savePath, 'utf8'), original, 'original untouched');
+
+    // The branch is a normal save: playing continues in its own file.
+    const carol = resumed.players[1];
+    await applyAction(resumed, carol.id, { type: 'discard', cardIndex: 0 });
+    const branchedLines = (await fs.readFile(branched, 'utf8')).split('\n').filter(Boolean);
+    assert.equal(branchedLines.length, 3, 'header + copied event + new action');
+  });
+});
+
 test('resume: a partially-played game can be reconstructed from its save', async () => {
   await withTmpSaveDir(async () => {
     const { room, alice, bob } = await setupRoom();
@@ -579,5 +807,109 @@ test('resume: refuses a save that has already ended', async () => {
     const files = await fs.readdir(process.env.HANABI_SAVED_DIR);
     const filePath = path.join(process.env.HANABI_SAVED_DIR, files[0]);
     await assert.rejects(() => resumeRoom(filePath), /already ended/);
+  });
+});
+
+test('spectate: disallowed by default; enabling it via configure lets anyone watch', async () => {
+  await withTmpSaveDir(async () => {
+    const room = createRoom();
+    const alice = joinRoom(room, { name: 'Alice' });
+    assert.throws(() => joinSpectator(room, { name: 'Watcher' }), /not allowed/);
+    configureRoom(room, alice.id, { allowSpectators: true });
+    const watcher = joinSpectator(room, { name: 'Watcher' });
+    assert.ok(watcher.id);
+    assert.equal(watcher.name, 'Watcher');
+    assert.equal(room.spectators.size, 1);
+  });
+});
+
+test('spectate: configureRoom validates allowSpectators as boolean', () => {
+  const room = createRoom();
+  const alice = joinRoom(room, { name: 'Alice' });
+  assert.throws(() => configureRoom(room, alice.id, { allowSpectators: 'yes' }), GameError);
+});
+
+test('spectate: a spectator gets an omniscient, read-only view during play', async () => {
+  await withTmpSaveDir(async () => {
+    const room = createRoom();
+    const alice = joinRoom(room, { name: 'Alice' });
+    const bob = joinRoom(room, { name: 'Bob' });
+    configureRoom(room, alice.id, { allowSpectators: true });
+    await startGame(room, alice.id, { seed: 12345 });
+    const watcher = joinSpectator(room, { name: 'Watcher' });
+
+    const v = viewFor(room, watcher.id);
+    assert.equal(v.isSpectator, true);
+    assert.equal(v.viewerIndex, -1, 'omniscient viewer index, like replay');
+    // Every hand is fully revealed — including what would be "your own" hand
+    // for a seated player.
+    for (const p of v.players) {
+      for (const c of p.hand) {
+        assert.ok(c.color, `card should be revealed: ${JSON.stringify(c)}`);
+        assert.ok(c.number);
+      }
+    }
+    // No seat means no undo/abandon rights.
+    assert.equal(v.canUndo, false);
+    assert.equal(v.canRequestUndo, false);
+    assert.equal(v.abandonVotes.me, false);
+    // The spectator list is visible to everyone in the room.
+    assert.deepEqual(v.spectators.map((s) => s.name), ['Watcher']);
+    assert.deepEqual(viewFor(room, alice.id).spectators.map((s) => s.name), ['Watcher']);
+  });
+});
+
+test('spectate: cannot act — every seat-gated action rejects a spectator id', async () => {
+  await withTmpSaveDir(async () => {
+    const room = createRoom();
+    const alice = joinRoom(room, { name: 'Alice' });
+    const bob = joinRoom(room, { name: 'Bob' });
+    configureRoom(room, alice.id, { allowSpectators: true });
+    await startGame(room, alice.id, { seed: 12345 });
+    const watcher = joinSpectator(room, { name: 'Watcher' });
+
+    await assert.rejects(
+      () => applyAction(room, watcher.id, { type: 'discard', cardIndex: 0 }),
+      GameError,
+      'spectator id is not a seat, so applyAction rejects it the same way an unknown id would',
+    );
+    await assert.rejects(() => voteAbandon(room, watcher.id), GameError);
+    await assert.rejects(() => undoLast(room, watcher.id), GameError);
+    assert.throws(() => requestUndo(room, watcher.id), GameError);
+  });
+});
+
+test('spectate: can join and watch a room still in its pre-game lobby', () => {
+  const room = createRoom();
+  const alice = joinRoom(room, { name: 'Alice' });
+  configureRoom(room, alice.id, { allowSpectators: true });
+  const watcher = joinSpectator(room, { name: 'Watcher' });
+  const v = viewFor(room, watcher.id);
+  assert.equal(v.status, 'lobby');
+  assert.equal(v.isSpectator, true);
+  assert.deepEqual(v.spectators.map((s) => s.name), ['Watcher']);
+});
+
+test('spectate: leaveSpectator removes them; joinSpectator without a name falls back to the id', async () => {
+  await withTmpSaveDir(async () => {
+    const room = createRoom();
+    const alice = joinRoom(room, { name: 'Alice' });
+    configureRoom(room, alice.id, { allowSpectators: true });
+    const watcher = joinSpectator(room, {});
+    assert.equal(watcher.name, watcher.id, 'falls back to id when no name given');
+    assert.equal(room.spectators.size, 1);
+    leaveSpectator(room, watcher.id);
+    assert.equal(room.spectators.size, 0);
+    // Idempotent — leaving twice (e.g. a duplicate close event) is a no-op.
+    leaveSpectator(room, watcher.id);
+    assert.equal(room.spectators.size, 0);
+  });
+});
+
+test('spectate: resumeRoom defaults allowSpectators back off', async () => {
+  await withTmpSaveDir(async () => {
+    const { room } = await setupRoom();
+    const resumed = await resumeRoom(room.savePath);
+    assert.equal(resumed.options.allowSpectators, false);
   });
 });

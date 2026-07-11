@@ -1,12 +1,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createInitialState } from './game.js';
+import { createInitialState, maxPossibleScore, score } from './game.js';
 import {
   annotateAction,
   discardAction,
   hintAction,
   playAction,
+  undoneLogEntries,
 } from './rules.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -32,7 +33,7 @@ function timestampSlug(d = new Date()) {
   );
 }
 
-export async function openSave(state, hostId) {
+export async function openSave(state, hostId, botIds = new Set()) {
   await ensureSavedDir();
   const filename = `${timestampSlug()}-${state.variantId}.jsonl`;
   const filePath = path.join(savedDir(), filename);
@@ -45,7 +46,12 @@ export async function openSave(state, hostId) {
     shareGuarded: state.shareGuarded,
     allowEmptyHints: state.allowEmptyHints,
     hostId,
-    players: state.players.map((p) => ({ id: p.id, name: p.name })),
+    // isBot marks seats a resume/branch should re-staff with server bots.
+    players: state.players.map((p) => ({
+      id: p.id,
+      name: p.name,
+      ...(botIds.has(p.id) ? { isBot: true } : {}),
+    })),
     deck: state.initialDeckCards,
   };
   await fs.writeFile(filePath, JSON.stringify(header) + '\n');
@@ -75,7 +81,9 @@ function parseLineSafe(line) {
   }
 }
 
-export async function loadSave(filePath) {
+// maxEvents caps how many events are applied (for replay stepping); the
+// returned totalEvents always counts every parseable event in the file.
+export async function loadSave(filePath, { maxEvents = Infinity } = {}) {
   const lines = await readLines(filePath);
   if (lines.length === 0) throw new Error(`Empty save file: ${filePath}`);
   const header = JSON.parse(lines[0]);
@@ -104,6 +112,7 @@ export async function loadSave(filePath) {
   const abandonVotes = new Set();
   let endReason = null;
   const events = [];
+  let totalEvents = 0;
 
   for (let i = 1; i < lines.length; i++) {
     const ev = parseLineSafe(lines[i]);
@@ -112,6 +121,8 @@ export async function loadSave(filePath) {
       if (i === lines.length - 1) break;
       throw new Error(`Corrupt event line ${i + 1} in ${filePath}`);
     }
+    totalEvents++;
+    if (events.length >= maxEvents) continue; // still counting, no longer applying
     events.push(ev);
     applyEvent(state, ev, { undoStack, abandonVotes, players: header.players });
     if (ev.kind === 'end') {
@@ -121,7 +132,7 @@ export async function loadSave(filePath) {
     }
   }
 
-  return { header, state, undoStack, abandonVotes, events, endReason };
+  return { header, state, undoStack, abandonVotes, events, endReason, totalEvents };
 }
 
 function applyEvent(state, ev, ctx) {
@@ -163,9 +174,18 @@ function applyEvent(state, ev, ctx) {
     case 'undo': {
       const top = undoStack.pop();
       if (!top) throw new Error(`undo event with empty stack`);
+      // Same as the live undo path: keep the undone action's log entries,
+      // struck out, so a resumed game shows the identical log.
+      const struck = undoneLogEntries(state.log, top.snapshot.log);
+      // Keep nextLogSeq monotonic across the whole replay — see the matching
+      // comment in room.js's undoLast for why restoring the snapshot's value
+      // wholesale would let the next action reuse a struck entry's seq.
+      const nextLogSeq = Math.max(state.nextLogSeq, top.snapshot.nextLogSeq);
       // Overwrite each property of state in place so the outer reference stays valid.
       for (const k of Object.keys(state)) delete state[k];
       Object.assign(state, top.snapshot);
+      state.nextLogSeq = nextLogSeq;
+      state.log.push(...struck);
       break;
     }
     case 'rename': {
@@ -237,6 +257,128 @@ export async function summarizeSave(filePath) {
     complete,
     lastEventAt: lastEvent?.t ?? header.startedAt,
   };
+}
+
+function assertSaveBasename(basename) {
+  if (
+    !basename ||
+    basename !== path.basename(basename) ||
+    basename.startsWith('.') ||
+    !basename.endsWith('.jsonl')
+  ) {
+    throw new Error(`Bad save filename: ${basename}`);
+  }
+}
+
+// Soft-delete: move the file into saved-games/trash/ instead of unlinking,
+// so a stray click can be undone by the host from the terminal. The trash
+// subdirectory is invisible to listSaves (readdir entries ending in .jsonl).
+export async function deleteSave(basename) {
+  assertSaveBasename(basename);
+  const trashDir = path.join(savedDir(), 'trash');
+  await fs.mkdir(trashDir, { recursive: true });
+  const dest = path.join(trashDir, basename);
+  await fs.rename(path.join(savedDir(), basename), dest);
+  await setSaveTags(basename, []); // drop its tags entry
+  return dest;
+}
+
+// --- Tags: sidecar JSON, so the .jsonl save format stays pure replay data.
+
+function tagsPath() {
+  return path.join(savedDir(), 'tags.json');
+}
+
+export async function readAllTags() {
+  try {
+    return JSON.parse(await fs.readFile(tagsPath(), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+export async function setSaveTags(basename, tags) {
+  assertSaveBasename(basename);
+  const all = await readAllTags();
+  const clean = [...new Set(
+    (Array.isArray(tags) ? tags : [])
+      .map((t) => String(t).trim().slice(0, 24))
+      .filter(Boolean),
+  )].slice(0, 8);
+  if (clean.length === 0) delete all[basename];
+  else all[basename] = clean;
+  await ensureSavedDir();
+  await fs.writeFile(tagsPath(), JSON.stringify(all, null, 2));
+  return clean;
+}
+
+// --- Branching: copy the header plus the first `uptoEvents` events into a
+// fresh save file. The copy is a complete, self-contained save, so the
+// existing resume path can open it; the original file is never touched.
+export async function branchSave(basename, uptoEvents) {
+  assertSaveBasename(basename);
+  const lines = await readLines(path.join(savedDir(), basename));
+  if (lines.length === 0) throw new Error(`Empty save file: ${basename}`);
+  const upto = Math.max(0, Math.floor(uptoEvents));
+  const kept = [lines[0], ...lines.slice(1, 1 + upto)];
+  const header = parseLineSafe(lines[0]);
+  const variant = header?.variantId ?? 'unknown';
+  const filename = `${timestampSlug()}-branch-${variant}.jsonl`;
+  const filePath = path.join(savedDir(), filename);
+  await ensureSavedDir();
+  await fs.writeFile(filePath, kept.join('\n') + '\n');
+  return filePath;
+}
+
+// --- Library: every save summarized for the server-lobby listing. Entries
+// are cached by mtime — summaries replay the whole file to get the score,
+// and the lobby broadcasts after every action.
+
+const libraryCache = new Map(); // filePath -> { mtimeMs, entry }
+
+async function summarizeForLibrary(filePath) {
+  const basename = path.basename(filePath);
+  try {
+    const { header, state, events, totalEvents } = await loadSave(filePath);
+    const finished = state.status === 'finished';
+    return {
+      basename,
+      startedAt: header.startedAt,
+      variantId: header.variantId,
+      playerNames: header.players.map((p) => p.name),
+      moves: events.filter((e) => e.kind === 'action').length,
+      totalEvents,
+      status: finished ? (state.endReason || 'finished') : 'in-progress',
+      score: score(state),
+      maxScore: maxPossibleScore(state),
+      // The seed reveals the deck order, so only expose it once finished.
+      seed: finished ? state.seed : null,
+    };
+  } catch (err) {
+    return { basename, status: 'unreadable', error: err.message };
+  }
+}
+
+export async function listLibrary() {
+  const names = await listSaves(); // already newest-first (timestamp prefix)
+  const tags = await readAllTags();
+  const out = [];
+  for (const name of names) {
+    const filePath = path.join(savedDir(), name);
+    let stat;
+    try {
+      stat = await fs.stat(filePath);
+    } catch {
+      continue;
+    }
+    let cached = libraryCache.get(filePath);
+    if (!cached || cached.mtimeMs !== stat.mtimeMs) {
+      cached = { mtimeMs: stat.mtimeMs, entry: await summarizeForLibrary(filePath) };
+      libraryCache.set(filePath, cached);
+    }
+    out.push({ ...cached.entry, tags: tags[name] || [] });
+  }
+  return out;
 }
 
 export async function listIncompleteSaves(limit = Infinity) {

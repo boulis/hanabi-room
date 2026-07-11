@@ -90,7 +90,20 @@ function advanceTurn(state) {
 }
 
 function pushLog(state, event) {
-  state.log.push({ turn: state.turn, ...event });
+  // seq is a monotonic id across the whole game, unlike turn: after an undo,
+  // the replacement action re-uses the same turn number as the action it
+  // replaces, so clients need seq (not turn) to tell "a genuinely new action
+  // landed" from "the log just got its struck entries re-appended".
+  state.log.push({ turn: state.turn, seq: state.nextLogSeq++, ...event });
+}
+
+// The log entries an undone action contributed: everything past the snapshot's
+// log (a strict prefix of the current log — actions only append, and undo
+// re-appends these marked entries), flagged so clients can strike them out.
+export function undoneLogEntries(currentLog, snapshotLog) {
+  return currentLog
+    .slice(snapshotLog.length)
+    .map((e) => (e.undone ? e : { ...e, undone: true }));
 }
 
 function consumeHintMarks(hand, leavingCard) {

@@ -20,19 +20,38 @@
     </header>
     <main id="app">
       <section id="join-screen" class="screen">
-        <h2>Join the game</h2>
+        <h2>Welcome</h2>
         <form id="join-form">
           <label>
             Your name
             <input id="name-input" required maxlength="24" autocomplete="off" />
           </label>
-          <button type="submit">Join</button>
+          <button type="submit">Continue</button>
         </form>
+      </section>
+
+      <section id="server-lobby-screen" class="screen" hidden>
+        <div class="server-lobby-header">
+          <h2>Rooms</h2>
+          <form id="create-room-form">
+            <input id="create-room-name" maxlength="40" placeholder="Room name (optional)" autocomplete="off" />
+            <button type="submit">Create room</button>
+          </form>
+        </div>
+        <div id="rooms-list"></div>
+        <h3>Resumable saved games</h3>
+        <div id="resumable-saves"></div>
+        <details id="library-section">
+          <summary>Game library</summary>
+          <div id="library-list"></div>
+        </details>
       </section>
 
       <section id="lobby-screen" class="screen" hidden>
         <h2>Lobby</h2>
         <div id="lobby-players"></div>
+        <div id="lobby-spectators" hidden></div>
+        <button id="add-bot-button" type="button">+ Add bot</button>
         <fieldset id="lobby-options">
           <legend>Game options (host only)</legend>
           <label>
@@ -54,6 +73,10 @@
             <input type="checkbox" id="opt-allowEmptyHints" />
             Allow hints that touch no cards (useful as a negative-information signal)
           </label>
+          <label class="checkbox">
+            <input type="checkbox" id="opt-allowSpectators" />
+            Allow spectators to watch this room (they see every hand and cannot act)
+          </label>
           <label>
             Seed (optional — paste from a previous game to re-deal the same deck)
             <input id="opt-seed" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="random" />
@@ -70,12 +93,31 @@
       </section>
 
       <section id="game-screen" class="screen" hidden>
+        <div id="replay-bar" hidden>
+          <span class="replay-title">Replay</span>
+          <button id="replay-first" type="button" title="Start">⏮</button>
+          <button id="replay-prev" type="button" title="Back one move">◀</button>
+          <span id="replay-pos"></span>
+          <button id="replay-next" type="button" title="Forward one move">▶</button>
+          <button id="replay-last" type="button" title="End">⏭</button>
+          <button id="replay-branch" type="button" title="Open a new room continuing from this point">Play from here</button>
+          <button id="replay-close" type="button">Close replay</button>
+        </div>
         <div class="game-toprow">
           <div id="game-meta"></div>
+          <span id="undo-request-note" hidden></span>
+          <button id="request-undo-button" type="button" hidden>Request undo</button>
           <button id="undo-button" type="button" hidden>Undo my last action</button>
         </div>
         <div class="board-row">
           <div id="game-piles"></div>
+          <div id="reaction-bar" title="Send a reaction">
+            <button type="button" data-emoji="👏" title="Applause">👏</button>
+            <button type="button" data-emoji="🤔" title="Thinking…">🤔</button>
+            <button type="button" data-emoji="❓" title="Puzzled">❓</button>
+            <button type="button" data-emoji="😱" title="Oh no">😱</button>
+            <button type="button" data-emoji="🎉" title="Celebrate">🎉</button>
+          </div>
           <div id="latest-action"></div>
         </div>
         <div id="game-hands"></div>

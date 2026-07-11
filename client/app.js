@@ -1,5 +1,6 @@
 const statusEl = document.getElementById('status');
 const joinScreen = document.getElementById('join-screen');
+const serverLobbyScreen = document.getElementById('server-lobby-screen');
 const lobbyScreen = document.getElementById('lobby-screen');
 const gameScreen = document.getElementById('game-screen');
 const joinForm = document.getElementById('join-form');
@@ -7,6 +8,8 @@ const nameInput = document.getElementById('name-input');
 
 const PLAYER_KEY = 'hanabi-room.playerId';
 const NAME_KEY = 'hanabi-room.name';
+const ROOM_KEY = 'hanabi-room.roomId';
+const SPECTATE_KEY = 'hanabi-room.spectating';
 const ART_KEY = 'hanabi-room.useArt';
 const VERBOSE_KEY = 'hanabi-room.verbose';
 const TAP_KEY = 'hanabi-room.tap';
@@ -32,6 +35,11 @@ applySize(localStorage.getItem(SIZE_KEY) || 'M');
 
 let ws = null;
 let playerId = localStorage.getItem(PLAYER_KEY) || null;
+let roomId = localStorage.getItem(ROOM_KEY) || null;
+// Spectators are never persisted by id (a fresh spectator record is cheap to
+// create) — just whether we were watching a room, so a reload rejoins the
+// same way instead of trying to reclaim a seat that was never ours.
+let isSpectating = localStorage.getItem(SPECTATE_KEY) === 'on';
 let view = null;
 
 function connect() {
@@ -39,8 +47,12 @@ function connect() {
   ws = new WebSocket(url);
   ws.addEventListener('open', () => {
     statusEl.textContent = 'connected';
-    if (playerId && nameInput.value) {
-      send({ type: 'join', name: nameInput.value, playerId });
+    // If we remember a name + room, try to re-enter it. If the room is gone,
+    // the server will error and we'll land in the server-lobby view.
+    const savedName = nameInput.value.trim() || localStorage.getItem(NAME_KEY) || '';
+    if (savedName && roomId) {
+      if (isSpectating) send({ type: 'spectateRoom', roomId, playerName: savedName });
+      else send({ type: 'enterRoom', roomId, playerName: savedName, playerId });
     }
   });
   ws.addEventListener('close', () => {
@@ -67,17 +79,63 @@ function handleMessage(msg) {
     case 'identity':
       playerId = msg.playerId;
       localStorage.setItem(PLAYER_KEY, playerId);
+      if (msg.roomId) {
+        roomId = msg.roomId;
+        localStorage.setItem(ROOM_KEY, roomId);
+      }
+      isSpectating = !!msg.isSpectator;
+      if (isSpectating) localStorage.setItem(SPECTATE_KEY, 'on');
+      else localStorage.removeItem(SPECTATE_KEY);
+      // Fresh room, fresh animation baseline — a stale one (e.g. from replay
+      // stepping before a branch) would silently swallow animations for
+      // turns it thinks it has already shown.
+      lastAnimatedActionSeq = null;
+      break;
+    case 'roomCreated':
+      // Emitted when a save was resumed into a fresh room; auto-enter it.
+      send({
+        type: 'enterRoom',
+        roomId: msg.roomId,
+        playerName: nameInput.value.trim() || localStorage.getItem(NAME_KEY) || '',
+        playerId,
+      });
       break;
     case 'sync':
+      if (replay) {
+        if (msg.view.kind === 'server-lobby') {
+          // Keep the lobby fresh behind the replay; don't disturb it.
+          preReplayView = msg.view;
+          break;
+        }
+        // An in-room sync means we joined a room (e.g. "Play from here") —
+        // the live game takes over.
+        closeReplay(false);
+      }
       view = msg.view;
       render();
       break;
     case 'deckExport':
       triggerDownload(msg.data, msg.filename);
       break;
+    case 'reaction':
+      showReaction(msg.playerIndex, msg.emoji);
+      break;
+    case 'replayView':
+      onReplayView(msg);
+      break;
     case 'error':
       console.warn('server error:', msg.code, msg.error);
       flashError(msg.error);
+      if (msg.code === 'no_room' && roomId) {
+        // The room we thought we were in is gone; forget it so the lobby is
+        // the natural landing spot.
+        roomId = null;
+        playerId = null;
+        isSpectating = false;
+        localStorage.removeItem(ROOM_KEY);
+        localStorage.removeItem(PLAYER_KEY);
+        localStorage.removeItem(SPECTATE_KEY);
+      }
       break;
   }
 }
@@ -105,7 +163,18 @@ joinForm.addEventListener('submit', (e) => {
   const name = nameInput.value.trim();
   if (!name) return;
   localStorage.setItem(NAME_KEY, name);
-  send({ type: 'join', name, playerId });
+  // Nothing else to send — the server-lobby is already open. Render will
+  // switch screens now that we have a name in storage.
+  render();
+});
+
+document.getElementById('create-room-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const name = (localStorage.getItem(NAME_KEY) || nameInput.value.trim() || '').trim();
+  if (!name) return;
+  const roomName = document.getElementById('create-room-name').value.trim();
+  send({ type: 'createRoom', roomName, playerName: name, playerId });
+  document.getElementById('create-room-name').value = '';
 });
 
 document.getElementById('opt-variant').addEventListener('change', (e) => {
@@ -120,6 +189,9 @@ document.getElementById('opt-shareGuarded').addEventListener('change', (e) => {
 document.getElementById('opt-allowEmptyHints').addEventListener('change', (e) => {
   send({ type: 'configure', options: { allowEmptyHints: e.target.checked } });
 });
+document.getElementById('opt-allowSpectators').addEventListener('change', (e) => {
+  send({ type: 'configure', options: { allowSpectators: e.target.checked } });
+});
 function readSeedInput() {
   const raw = document.getElementById('opt-seed').value.trim();
   if (!raw) return undefined;
@@ -131,6 +203,105 @@ function readSeedInput() {
 document.getElementById('start-button').addEventListener('click', () => {
   send({ type: 'start', seed: readSeedInput() });
 });
+document.getElementById('add-bot-button').addEventListener('click', () => {
+  send({ type: 'addBot' });
+});
+document.getElementById('reaction-bar').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-emoji]');
+  if (btn) send({ type: 'react', emoji: btn.dataset.emoji });
+});
+
+// Reactions are ephemeral overlays over a player's row: shown briefly, then
+// gone. Kept in a map so a re-render mid-lifetime re-attaches the bubble.
+const REACTION_MS = 3000;
+const activeReactions = new Map(); // playerIndex -> { emoji, until }
+
+function showReaction(playerIndex, emoji) {
+  activeReactions.set(playerIndex, { emoji, until: Date.now() + REACTION_MS });
+  attachReactionBubble(playerIndex);
+}
+
+// --- Replay mode: step through a saved game on the game screen. The server
+// rebuilds the state after `upto` events per request; we just render views.
+let replay = null;        // { file, upto, total }
+let preReplayView = null; // the server-lobby view to restore on close
+
+function openReplay(file) {
+  replay = { file, upto: 0, total: 0 };
+  preReplayView = view;
+  lastAnimatedActionSeq = null; // fresh baseline; steps animate like live play
+  send({ type: 'replaySave', file, upto: 0 });
+}
+
+function onReplayView(msg) {
+  if (!replay || replay.file !== msg.file) return; // stale response
+  replay.upto = msg.upto;
+  replay.total = msg.total;
+  view = msg.view;
+  render();
+}
+
+function closeReplay(restore = true) {
+  if (!replay) return;
+  replay = null;
+  lastAnimatedActionSeq = null; // replay stepping must not suppress live animations
+  document.getElementById('replay-bar').hidden = true;
+  if (restore && preReplayView) {
+    view = preReplayView;
+    preReplayView = null;
+    render();
+  } else {
+    preReplayView = null;
+  }
+}
+
+function replayStep(upto) {
+  if (!replay) return;
+  const clamped = Math.max(0, Math.min(upto, replay.total));
+  send({ type: 'replaySave', file: replay.file, upto: clamped });
+}
+
+document.getElementById('replay-first').addEventListener('click', () => replayStep(0));
+document.getElementById('replay-prev').addEventListener('click', () => replayStep(replay ? replay.upto - 1 : 0));
+document.getElementById('replay-next').addEventListener('click', () => replayStep(replay ? replay.upto + 1 : 0));
+document.getElementById('replay-last').addEventListener('click', () => replayStep(replay ? replay.total : 0));
+document.getElementById('replay-close').addEventListener('click', () => closeReplay());
+document.getElementById('replay-branch').addEventListener('click', () => {
+  if (!replay) return;
+  if (!confirm(`Open a new room continuing this game from move ${replay.upto}?`)) return;
+  send({ type: 'branchSave', file: replay.file, upto: replay.upto });
+});
+
+function renderReplayBar() {
+  const bar = document.getElementById('replay-bar');
+  bar.hidden = !replay;
+  if (!replay) return;
+  document.getElementById('replay-pos').textContent = `move ${replay.upto} / ${replay.total}`;
+  document.getElementById('replay-first').disabled = replay.upto === 0;
+  document.getElementById('replay-prev').disabled = replay.upto === 0;
+  document.getElementById('replay-next').disabled = replay.upto >= replay.total;
+  document.getElementById('replay-last').disabled = replay.upto >= replay.total;
+  document.getElementById('replay-branch').disabled = view?.status !== 'playing';
+}
+
+function attachReactionBubble(playerIndex) {
+  const row = document.querySelector(`#game-hands .player-row[data-seat="${playerIndex}"]`);
+  if (!row) return;
+  row.querySelector('.reaction-bubble')?.remove();
+  const r = activeReactions.get(playerIndex);
+  if (!r || Date.now() >= r.until) {
+    activeReactions.delete(playerIndex);
+    return;
+  }
+  const bubble = document.createElement('div');
+  bubble.className = 'reaction-bubble';
+  bubble.textContent = r.emoji;
+  // Keep the CSS animation length tied to REACTION_MS so a re-attached
+  // bubble (mid-lifetime re-render) doesn't get cut off before it fades.
+  bubble.style.animationDuration = `${REACTION_MS}ms`;
+  row.append(bubble);
+  setTimeout(() => bubble.remove(), r.until - Date.now());
+}
 
 document.getElementById('import-deck-file').addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
@@ -154,28 +325,84 @@ document.getElementById('abandon-button').addEventListener('click', () => {
 document.getElementById('undo-button').addEventListener('click', () => {
   send({ type: 'undo' });
 });
+document.getElementById('request-undo-button').addEventListener('click', () => {
+  send({ type: 'requestUndo' });
+});
 
-let lastAnimatedActionTurn = null;
+// Keyed on the log entry's seq (a monotonic id assigned server-side), not its
+// turn number: after an undo, the replacement action reuses the same turn
+// number as the action it replaced, so turn alone can't tell "a new action
+// landed" from "the log just got its struck entries re-appended" — which
+// used to make the replacement action's animation silently not fire.
+let lastAnimatedActionSeq = null;
 
 function maybeAnimateAction(v) {
   const latest = latestActionEntry(v.log);
   if (!latest) {
     // No action yet (game just started or restarted). Re-baseline so the
     // first action in the new game does animate.
-    lastAnimatedActionTurn = -1;
+    lastAnimatedActionSeq = -1;
     return;
   }
-  if (lastAnimatedActionTurn === null) {
+  if (lastAnimatedActionSeq === null) {
     // First time we're seeing actions (fresh connect mid-game). Baseline
     // silently — don't replay history with animations.
-    lastAnimatedActionTurn = latest.turn;
+    lastAnimatedActionSeq = latest.seq;
     return;
   }
-  if (latest.turn <= lastAnimatedActionTurn) return;
-  lastAnimatedActionTurn = latest.turn;
-  if (latest.type !== 'play' && latest.type !== 'discard') return;
+  if (latest.seq <= lastAnimatedActionSeq) return;
+  lastAnimatedActionSeq = latest.seq;
   // Defer one frame so the post-action DOM is in place before we measure.
+  if (latest.type === 'hint') {
+    requestAnimationFrame(() => animateHint(latest));
+    return;
+  }
+  if (latest.type !== 'play' && latest.type !== 'discard') return;
   requestAnimationFrame(() => animateLeavingCard(v, latest));
+}
+
+// A hint flies as a large chip (colour disc or number) from the hinter's row
+// to the receiver's — landing on the touched cards — then fades. Makes "who
+// hinted whom" legible without reading the latest-action panel.
+function animateHint(latest) {
+  const rows = document.querySelectorAll('#game-hands .player-row');
+  const from = rows[latest.fromIndex];
+  const to = rows[latest.toIndex];
+  if (!from || !to) return;
+  const fr = from.getBoundingClientRect();
+  const startX = fr.left + fr.width / 2;
+  const startY = fr.top + fr.height / 2;
+
+  // Land on the newest touched card (the one the conventions mark for play);
+  // fall back to the row centre (e.g. an allowed empty hint touches nothing).
+  const tr = to.getBoundingClientRect();
+  let endX = tr.left + tr.width / 2;
+  let endY = tr.top + tr.height / 2;
+  const cards = to.querySelectorAll('.hand > *');
+  const newest = Math.max(...(latest.touchedIndexes || [-1]));
+  const target = newest >= 0 ? cards[newest] : null;
+  if (target) {
+    const r = target.getBoundingClientRect();
+    endX = r.left + r.width / 2;
+    endY = r.top + r.height / 2;
+  }
+
+  const SIZE = 56; // keep in sync with .hint-fly .latest-hint-chip CSS
+  const fly = document.createElement('div');
+  fly.className = 'hint-fly';
+  fly.append(renderHintChip(latest.hintType, latest.value));
+  fly.style.left = `${startX - SIZE / 2}px`;
+  fly.style.top = `${startY - SIZE / 2}px`;
+  fly.style.setProperty('--fly-x', `${endX - startX}px`);
+  fly.style.setProperty('--fly-y', `${endY - startY}px`);
+  document.body.append(fly);
+  setTimeout(() => fly.remove(), 1600);
+
+  // Pulse the receiver's row as the chip arrives.
+  setTimeout(() => {
+    to.classList.add('hint-received');
+    setTimeout(() => to.classList.remove('hint-received'), 800);
+  }, 800);
 }
 
 function animateLeavingCard(v, latest) {
@@ -192,11 +419,25 @@ function animateLeavingCard(v, latest) {
   const y = handRect.top;
 
   const ghost = document.createElement('div');
-  ghost.className = 'card ghost-leave';
   ghost.dataset.color = latest.card.color;
   ghost.style.left = `${x}px`;
   ghost.style.top = `${y}px`;
-  if (latest.type === 'play' && latest.success === false) ghost.classList.add('misplay');
+  // A successful play flies to its pile; discards and misplays (which end up
+  // in the discard pile) keep the float-up-and-fade animation.
+  const pile = latest.type === 'play' && latest.success !== false
+    ? document.querySelector(`#game-piles .pile[data-color="${latest.card.color}"]`)
+    : null;
+  if (pile) {
+    ghost.className = 'card ghost-play';
+    // Move the ghost's center onto the pile's center; the keyframes scale it
+    // down to pile size (60/96) around that center so it lands flush.
+    const pr = pile.getBoundingClientRect();
+    ghost.style.setProperty('--fly-x', `${pr.left + pr.width / 2 - (x + cardWidth / 2)}px`);
+    ghost.style.setProperty('--fly-y', `${pr.top + pr.height / 2 - (y + 72)}px`);
+  } else {
+    ghost.className = 'card ghost-leave';
+    if (latest.type === 'play' && latest.success === false) ghost.classList.add('misplay');
+  }
   const face = document.createElement('div');
   face.className = 'card-face';
   face.textContent = String(latest.card.number);
@@ -290,8 +531,14 @@ function triggerDownload(data, filename) {
 function render() {
   if (!view) return;
   renderHeader();
-  if (!playerId) {
+  const savedName = localStorage.getItem(NAME_KEY) || '';
+  if (!savedName) {
     show(joinScreen);
+    return;
+  }
+  if (view.kind === 'server-lobby') {
+    show(serverLobbyScreen);
+    renderServerLobby(view);
     return;
   }
   if (view.status === 'lobby') {
@@ -300,11 +547,304 @@ function render() {
   } else {
     show(gameScreen);
     renderGame();
+    renderReplayBar();
   }
+}
+
+function renderServerLobby(v) {
+  const listEl = document.getElementById('rooms-list');
+  listEl.innerHTML = '';
+  const savedName = localStorage.getItem(NAME_KEY) || '';
+  const rooms = v.rooms || [];
+  if (rooms.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'lobby-empty';
+    empty.textContent = 'No rooms yet — create one below.';
+    listEl.append(empty);
+  }
+  for (const r of rooms) {
+    const row = document.createElement('div');
+    row.className = 'room-row status-' + r.status;
+    const label = document.createElement('div');
+    label.className = 'room-label';
+    const title = document.createElement('div');
+    title.className = 'room-title';
+    title.textContent = r.name;
+    label.append(title);
+    const meta = document.createElement('div');
+    meta.className = 'room-meta';
+    const playerNames = r.players
+      .map((p) => (p.isBot ? `🤖 ${p.name}` : p.online ? p.name : `${p.name} (offline)`))
+      .join(', ') || '(empty)';
+    const statusText = r.status === 'lobby'
+      ? `lobby · ${r.variantId || 'no variant'}`
+      : r.status === 'playing'
+        ? `playing · turn ${r.turn} · ${r.variantId}`
+        : `finished · ${r.variantId}`;
+    const watchingText = r.spectatorCount > 0 ? ` · 👀 ${r.spectatorCount} watching` : '';
+    meta.textContent = `${statusText} — ${playerNames}${watchingText}`;
+    label.append(meta);
+    row.append(label);
+    const enter = document.createElement('button');
+    enter.type = 'button';
+    enter.textContent = 'Enter';
+    enter.disabled = !savedName;
+    enter.addEventListener('click', () => {
+      send({ type: 'enterRoom', roomId: r.id, playerName: savedName, playerId });
+    });
+    row.append(enter);
+    // A clearly distinct action from "Enter" — spectators watch, they don't
+    // take a seat. Only offered when the host has opted the room in.
+    if (r.allowSpectators) {
+      const spectate = document.createElement('button');
+      spectate.type = 'button';
+      spectate.className = 'spectate-button';
+      spectate.textContent = 'Spectator';
+      spectate.disabled = !savedName;
+      spectate.addEventListener('click', () => {
+        send({ type: 'spectateRoom', roomId: r.id, playerName: savedName });
+      });
+      row.append(spectate);
+    }
+    // Deletable when you created the room, or when no human is in it (no
+    // players, or every seat offline or a bot). Mirrors the server's rule.
+    const idle = r.players.every((p) => !p.online || p.isBot);
+    if (idle || (playerId && r.creatorId === playerId)) {
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'delete-button';
+      del.textContent = 'Delete';
+      del.addEventListener('click', () => {
+        if (!confirm(`Delete room "${r.name}"?`)) return;
+        send({ type: 'deleteRoom', roomId: r.id, playerId });
+      });
+      row.append(del);
+    }
+    listEl.append(row);
+  }
+
+  const savesEl = document.getElementById('resumable-saves');
+  savesEl.innerHTML = '';
+  const saves = v.resumableSaves || [];
+  if (saves.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'lobby-empty';
+    empty.textContent = 'No incomplete saves.';
+    savesEl.append(empty);
+  }
+  for (const s of saves) {
+    const row = document.createElement('div');
+    row.className = 'save-row';
+    const label = document.createElement('div');
+    label.className = 'save-label';
+    const title = document.createElement('div');
+    title.className = 'save-title';
+    title.textContent = s.basename;
+    label.append(title);
+    const meta = document.createElement('div');
+    meta.className = 'save-meta';
+    meta.textContent = `${s.variantId} · ${s.moves} moves · ${(s.playerNames || []).join(', ')}`;
+    label.append(meta);
+    row.append(label);
+    const resume = document.createElement('button');
+    resume.type = 'button';
+    resume.textContent = 'Resume';
+    resume.disabled = !savedName;
+    resume.addEventListener('click', () => {
+      send({ type: 'resumeSave', file: s.basename });
+    });
+    row.append(resume);
+    // Anyone may delete a save; the server moves it to saved-games/trash/
+    // (recoverable by the host) and refuses if an open room is playing it.
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'delete-button';
+    del.textContent = 'Delete';
+    del.addEventListener('click', () => {
+      if (!confirm(`Delete saved game "${s.basename}"?`)) return;
+      send({ type: 'deleteSave', file: s.basename });
+    });
+    row.append(del);
+    savesEl.append(row);
+  }
+
+  renderLibrary(v.library || []);
+}
+
+async function copyText(text) {
+  // navigator.clipboard needs a secure context; the app runs on plain http
+  // over the tailnet, so fall back to the legacy path.
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.append(ta);
+    ta.select();
+    const done = document.execCommand('copy');
+    ta.remove();
+    return done;
+  }
+}
+
+function renderLibrary(entries) {
+  const listEl = document.getElementById('library-list');
+  listEl.innerHTML = '';
+  if (entries.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'lobby-empty';
+    empty.textContent = 'No saved games yet.';
+    listEl.append(empty);
+    return;
+  }
+  for (const e of entries) {
+    const row = document.createElement('div');
+    row.className = 'save-row library-row';
+    const label = document.createElement('div');
+    label.className = 'save-label';
+
+    const title = document.createElement('div');
+    title.className = 'save-title';
+    const when = e.startedAt ? new Date(e.startedAt).toLocaleString() : e.basename;
+    const status = e.status === 'unreadable'
+      ? 'unreadable'
+      : e.status === 'in-progress'
+        ? `in progress · ${e.moves} moves`
+        : `${e.status} · ${e.score}/${e.maxScore}`;
+    title.textContent = `${when} — ${status}`;
+    label.append(title);
+
+    const meta = document.createElement('div');
+    meta.className = 'save-meta';
+    meta.textContent = `${e.variantId ?? ''}${e.playerNames ? ' · ' + e.playerNames.join(', ') : ''}`;
+    label.append(meta);
+
+    if (e.tags && e.tags.length) {
+      const tagsEl = document.createElement('div');
+      tagsEl.className = 'save-tags';
+      for (const t of e.tags) {
+        const chip = document.createElement('span');
+        chip.className = 'tag-chip';
+        chip.textContent = t;
+        tagsEl.append(chip);
+      }
+      label.append(tagsEl);
+    }
+    row.append(label);
+
+    if (e.status !== 'unreadable') {
+      const replayBtn = document.createElement('button');
+      replayBtn.type = 'button';
+      replayBtn.textContent = 'Replay';
+      replayBtn.addEventListener('click', () => openReplay(e.basename));
+      row.append(replayBtn);
+
+      if (e.seed != null) {
+        const seedBtn = document.createElement('button');
+        seedBtn.type = 'button';
+        seedBtn.textContent = 'Copy seed';
+        seedBtn.title = `Seed ${e.seed} — paste into the lobby seed box to re-deal this deck`;
+        seedBtn.addEventListener('click', async () => {
+          const done = await copyText(String(e.seed));
+          statusEl.textContent = done ? `seed ${e.seed} copied` : `seed: ${e.seed}`;
+          setTimeout(() => { statusEl.textContent = 'connected'; }, 2500);
+        });
+        row.append(seedBtn);
+      }
+
+      const tagBtn = document.createElement('button');
+      tagBtn.type = 'button';
+      tagBtn.textContent = 'Tags';
+      tagBtn.addEventListener('click', () => {
+        const next = prompt('Tags (comma-separated):', (e.tags || []).join(', '));
+        if (next == null) return;
+        send({ type: 'tagSave', file: e.basename, tags: next.split(',').map((t) => t.trim()).filter(Boolean) });
+      });
+      row.append(tagBtn);
+    }
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'delete-button';
+    del.textContent = 'Delete';
+    del.addEventListener('click', () => {
+      if (!confirm(`Delete saved game from ${e.startedAt ? new Date(e.startedAt).toLocaleString() : e.basename}?`)) return;
+      send({ type: 'deleteSave', file: e.basename });
+    });
+    row.append(del);
+
+    listEl.append(row);
+  }
+}
+
+// Shared by both the player and spectator header branches: leaving clears
+// every bit of persisted room identity, including whether we were spectating
+// (otherwise the next reconnect would try to spectateRoom into thin air).
+function leaveRoomAndClearState() {
+  roomId = null;
+  playerId = null;
+  isSpectating = false;
+  localStorage.removeItem(ROOM_KEY);
+  localStorage.removeItem(PLAYER_KEY);
+  localStorage.removeItem(SPECTATE_KEY);
+  send({ type: 'leaveRoom' });
+}
+
+// "👀 watching: …" — shown to everyone in the room (players and spectators
+// alike), so nobody is being watched without knowing it.
+function appendSpectatorsList(meEl, v) {
+  const specs = v.spectators || [];
+  if (specs.length === 0) return;
+  const el = document.createElement('span');
+  el.className = 'header-spectators';
+  el.textContent = ` · 👀 watching: ${specs.map((s) => s.name).join(', ')}`;
+  meEl.append(el);
 }
 
 function renderHeader() {
   const meEl = document.getElementById('me');
+  const savedName = localStorage.getItem(NAME_KEY) || '';
+  // In the server-lobby view we only have a stored name (no seat / playerId
+  // yet). Still surface it in the header so the user can rename or see who
+  // they'll be identified as.
+  if (view?.kind === 'server-lobby') {
+    if (!savedName) { meEl.hidden = true; return; }
+    meEl.hidden = false;
+    meEl.textContent = `you are ${savedName}`;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'change';
+    btn.addEventListener('click', () => {
+      const next = prompt('Your name:', savedName);
+      if (next == null) return;
+      const trimmed = next.trim();
+      if (!trimmed || trimmed === savedName) return;
+      localStorage.setItem(NAME_KEY, trimmed);
+      nameInput.value = trimmed;
+      render();
+    });
+    meEl.append(' ', btn);
+    return;
+  }
+  if (view?.isSpectator) {
+    const mySpec = (view.spectators || []).find((s) => s.id === playerId);
+    meEl.hidden = false;
+    meEl.textContent = `spectating as ${mySpec?.name || savedName}`;
+    if (view.kind === 'in-room' && view.roomName) {
+      const roomLabel = document.createElement('span');
+      roomLabel.className = 'header-room';
+      roomLabel.textContent = ` · in ${view.roomName}`;
+      meEl.append(roomLabel);
+    }
+    const leaveBtn = document.createElement('button');
+    leaveBtn.type = 'button';
+    leaveBtn.textContent = 'leave room';
+    leaveBtn.addEventListener('click', leaveRoomAndClearState);
+    meEl.append(' ', leaveBtn);
+    appendSpectatorsList(meEl, view);
+    return;
+  }
   const players = view?.players ?? [];
   const me = players.find((p) => p.id === playerId);
   if (!me) {
@@ -326,10 +866,22 @@ function renderHeader() {
     nameInput.value = trimmed;
   });
   meEl.append(' ', btn);
+  if (view?.kind === 'in-room' && view.roomName) {
+    const roomLabel = document.createElement('span');
+    roomLabel.className = 'header-room';
+    roomLabel.textContent = ` · in ${view.roomName}`;
+    meEl.append(roomLabel);
+    const leaveBtn = document.createElement('button');
+    leaveBtn.type = 'button';
+    leaveBtn.textContent = 'leave room';
+    leaveBtn.addEventListener('click', leaveRoomAndClearState);
+    meEl.append(' ', leaveBtn);
+    appendSpectatorsList(meEl, view);
+  }
 }
 
 function show(screen) {
-  for (const s of [joinScreen, lobbyScreen, gameScreen]) {
+  for (const s of [joinScreen, serverLobbyScreen, lobbyScreen, gameScreen]) {
     s.hidden = s !== screen;
   }
 }
@@ -338,17 +890,28 @@ function renderLobby() {
   const listEl = document.getElementById('lobby-players');
   listEl.innerHTML = '';
   const isHost = view.hostId === playerId;
+  const isSpectator = !!view.isSpectator;
   view.players.forEach((p, i) => {
     const li = document.createElement('div');
     li.className = 'lobby-player';
     const tags = [];
     if (p.id === playerId) tags.push('you');
     if (p.id === view.hostId) tags.push('host');
-    if (!p.online) tags.push('offline');
+    if (p.isBot) tags.push('bot');
+    else if (!p.online) tags.push('offline');
     const tagStr = tags.length ? ` (${tags.join(', ')})` : '';
     const label = document.createElement('span');
-    label.textContent = `${i + 1}. ${p.name} [${p.id}]${tagStr}`;
+    label.textContent = `${i + 1}. ${p.isBot ? '🤖 ' : ''}${p.name} [${p.id}]${tagStr}`;
     li.append(label);
+    if (p.isBot && !isSpectator) {
+      // Anyone seated may remove a bot — spectators aren't seated.
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = 'Remove';
+      remove.className = 'delete-button';
+      remove.addEventListener('click', () => send({ type: 'removeBot', playerId: p.id }));
+      li.append(remove);
+    }
     if (isHost && view.players.length > 1) {
       const up = document.createElement('button');
       up.type = 'button';
@@ -367,15 +930,28 @@ function renderLobby() {
     }
     listEl.append(li);
   });
+  const specsEl = document.getElementById('lobby-spectators');
+  const specs = view.spectators || [];
+  specsEl.hidden = specs.length === 0;
+  specsEl.textContent = specs.length ? `Watching: ${specs.map((s) => s.name).join(', ')}` : '';
+  const addBotBtn = document.getElementById('add-bot-button');
+  addBotBtn.hidden = isSpectator;
+  const slotsFree = view.botSlotsFree ?? 0;
+  addBotBtn.disabled = view.players.length >= 5 || slotsFree <= 0;
+  addBotBtn.textContent = slotsFree > 0
+    ? '+ Add bot'
+    : '+ Add bot (server bot limit reached)';
   document.getElementById('opt-variant').disabled = !isHost;
   document.getElementById('opt-endRule').disabled = !isHost;
   document.getElementById('opt-shareGuarded').disabled = !isHost;
   document.getElementById('opt-allowEmptyHints').disabled = !isHost;
+  document.getElementById('opt-allowSpectators').disabled = !isHost;
   document.getElementById('start-button').disabled = !isHost || view.players.length < 2;
   document.getElementById('opt-variant').value = view.options.variantId;
   document.getElementById('opt-endRule').value = view.options.endRule;
   document.getElementById('opt-shareGuarded').checked = view.options.shareGuarded;
   document.getElementById('opt-allowEmptyHints').checked = view.options.allowEmptyHints;
+  document.getElementById('opt-allowSpectators').checked = view.options.allowSpectators;
   const importFile = document.getElementById('import-deck-file');
   importFile.disabled = !isHost;
   const importStatus = document.getElementById('import-deck-status');
@@ -401,6 +977,9 @@ function renderGame() {
   const v = view;
   maybeAnimateAction(v);
   maybeFireworks(v);
+  // Reactions are a player-to-player thing; spectators (and replay, which
+  // never sets isSpectator either) watch without joining in.
+  document.getElementById('reaction-bar').hidden = v.kind !== 'in-room' || !!v.isSpectator;
   const meta = document.getElementById('game-meta');
   meta.innerHTML = '';
   const timerItem = document.createElement('div');
@@ -584,21 +1163,51 @@ function renderGame() {
     row.dataset.seat = String(i);
     hands.append(row);
   }
+  // Re-attach any reaction bubble still mid-lifetime (renders wipe the rows).
+  for (const idx of [...activeReactions.keys()]) attachReactionBubble(idx);
 
   const log = document.getElementById('game-log');
   log.innerHTML = '';
   for (const e of v.log.slice().reverse()) {
     const div = document.createElement('div');
     div.className = 'log-entry';
-    div.textContent = formatLog(e);
+    if (e.undone) {
+      div.classList.add('undone');
+      const text = document.createElement('span');
+      text.className = 'undone-text';
+      text.textContent = formatLog(e);
+      const badge = document.createElement('span');
+      badge.className = 'undo-badge';
+      badge.textContent = '[UNDO]';
+      div.append(text, ' ', badge);
+    } else {
+      div.textContent = formatLog(e);
+    }
     log.append(div);
   }
 
   renderDiscard();
   const undoBtn = document.getElementById('undo-button');
   undoBtn.hidden = !v.canUndo;
+  const requested = v.undoRequests || [];
+  undoBtn.classList.toggle('requested', v.canUndo && requested.length > 0);
+  const reqBtn = document.getElementById('request-undo-button');
+  reqBtn.hidden = !(v.canRequestUndo && v.status === 'playing');
+  reqBtn.textContent = v.undoRequestedByMe ? 'Cancel undo request' : 'Request undo';
+  reqBtn.classList.toggle('requested', !!v.undoRequestedByMe);
+  const reqNote = document.getElementById('undo-request-note');
+  if (v.canUndo && requested.length > 0) {
+    reqNote.hidden = false;
+    const names = requested.length > 1
+      ? `${requested.slice(0, -1).join(', ')} and ${requested.at(-1)}`
+      : requested[0];
+    reqNote.textContent = `${names} ${requested.length > 1 ? 'have' : 'has'} requested you undo`;
+  } else {
+    reqNote.hidden = true;
+    reqNote.textContent = '';
+  }
   const abandonBtn = document.getElementById('abandon-button');
-  if (v.status === 'playing' && v.abandonVotes) {
+  if (v.status === 'playing' && v.abandonVotes && !v.isSpectator) {
     abandonBtn.hidden = false;
     const { count, threshold, me } = v.abandonVotes;
     abandonBtn.textContent = me
@@ -618,7 +1227,7 @@ function renderPlayerRow(player, index, isMyTurn) {
   const head = document.createElement('header');
   const name = document.createElement('span');
   name.className = 'player-name';
-  name.textContent = player.name + (index === view.viewerIndex ? ' (you)' : '');
+  name.textContent = (player.isBot ? '🤖 ' : '') + player.name + (index === view.viewerIndex ? ' (you)' : '');
   head.append(name);
   if (index === view.currentPlayer && view.status === 'playing') {
     const marker = document.createElement('span');
@@ -646,7 +1255,16 @@ function renderPlayerRow(player, index, isMyTurn) {
   row.append(hand);
 
   if (isMyTurn && index !== view.viewerIndex && player.hand.length > 0) {
-    row.append(renderHintControls(index));
+    if (tapMode) {
+      // Tapping a card offers a hint matching that card (see renderCard);
+      // tapping anywhere else in the row (header, gaps, padding) offers the
+      // full colour/number picker — useful for a hint that touches nothing.
+      // Cards call stopPropagation, so only "empty space" clicks reach here.
+      row.classList.add('tap-hint-row');
+      row.addEventListener('click', () => openHintPicker(index));
+    } else {
+      row.append(renderHintControls(index));
+    }
   }
   return row;
 }
@@ -762,6 +1380,14 @@ function renderCard(card, ownerIndex, cardIndex, isMyTurn) {
     el.append(note);
   }
 
+  if (!isMine && tapMode && isMyTurn && view.status === 'playing') {
+    el.classList.add('tap-target');
+    el.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      openHintCardActions(card, ownerIndex);
+    });
+  }
+
   if (isMine && view.status === 'playing') {
     if (tapMode) {
       el.classList.add('tap-target');
@@ -847,6 +1473,85 @@ function openCardActions(card, cardIndex, isMyTurn) {
 
 function closeCardActions() {
   document.getElementById('card-action-overlay').hidden = true;
+}
+
+// Tap-to-act, tapping an opponent's card: offer the two hints that touch it.
+function openHintCardActions(card, targetIndex) {
+  const overlay = document.getElementById('card-action-overlay');
+  const pop = document.getElementById('card-action-popover');
+  pop.innerHTML = '';
+
+  const title = document.createElement('div');
+  title.className = 'popover-title';
+  title.textContent = 'Give a hint';
+  pop.append(title);
+
+  const disabled = view.hintTokens <= 0;
+  const sendHint = (hintType, value) => {
+    send({ type: 'action', action: { type: 'hint', toPlayerIndex: targetIndex, hintType, value } });
+    closeCardActions();
+  };
+
+  // Some suits (black, rainbow) are never directly hintable by colour — skip
+  // the button rather than show a permanently-disabled option.
+  if (view.hintableColors.includes(card.color)) {
+    const colorBtn = document.createElement('button');
+    colorBtn.type = 'button';
+    colorBtn.className = 'big-action hint-color-action';
+    colorBtn.dataset.color = card.color;
+    colorBtn.textContent = `Hint colour: ${card.color}`;
+    colorBtn.disabled = disabled;
+    colorBtn.addEventListener('click', () => sendHint('color', card.color));
+    pop.append(colorBtn);
+  }
+
+  const numberBtn = document.createElement('button');
+  numberBtn.type = 'button';
+  numberBtn.className = 'big-action hint-number-action';
+  numberBtn.textContent = `Hint number: ${card.number}`;
+  numberBtn.disabled = disabled;
+  numberBtn.addEventListener('click', () => sendHint('number', card.number));
+  pop.append(numberBtn);
+
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'big-action cancel';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', closeCardActions);
+  pop.append(cancel);
+
+  overlay.hidden = false;
+}
+
+// Tap-to-act, tapping a player's empty space: every hintable colour and
+// number, for a hint that touches nothing in particular (or just to pick
+// freely rather than from one card).
+function openHintPicker(targetIndex) {
+  const overlay = document.getElementById('card-action-overlay');
+  const pop = document.getElementById('card-action-popover');
+  pop.innerHTML = '';
+
+  const title = document.createElement('div');
+  title.className = 'popover-title';
+  title.textContent = 'Give a hint';
+  pop.append(title);
+
+  const controls = renderHintControls(targetIndex);
+  // Close the popover after the hint is sent — renderHintControls' buttons
+  // send the action directly, so wrap with a capture-phase listener.
+  controls.addEventListener('click', (ev) => {
+    if (ev.target.closest('.chip')) closeCardActions();
+  });
+  pop.append(controls);
+
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'big-action cancel';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', closeCardActions);
+  pop.append(cancel);
+
+  overlay.hidden = false;
 }
 
 function renderPossible(colors, numbers, manual) {
@@ -937,6 +1642,9 @@ function renderDiscard() {
 function latestActionEntry(log) {
   for (let i = log.length - 1; i >= 0; i--) {
     const e = log[i];
+    // Undone actions are kept in the log (struck out) but are no longer the
+    // "latest action" — the banner, bubbles, and animations ignore them.
+    if (e.undone) continue;
     if (e.type === 'play' || e.type === 'discard' || e.type === 'hint') return e;
   }
   return null;

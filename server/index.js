@@ -11,12 +11,14 @@ import {
   applyAction,
   clearImportedDeck,
   configureRoom,
-  createRoom,
   importDeck,
   joinRoom,
+  joinSpectator,
   leaveRoom,
+  leaveSpectator,
   movePlayer,
   renamePlayer,
+  requestUndo,
   resumeRoom,
   returnToLobby,
   startGame,
@@ -24,7 +26,27 @@ import {
   viewFor,
   voteAbandon,
 } from './room.js';
-import { listIncompleteSaves, savedDir } from './savedGame.js';
+import { addRoom, allRooms, createRoom, deleteRoom, getRoom, isRoomIdle, listRooms } from './rooms.js';
+import {
+  MAX_TOTAL_BOTS,
+  addBot,
+  adoptRoomBots,
+  initBots,
+  pokeBots,
+  removeBot,
+  removeRoomBots,
+  totalBots,
+} from './bots.js';
+import {
+  branchSave,
+  deleteSave,
+  listIncompleteSaves,
+  listLibrary,
+  loadSave,
+  savedDir,
+  setSaveTags,
+} from './savedGame.js';
+import { viewState } from './view.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIR = path.resolve(__dirname, '..', 'client');
@@ -68,8 +90,12 @@ async function tryServeCard(rel, res) {
   return false;
 }
 
-let room = createRoom();
 const connections = new Map();
+
+// Ephemeral reactions: validated and relayed to the room, never stored —
+// they are not game state and don't appear in saves.
+const REACTION_EMOJI = ['👏', '🤔', '❓', '😱', '🎉'];
+const REACTION_THROTTLE_MS = 500;
 
 function prompt(question) {
   return new Promise((resolve) => {
@@ -81,15 +107,15 @@ function prompt(question) {
   });
 }
 
-async function maybeResumeRoom() {
-  if (process.env.HANABI_NO_RESUME_PROMPT === '1') return null;
+async function maybeResumeAtBoot() {
+  if (process.env.HANABI_NO_RESUME_PROMPT === '1') return;
   const incomplete = await listIncompleteSaves();
-  if (incomplete.length === 0) return null;
+  if (incomplete.length === 0) return;
   if (!process.stdin.isTTY) {
     console.log(
-      `(${incomplete.length} incomplete save(s) in saved-games/; skipping resume prompt — no TTY)`,
+      `(${incomplete.length} incomplete save(s) in saved-games/; available for resume from the server lobby)`,
     );
-    return null;
+    return;
   }
   const top = incomplete.slice(0, 3);
   console.log('\nIncomplete saved games found:');
@@ -98,8 +124,8 @@ async function maybeResumeRoom() {
     const variant = s.variantId.padEnd(22);
     console.log(`  [${i + 1}] ${s.basename}  ${variant}  ${s.moves} moves  (${s.playerNames.join(', ')})`);
   }
-  const ans = (await prompt('Resume which? [1-3, filename, or Enter to skip]: ')).trim();
-  if (!ans) return null;
+  const ans = (await prompt('Resume any into a starter room? [1-3, filename, or Enter to skip]: ')).trim();
+  if (!ans) return;
   let filePath = null;
   const n = Number(ans);
   if (Number.isInteger(n) && n >= 1 && n <= top.length) {
@@ -109,12 +135,43 @@ async function maybeResumeRoom() {
   }
   try {
     const resumed = await resumeRoom(filePath);
-    console.log(`Resumed ${path.basename(filePath)} — ${resumed.players.length} players, turn ${resumed.state.turn}.`);
-    return resumed;
+    const r = addRoom(resumed, `Resumed ${path.basename(filePath)}`);
+    adoptRoomBots(r);
+    console.log(`Resumed ${path.basename(filePath)} into room ${r.id} — ${r.players.length} players, turn ${r.state.turn}.`);
   } catch (err) {
     console.error(`Could not resume ${filePath}: ${err.message}`);
-    return null;
   }
+}
+
+async function serverLobbyView() {
+  const saves = (await listIncompleteSaves()).slice(0, 20).map((s) => ({
+    basename: s.basename,
+    variantId: s.variantId,
+    playerNames: s.playerNames,
+    moves: s.moves,
+    startedAt: s.startedAt,
+  }));
+  return {
+    kind: 'server-lobby',
+    rooms: listRooms(),
+    resumableSaves: saves,
+    library: await listLibrary(),
+  };
+}
+
+// A save file an open room is still appending to must not be deleted,
+// replayed (it would reveal live hidden information), or branched.
+function saveInUse(basename) {
+  const filePath = path.resolve(savedDir(), basename);
+  return allRooms().some((r) => r.savePath && path.resolve(r.savePath) === filePath);
+}
+
+function requireSaveBasename(file) {
+  const basename = path.basename(String(file || ''));
+  if (!basename.endsWith('.jsonl') || basename.startsWith('.')) {
+    throw new GameError('Bad save filename', 'bad_save');
+  }
+  return basename;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -157,30 +214,89 @@ function send(ws, payload) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
 }
 
-function broadcastSync() {
+function inRoomViewFor(room, playerId) {
+  const v = viewFor(room, playerId);
+  v.kind = 'in-room';
+  v.roomId = room.id;
+  v.roomName = room.name;
+  if (v.status === 'lobby') v.botSlotsFree = MAX_TOTAL_BOTS - totalBots();
+  return v;
+}
+
+function broadcastRoom(roomId) {
+  const room = getRoom(roomId);
+  if (!room) return;
   for (const [ws, conn] of connections) {
-    if (conn.playerId) {
-      send(ws, { type: 'sync', view: viewFor(room, conn.playerId) });
-    } else {
-      send(ws, { type: 'sync', view: viewFor(room, null) });
-    }
+    if (conn.roomId !== roomId) continue;
+    send(ws, { type: 'sync', view: inRoomViewFor(room, conn.playerId) });
   }
+  // Every state change flows through here — let resident bots react.
+  pokeBots(room);
+}
+
+async function broadcastServerLobby() {
+  const view = await serverLobbyView();
+  for (const [ws, conn] of connections) {
+    if (conn.roomId) continue;
+    send(ws, { type: 'sync', view });
+  }
+}
+
+async function broadcastRoomAndLobby(roomId) {
+  broadcastRoom(roomId);
+  await broadcastServerLobby();
 }
 
 function sendError(ws, error, code = 'error') {
   send(ws, { type: 'error', error, code });
 }
 
-wss.on('connection', (ws) => {
-  const conn = { playerId: null };
+// Drops every connection seated in a (just-deleted) room back to the server
+// lobby.
+async function kickRoomConnections(roomId) {
+  for (const [ws, conn] of connections) {
+    if (conn.roomId === roomId) {
+      conn.roomId = null;
+      conn.playerId = null;
+      conn.isSpectator = false;
+      send(ws, { type: 'sync', view: await serverLobbyView() });
+    }
+  }
+}
+
+function requireRoom(conn) {
+  if (!conn.roomId) throw new GameError('Not in a room', 'no_room');
+  const room = getRoom(conn.roomId);
+  if (!room) throw new GameError('Room no longer exists', 'no_room');
+  return room;
+}
+
+function requireSeat(conn) {
+  const room = requireRoom(conn);
+  // Spectators hold conn.playerId (their spectator id, for view lookups and
+  // cleanup) but never a seat — this single guard keeps every action
+  // handler below (play/hint/undo/react/configure/...) off-limits to them.
+  if (!conn.playerId || conn.isSpectator) throw new GameError('Not joined', 'not_joined');
+  return room;
+}
+
+wss.on('connection', async (ws) => {
+  const conn = { playerId: null, roomId: null, isSpectator: false };
   connections.set(ws, conn);
   send(ws, {
     type: 'hello',
     variants: Object.values(VARIANTS).map((v) => ({ id: v.id, name: v.name })),
   });
-  send(ws, { type: 'sync', view: viewFor(room, null) });
+  // The message listener must be attached before any await: a client that
+  // sends right after connecting (reconnect, bot, script) would otherwise
+  // have its message dropped while the saves directory is being scanned.
+  // Handlers await `greeted` so the initial lobby sync still arrives first.
+  const greeted = serverLobbyView()
+    .then((view) => send(ws, { type: 'sync', view }))
+    .catch((err) => console.error('initial lobby sync failed:', err));
 
   ws.on('message', async (raw) => {
+    await greeted;
     let msg;
     try {
       msg = JSON.parse(raw.toString());
@@ -190,51 +306,231 @@ wss.on('connection', (ws) => {
     }
     try {
       switch (msg.type) {
-        case 'join': {
-          const player = joinRoom(room, { name: msg.name, playerId: msg.playerId });
+        case 'createRoom': {
+          const r = createRoom(msg.roomName);
+          const player = joinRoom(r, { name: msg.playerName, playerId: msg.playerId });
+          r.creatorId = player.id;
           conn.playerId = player.id;
-          send(ws, { type: 'identity', playerId: player.id });
-          broadcastSync();
+          conn.roomId = r.id;
+          conn.isSpectator = false;
+          send(ws, { type: 'identity', playerId: player.id, roomId: r.id, roomName: r.name });
+          await broadcastRoomAndLobby(r.id);
+          break;
+        }
+        case 'enterRoom': {
+          const r = getRoom(msg.roomId);
+          if (!r) throw new GameError('Room not found', 'no_room');
+          const player = joinRoom(r, { name: msg.playerName, playerId: msg.playerId });
+          conn.playerId = player.id;
+          conn.roomId = r.id;
+          conn.isSpectator = false;
+          send(ws, { type: 'identity', playerId: player.id, roomId: r.id, roomName: r.name });
+          await broadcastRoomAndLobby(r.id);
+          break;
+        }
+        case 'spectateRoom': {
+          const r = getRoom(msg.roomId);
+          if (!r) throw new GameError('Room not found', 'no_room');
+          const spectator = joinSpectator(r, { name: msg.playerName });
+          conn.playerId = spectator.id;
+          conn.roomId = r.id;
+          conn.isSpectator = true;
+          send(ws, {
+            type: 'identity',
+            playerId: spectator.id,
+            roomId: r.id,
+            roomName: r.name,
+            isSpectator: true,
+          });
+          await broadcastRoomAndLobby(r.id);
+          break;
+        }
+        case 'leaveRoom': {
+          const prevRoomId = conn.roomId;
+          if (prevRoomId) {
+            const r = getRoom(prevRoomId);
+            if (r && conn.playerId) {
+              if (conn.isSpectator) leaveSpectator(r, conn.playerId);
+              else leaveRoom(r, conn.playerId);
+            }
+          }
+          conn.roomId = null;
+          conn.playerId = null;
+          conn.isSpectator = false;
+          send(ws, { type: 'sync', view: await serverLobbyView() });
+          if (prevRoomId) broadcastRoom(prevRoomId);
+          await broadcastServerLobby();
+          break;
+        }
+        case 'resumeSave': {
+          const fileArg = String(msg.file || '');
+          const filePath = path.isAbsolute(fileArg) ? fileArg : path.join(savedDir(), fileArg);
+          const resumed = await resumeRoom(filePath);
+          const r = addRoom(resumed, msg.roomName);
+          adoptRoomBots(r);
+          send(ws, { type: 'roomCreated', roomId: r.id, roomName: r.name });
+          await broadcastServerLobby();
+          break;
+        }
+        case 'closeRoom': {
+          const r = requireRoom(conn);
+          if (r.hostId !== conn.playerId) throw new GameError('Only the host can close a room', 'not_host');
+          deleteRoom(r.id);
+          removeRoomBots(r.id);
+          await kickRoomConnections(r.id);
+          await broadcastServerLobby();
+          break;
+        }
+        case 'addBot': {
+          const room = requireSeat(conn);
+          addBot(room);
+          await broadcastRoomAndLobby(room.id);
+          break;
+        }
+        case 'removeBot': {
+          const room = requireSeat(conn);
+          removeBot(room, msg.playerId);
+          await broadcastRoomAndLobby(room.id);
+          break;
+        }
+        case 'deleteRoom': {
+          // Sent from the server lobby, where the connection holds no seat —
+          // the client passes its persistent playerId to prove creatorship.
+          const r = getRoom(msg.roomId);
+          if (!r) throw new GameError('Room not found', 'no_room');
+          const isCreator = !!msg.playerId && r.creatorId === msg.playerId;
+          if (!isCreator && !isRoomIdle(r)) {
+            throw new GameError('Only the creator can delete a room with players in it', 'not_creator');
+          }
+          deleteRoom(r.id);
+          removeRoomBots(r.id);
+          await kickRoomConnections(r.id);
+          await broadcastServerLobby();
+          break;
+        }
+        case 'deleteSave': {
+          // Anyone on the tailnet may delete a saved game: saves carry no
+          // durable owner identity, and the move-to-trash keeps it reversible
+          // by the host. Refuse while an open room is appending to the file —
+          // appendFile would silently recreate a headerless save.
+          const basename = requireSaveBasename(msg.file);
+          if (saveInUse(basename)) {
+            throw new GameError('Save is in use by an open room', 'save_in_use');
+          }
+          try {
+            await deleteSave(basename);
+          } catch (err) {
+            if (err.code === 'ENOENT') throw new GameError('Save not found', 'no_save');
+            throw err;
+          }
+          await broadcastServerLobby();
+          break;
+        }
+        case 'replaySave': {
+          // Stateless step-through of a saved game: rebuild the state after
+          // the first `upto` events and return an omniscient view (viewer -1
+          // sees every hand — it's a review, not a live game).
+          const basename = requireSaveBasename(msg.file);
+          if (saveInUse(basename)) {
+            throw new GameError('Game is still being played in a room', 'save_in_use');
+          }
+          const upto = Math.max(0, Math.floor(Number(msg.upto) || 0));
+          let loaded;
+          try {
+            loaded = await loadSave(path.join(savedDir(), basename), { maxEvents: upto });
+          } catch (err) {
+            throw new GameError(`Cannot replay ${basename}: ${err.message}`, 'bad_save');
+          }
+          const v = viewState(loaded.state, -1);
+          v.kind = 'replay';
+          send(ws, {
+            type: 'replayView',
+            file: basename,
+            upto: Math.min(upto, loaded.totalEvents),
+            total: loaded.totalEvents,
+            view: v,
+          });
+          break;
+        }
+        case 'branchSave': {
+          // "Start again after move N": copy header + first N events into a
+          // fresh save, then open it in a new room via the resume path. The
+          // original save is untouched; the branch persists on its own.
+          const basename = requireSaveBasename(msg.file);
+          if (saveInUse(basename)) {
+            throw new GameError('Game is still being played in a room', 'save_in_use');
+          }
+          const upto = Math.max(0, Math.floor(Number(msg.upto) || 0));
+          let branched;
+          try {
+            branched = await branchSave(basename, upto);
+            const resumed = await resumeRoom(branched);
+            const r = addRoom(resumed, msg.roomName || `Branch of ${basename}`);
+            adoptRoomBots(r);
+            send(ws, { type: 'roomCreated', roomId: r.id, roomName: r.name });
+          } catch (err) {
+            // Don't leave a junk branch file behind (e.g. branching past the
+            // game's end resumes to 'finished' and is rejected).
+            if (branched) await fs.rm(branched, { force: true });
+            throw new GameError(`Cannot branch ${basename}: ${err.message}`, 'bad_branch');
+          }
+          await broadcastServerLobby();
+          break;
+        }
+        case 'tagSave': {
+          const basename = requireSaveBasename(msg.file);
+          try {
+            await setSaveTags(basename, msg.tags);
+          } catch (err) {
+            throw new GameError(err.message, 'bad_tags');
+          }
+          await broadcastServerLobby();
           break;
         }
         case 'configure': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           configureRoom(room, conn.playerId, msg.options || {});
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'start': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           await startGame(room, conn.playerId, { seed: msg.seed });
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'action': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           await applyAction(room, conn.playerId, msg.action);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'abandon': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           await voteAbandon(room, conn.playerId);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'undo': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           await undoLast(room, conn.playerId);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
+          break;
+        }
+        case 'requestUndo': {
+          const room = requireSeat(conn);
+          requestUndo(room, conn.playerId);
+          broadcastRoom(room.id);
           break;
         }
         case 'returnToLobby': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           returnToLobby(room, conn.playerId);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'exportDeck': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           if (room.phase !== 'playing' || room.state?.status !== 'finished') {
             throw new GameError('No finished game to export', 'no_finished_game');
           }
@@ -245,27 +541,47 @@ wss.on('connection', (ws) => {
           break;
         }
         case 'importDeck': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           importDeck(room, conn.playerId, msg.deck);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'clearImportedDeck': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           clearImportedDeck(room, conn.playerId);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'movePlayer': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           movePlayer(room, conn.playerId, msg.targetId, msg.direction);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
           break;
         }
         case 'rename': {
-          if (!conn.playerId) throw new GameError('Not joined', 'not_joined');
+          const room = requireSeat(conn);
           await renamePlayer(room, conn.playerId, msg.name);
-          broadcastSync();
+          await broadcastRoomAndLobby(room.id);
+          break;
+        }
+        case 'react': {
+          const room = requireSeat(conn);
+          if (room.phase !== 'playing') {
+            throw new GameError('Reactions need a game on screen', 'not_playing');
+          }
+          if (!REACTION_EMOJI.includes(msg.emoji)) {
+            throw new GameError('Unknown reaction', 'bad_reaction');
+          }
+          const idx = room.state.players.findIndex((p) => p.id === conn.playerId);
+          if (idx < 0) throw new GameError('Not in this game', 'not_seated');
+          const now = Date.now();
+          if (now - (conn.lastReactionAt || 0) < REACTION_THROTTLE_MS) break; // drop spam silently
+          conn.lastReactionAt = now;
+          for (const [otherWs, otherConn] of connections) {
+            if (otherConn.roomId === room.id) {
+              send(otherWs, { type: 'reaction', playerIndex: idx, emoji: msg.emoji });
+            }
+          }
           break;
         }
         default:
@@ -281,10 +597,18 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => {
-    if (conn.playerId) leaveRoom(room, conn.playerId);
+  ws.on('close', async () => {
+    const { roomId, playerId, isSpectator } = conn;
+    if (roomId && playerId) {
+      const room = getRoom(roomId);
+      if (room) {
+        if (isSpectator) leaveSpectator(room, playerId);
+        else leaveRoom(room, playerId);
+      }
+    }
     connections.delete(ws);
-    broadcastSync();
+    if (roomId) broadcastRoom(roomId);
+    try { await broadcastServerLobby(); } catch (err) { console.error(err); }
   });
 });
 
@@ -292,8 +616,8 @@ wss.on('connection', (ws) => {
 // ESM file via require(), which Node refuses for a module with top-level
 // await. Keeping the await inside main() avoids that restriction.
 async function main() {
-  const resumed = await maybeResumeRoom();
-  if (resumed) room = resumed;
+  initBots(async (roomId) => broadcastRoomAndLobby(roomId));
+  await maybeResumeAtBoot();
 
   server.listen(PORT, HOST, () => {
     console.log(`hanabi-room listening on http://${HOST}:${PORT}`);

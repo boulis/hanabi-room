@@ -26,8 +26,9 @@ Requires Node ≥ 20 (uses ES modules and `node:test`).
   - `rules.js` — action handlers (play/discard/hint/annotate), turn rotation, end conditions (pure mutations on state)
   - `view.js` — filters state into a per-viewer view (hides own card identities; gates the guarded-card flag on the share option; the note is owner-only and never shared)
   - `savedGame.js` — append-only JSONL game log under `saved-games/`, plus reconstruction (`loadSave`) used by the resume flow
-  - `room.js` — lobby + game-room model: who's host, who's joined, action dispatch
-  - `index.js` — HTTP static server + WebSocket transport; thin shell over `room.js`
+  - `room.js` — a single game room: who's host, who's joined, action dispatch
+  - `rooms.js` — in-memory registry of rooms (`Map<id, room>`) keyed by 6-hex ids, with `createRoom`/`getRoom`/`listRooms`/`addRoom`/`deleteRoom`/`summarizeRoom`. Rooms are ephemeral; only saved-game files persist across server restarts.
+  - `index.js` — HTTP static server + WebSocket transport; routes each connection to at most one room at a time
   Keep game logic in `game.js` / `rules.js` and view filtering in `view.js`. The transport doesn't know game rules.
 - **Per-card hint state**: every card carries `possibleColors`, `possibleNumbers`, `colorClued`, `numberClued`, `lastHints` (recent hint markers touching this card, see below), and `annotations` (a `{ note, guarded }` pair). Formal hints update the constraints; annotations are owner-controlled metadata. Cards in your own hand are sent to you WITHOUT their `color`/`number` fields, but WITH the inferred constraints — that's how you see "this could be red or rainbow" without seeing what it actually is. The `note` field is always private to the owner. The `guarded` boolean is visible to the owner; other players see it only when the lobby option `shareGuarded` is on.
 - **Hint markers (`lastHints`)**: each hint gets a monotonic `hintIndex` from `state.nextHintIndex`. When a hint touches cards, `{ hintIndex, hintType, value }` is appended to each touched card's `lastHints` (newest last). A new hint never clears another hint's markers — multiple recent hints stack so the visualization can convey provenance. Two rules prune markers: (1) **consumption** — when a card leaves the hand (play OR discard, success or misplay), each of its `lastHints` entries is removed from every other card in the same hand (one card from the hint's touched set "using up" the hint clears the whole hint); (2) **cap** — at most `HINT_MARK_LIMIT=4` markers per card; when a touched card would exceed 4, its oldest hintIndex is dropped from every card in the hand. The client renders newest-at-center fanning to the right with overlap.
@@ -72,13 +73,31 @@ Both modes also end on the third fuse (immediate loss) or perfect score.
 
 ## WebSocket protocol
 
-Server → client: `hello` (variant list), `identity` (your assigned `playerId`), `sync` (filtered view), `error`.
+Server → client: `hello` (variant list), `identity` (your assigned `playerId` plus the `roomId` and `roomName` you were placed in, and `isSpectator: true` if you joined as a spectator), `sync` (filtered view — either a `server-lobby` view or an `in-room` view), `error`, `roomCreated` (a resumed save landed in a fresh room; the client uses it to auto-enter), `deckExport`.
+
+A view is one of:
+- `kind: 'server-lobby'` — sent to connections that aren't in a room. Contains `rooms: [{ id, name, status, variantId, players, turn, allowSpectators, spectatorCount, ... }]`, `resumableSaves: [{ basename, variantId, playerNames, moves, ... }]`, and `library` — every save summarized (date, status, score/maxScore, players, tags; `seed` only when finished, since a live seed leaks the deck). Library summaries replay each file once and are cached by mtime (`listLibrary` in `savedGame.js`); the client renders them in a collapsed `<details>` "Game library" section with Replay / Copy seed / Tags / Delete per row.
+- `kind: 'in-room'` — everything else you see today (lobby / playing / finished). Also carries `roomId` and `roomName` at the top level, plus `spectators: [{ id, name }]` (visible to everyone in the room) and `isSpectator: true` when the view belongs to a spectator connection. A spectator's view is built with `playerIndex` resolving to `-1` (the spectator id is never a seat), which is exactly the omniscient viewer index replay already uses — `viewCard` reveals every hand, own-hand annotations stay hidden (a spectator isn't the owner of anything), and `currentPlayer` never equals `-1` so every turn-gated control (Play/Discard/hint controls/tap-to-act/undo/abandon) renders as if it's simply nobody's turn. The client additionally hides the reaction bar for spectators.
+
 Client → server:
-- `join { name, playerId? }`
+- `createRoom { roomName?, playerName, playerId? }` — creates a fresh room and auto-joins the caller.
+- `enterRoom { roomId, playerName, playerId? }` — joins an existing room as a player.
+- `spectateRoom { roomId, playerName }` — joins as a spectator instead of a seat. Rejected with `spectators_disabled` unless the host has turned on the room's `allowSpectators` option (default off, lobby-only toggle, host-only). Allowed in either room phase — watching the pre-game lobby has no hidden information to protect. Spectator ids are never persisted client-side (no reconnect-by-id); a reload just re-sends `spectateRoom` for a fresh one. Spectators cannot take any seat-gated action — `play`/`discard`/`hint`/`undo`/`requestUndo`/`abandon`/`react`/`configure`/bot management/etc. all require a real seat and reject a spectator id the same way they'd reject an unknown one.
+- `leaveRoom` — drop back to the server lobby (works for spectators too).
+- `resumeSave { file, roomName? }` — spins up a new room from a saved game and returns `roomCreated`; the client then sends `enterRoom` for it.
+- `replaySave { file, upto }` — stateless replay stepping: the server rebuilds the state after the first `upto` events of the save and replies `replayView { file, upto, total, view }`, where the view is omniscient (`viewerIndex: -1` reveals all hands). Refused with `save_in_use` while a live room holds the file. The client shows it on the game screen with a step bar.
+- `branchSave { file, upto, roomName? }` — "play from move N": copies the save's header plus its first `upto` events into a fresh `…-branch-….jsonl` save, resumes it into a new room (players offline, reclaimed by name), and replies `roomCreated`. The original save is untouched; the branch persists independently. Rejected (`bad_branch`) if the truncated game is already finished.
+- `tagSave { file, tags }` — set a save's tags (≤8, ≤24 chars each), stored in the sidecar `saved-games/tags.json` so the JSONL format stays pure replay data. Tags show in the library list.
+- `deleteSave { file }` — anyone may delete an incomplete save from the server lobby (saves carry no durable owner identity, and the tailnet is trusted). It's a soft delete: the file moves to `saved-games/trash/`, recoverable by the host from the terminal. Refused with `save_in_use` while an open room is appending to that file.
+- `closeRoom` — host only; removes the room and kicks everyone back to the lobby.
+- `deleteRoom { roomId, playerId }` — sent from the server lobby (where the connection holds no seat, so the client passes its persistent `playerId`). Allowed when the caller is the room's creator (`creatorId`, stamped at `createRoom`; falls back to the save's host for resumed rooms) or when the room is idle (no players, or every seat offline). Anyone still connected to the room is kicked back to the server lobby.
 - `configure { options }` (host only)
 - `start { seed? }` (host only; works in lobby OR when a finished game is on screen)
 - `action { action: { type: 'play'|'discard'|'hint'|'annotate', ... } }`
+- `undo` — roll back the most recent play/discard/hint; only the player who took it can undo it. The undone action's log entries are kept, flagged `undone: true` (clients strike them out with an [UNDO] badge); saves record undo as a distinct event and replay reproduces the struck entries.
+- `requestUndo` — toggle a request that the current undo owner (top of the undo stack) undoes. Transient (never saved); cleared by any action, undo, or new game. The owner's view gets `undoRequests: [names]`; others get `canRequestUndo`/`undoRequestedByMe`.
 - `abandon` — cast a vote to abandon the current game; on the second distinct vote the game is marked finished with `endReason: 'abandoned'` (same game-over screen as a natural end, so players can review or export the deck order before starting a new one). Voting twice toggles your own vote.
+- `react { emoji }` — send an ephemeral reaction (allowed set: 👏 🤔 ❓ 😱 🎉). The server validates, throttles (500ms per connection, silent drop), and relays `reaction { playerIndex, emoji }` to everyone in the room — reactions are never part of game state and never appear in saves. Clients float the emoji over that player's row for 2s (`.reaction-bubble`, re-attached across re-renders). Requires a game on screen (playing or finished) and a seat — spectators don't get a reaction bar.
 - `exportDeck` — any player may request the deck order of the finished game; the server replies with `deckExport { data, filename }` for the client to save as a file. Rejected if the game isn't finished (would otherwise leak the remaining draw pile).
 
 There is intentionally **no reset action**. To start over before a natural end, two players have to independently click "Abandon game" — that makes a single accidental click harmless. The host can also paste an old seed into the lobby's seed input to re-deal the same deck.
@@ -111,6 +130,18 @@ The five supported variants:
 | `rainbowCriticalBlackReverse`   | + 10-card black played 5→1 with reversed distribution            | 65        |
 
 When adding a new variant, add it to `VARIANTS` and add a row to the deck-size test in `server/game.test.js`. Test invariants (deck size, suit composition) — they catch typos in the distribution arrays.
+
+## Bot player
+
+**Lobby bots (the normal way):** any seated player can add or remove bots from the room lobby via the `addBot` / `removeBot { playerId }` messages (the client shows a "+ Add bot" button and a Remove button per bot). These bots live inside the server process (`server/bots.js`): a bot is an ordinary seat whose turns are driven by `botBrain.decide` against `viewFor(room, botId)` after a human-feeling delay (`HANABI_BOT_DELAY_MS`, default 1200). At most `MAX_TOTAL_BOTS = 10` bots across all rooms; the lobby view carries `botSlotsFree`. Bots can only be added/removed in the lobby phase; they are tagged `isBot` in every view, don't keep a room from being idle-deletable (`isRoomIdle` ignores them), are freed when their room is deleted or closed, and are skipped when host transfers on leave. If a bot's action tops the undo stack, a `requestUndo` makes the bot undo it, then pause (`HANABI_BOT_UNDO_GRACE_MS`, default 6000) so the requester can chain their own undo. Bot seats in resumed saves come back as ordinary offline seats — re-add bots from the lobby after a resume.
+
+**CLI bot:** `node bot.mjs` (or `npm run bot --`) runs the same brain as a normal WebSocket client, e.g. from another machine. Decision logic lives in `server/botBrain.js` as a pure function `decide(view, conventions)` — it sees only the same filtered view a human gets, so it cannot cheat by construction. Transport, reconnect, and CLI flags live in `bot.mjs`.
+
+Conventions (the `standard` set in `CONVENTION_SETS`, selectable via `--conventions`): oldest card is leftmost; a colour hint marks the *newest touched* card for play (tracked via `lastHints` markers, which the server consumes when any card of that hint leaves the hand); a number hint means *keep* unless a card becomes provably playable; discard priority is provably-useless card → chop (oldest untouched) → forced. It also saves the next player's critical chop (last remaining copy) with a number hint, and stalls with a harmless number hint at full tokens.
+
+Flags: `--server URL` (default localhost:3000), `--room ID` or `--create [--room-name X]` (default: join the newest lobby room, else create), `--name`, `--delay MS` (thinking pause, default 900), `--autostart N` (start when N players are seated, only if the bot is host), `--seed S`, `--conventions standard`.
+
+Testing: `server/botBrain.test.js` crafts exact decks (dealing is round-robin: player 0 gets draws 0,2,4,…) to pin each convention, plus bot-vs-bot full games on every variant that must end legally — `rules.js` throws on any illegal action, so a completed game doubles as a legality proof. Typical scores: ~20–22/25 on `simple`, perfect games on good seeds.
 
 ## Card art
 

@@ -66,12 +66,12 @@ async function main() {
   await recvOf(a, 'hello');
   await recvOf(b, 'hello');
 
-  send(a, { type: 'join', name: 'Alice' });
-  await recvOf(a, 'identity');
-  send(b, { type: 'join', name: 'Bob' });
+  send(a, { type: 'createRoom', roomName: 'Smoke', playerName: 'Alice' });
+  const aIdent = await recvOf(a, 'identity');
+  send(b, { type: 'enterRoom', roomId: aIdent.roomId, playerName: 'Bob' });
   await recvOf(b, 'identity');
 
-  await recvSyncWhere(a, (v) => v.status === 'lobby' && v.players.length === 2);
+  await recvSyncWhere(a, (v) => v.kind === 'in-room' && v.status === 'lobby' && v.players.length === 2);
 
   send(a, { type: 'configure', options: { variantId: 'rainbow', endRule: 'standard', shareGuarded: true } });
   send(a, { type: 'start', seed: 42 });
