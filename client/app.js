@@ -930,6 +930,10 @@ function renderLobby() {
     }
     listEl.append(li);
   });
+  const specsEl = document.getElementById('lobby-spectators');
+  const specs = view.spectators || [];
+  specsEl.hidden = specs.length === 0;
+  specsEl.textContent = specs.length ? `Watching: ${specs.map((s) => s.name).join(', ')}` : '';
   const addBotBtn = document.getElementById('add-bot-button');
   addBotBtn.hidden = isSpectator;
   const slotsFree = view.botSlotsFree ?? 0;
