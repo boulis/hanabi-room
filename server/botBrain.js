@@ -6,7 +6,7 @@ import { getVariant } from './variants.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '1.3';
+export const BOT_VERSION = '1.4';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -277,41 +277,81 @@ function hasPendingPlay(view, seat, conventions = STANDARD_CONVENTIONS) {
   return colorPlayTargets(hand, combos).some((t) => possiblyPlayable(view, combos[t]));
 }
 
-// A colour hint works as a play hint when the receiver, reading it by the
-// conventions, plays a card that really is playable: either the hint proves
-// some touched card playable outright (a reveal — played as known-playable),
-// or the newest touched card is playable right now AND the hint doesn't fully
-// identify another touched card (which would read as a reveal and cancel the
-// newest-touched promise).
-function findColorPlayHint(view, seat) {
+// Score a valid play hint so competing options can be compared. Immediate
+// correct plays dominate; then touching cards that are still needed (they'll
+// be kept and eventually played), then raw information (candidate identities
+// eliminated across the hand); touching a useless card costs — it gets a
+// keep-clue it doesn't deserve and clogs the hand.
+function scoreHint(view, seat, hand, touched, before, after, plays, hint) {
+  let info = 0;
+  for (let i = 0; i < hand.length; i++) info += before[i].length - after[i].length;
+  // Identities already clued somewhere visible: touching another copy of one
+  // wastes the touch and risks two players "keeping" the same card.
+  const cluedElsewhere = new Set();
+  view.players.forEach((p, other) => {
+    if (other === view.viewerIndex) return;
+    p.hand.forEach((c, i) => {
+      if ((c.colorClued || c.numberClued) && !(other === seat && touched.some((t) => t.i === i))) {
+        cluedElsewhere.add(`${c.color}_${c.number}`);
+      }
+    });
+  });
+  // How soon a touched card can matter: playable now > next in line for its
+  // pile > distant future. Newly cluing a distant card is a liability — it
+  // sits in the hand soaking up "keep" status and muddying later hints.
+  const soon = (card) => {
+    const need = neededNumber(view, card.color);
+    if (need === null) return 0;
+    const dist = suitOf(view, card.color).direction === 'up' ? card.number - need : need - card.number;
+    return dist === 0 ? 2 : dist === 1 ? 1 : 0;
+  };
+  let value = 0;
+  let bad = 0;
+  const seen = new Set();
+  for (const { card } of touched) {
+    const k = `${card.color}_${card.number}`;
+    if (isUseless(view, card.color, card.number) || cluedElsewhere.has(k) || seen.has(k)) bad++;
+    else if (soon(card) > 0) value += soon(card) * 25;
+    else if (!card.colorClued && !card.numberClued) value -= 30; // distant card newly clued
+    seen.add(k);
+  }
+  // Colour hints get a small edge: beyond the immediate play they leave a
+  // pending-target obligation and colour identity that keeps paying off.
+  const colorBonus = hint.hintType === 'color' ? 50 : 0;
+  return { hint, score: plays * 1000 + value + info + colorBonus - bad * 200 };
+}
+
+// Every hint to `seat` that the receiver, reading it by the conventions,
+// would correctly act on — each scored. Colour hints work as play hints when
+// they prove some touched card playable outright (a reveal), or when the
+// newest touched card is playable right now and the hint doesn't read as a
+// reveal (which would cancel the newest-touched promise). Number hints work
+// when they make a touched card provably playable — or, for a "1" hint under
+// play-all-1s, when every 1 the receiver would go on to play really is
+// playable, all different colours, and not already obligated elsewhere.
+function playHintCandidates(view, seat, conventions) {
+  const out = [];
   const hand = view.players[seat].hand;
-  const pending = colorPlayTargets(hand, handCombos(view, seat));
+  const before = handCombos(view, seat);
+  const pending = colorPlayTargets(hand, before);
   for (const color of view.hintableColors) {
     const touched = colorHintTouches(view, hand, color);
     if (touched.length === 0) continue;
     const after = combosFor(view, afterColorHint(view, hand, color), [seat, view.viewerIndex]);
-    if (touched.some(({ i }) => knownPlayable(view, after[i]))) {
-      return { hintType: 'color', value: color };
+    let plays = touched.filter(({ i }) => knownPlayable(view, after[i])).length;
+    if (plays === 0) {
+      const newest = touched[touched.length - 1];
+      if (!isPlayable(view, newest.card.color, newest.card.number)) continue;
+      if (touched.some(({ i }) => i !== newest.i && after[i].length === 1)) continue;
+      if (pending.includes(newest.i)) continue; // already their live target
+      plays = 1;
     }
-    const newest = touched[touched.length - 1];
-    if (!isPlayable(view, newest.card.color, newest.card.number)) continue;
-    if (touched.some(({ i }) => i !== newest.i && after[i].length === 1)) continue;
-    if (pending.includes(newest.i)) continue; // already their live target
-    return { hintType: 'color', value: color };
+    out.push(scoreHint(view, seat, hand, touched, before, after, plays, { hintType: 'color', value: color }));
   }
-  return null;
-}
-
-// A number hint works as a play hint when it makes some touched card provably
-// playable — or, for a "1" hint under the play-all-1s convention, when every
-// touched 1 the receiver would go on to play really is playable (and they're
-// all different colours, so the plays can't collide).
-function findNumberPlayHint(view, seat, conventions) {
-  const hand = view.players[seat].hand;
   for (const n of [...new Set(hand.map((c) => c.number))]) {
     const after = combosFor(view, afterNumberHint(hand, n), [seat, view.viewerIndex]);
+    const touched = hand.map((c, i) => ({ card: c, i })).filter(({ card }) => card.number === n);
     if (n === 1 && conventions.playAllOnes) {
-      const touched = hand.map((c, i) => ({ c, i })).filter(({ c }) => c.number === 1);
       const wouldPlay = touched.filter(({ i }) => possiblyPlayable(view, after[i]));
       // 1s already obligated in other visible hands — a second obligation on
       // the same colour's 1 guarantees that one of the two plays misfires.
@@ -320,25 +360,44 @@ function findNumberPlayHint(view, seat, conventions) {
         if (other === seat || other === view.viewerIndex) return;
         for (const i of onesObligations(p.hand)) obligatedElsewhere.add(p.hand[i].color);
       });
-      const colors = new Set(wouldPlay.map(({ c }) => c.color));
-      const newlyObligated = touched.some(({ c }) => !(c.numberClued && c.possibleNumbers.length === 1));
+      const colors = new Set(wouldPlay.map(({ card }) => card.color));
+      const newlyObligated = touched.some(({ card }) => !(card.numberClued && card.possibleNumbers.length === 1));
       if (
         wouldPlay.length > 0
         && newlyObligated
         && colors.size === wouldPlay.length
-        && wouldPlay.every(({ c }) => isPlayable(view, c.color, c.number))
-        && wouldPlay.every(({ c }) => !obligatedElsewhere.has(c.color))
+        && wouldPlay.every(({ card }) => isPlayable(view, card.color, card.number))
+        && wouldPlay.every(({ card }) => !obligatedElsewhere.has(card.color))
         && !touched.some(({ i }) => after[i].length === 1) // would read as a reveal
       ) {
-        return { hintType: 'number', value: 1 };
+        out.push(scoreHint(view, seat, hand, touched, before, after, wouldPlay.length, { hintType: 'number', value: 1 }));
       }
       continue; // an unsafe "1" hint would trigger the convention anyway
     }
-    if (hand.some((c, i) => c.number === n && knownPlayable(view, after[i]))) {
-      return { hintType: 'number', value: n };
+    const plays = touched.filter(({ i }) => knownPlayable(view, after[i])).length;
+    if (plays > 0) {
+      out.push(scoreHint(view, seat, hand, touched, before, after, plays, { hintType: 'number', value: n }));
     }
   }
-  return null;
+  return out;
+}
+
+// The best valid play hint for `seat`, or null. Colour hints outrank number
+// hints as a class (they leave a lasting pending-target obligation); the
+// score picks the best option *within* the class. Ties keep the first
+// candidate in enumeration order, so the choice is deterministic.
+function findPlayHint(view, seat, conventions) {
+  let bestColor = null;
+  let bestNumber = null;
+  for (const cand of playHintCandidates(view, seat, conventions)) {
+    if (cand.hint.hintType === 'color') {
+      if (!bestColor || cand.score > bestColor.score) bestColor = cand;
+    } else if (!bestNumber || cand.score > bestNumber.score) {
+      bestNumber = cand;
+    }
+  }
+  const best = bestColor || bestNumber;
+  return best && best.hint;
 }
 
 // Any legal hint that changes as little as possible: prefer re-hinting a
@@ -423,7 +482,7 @@ export function decide(view, conventions = STANDARD_CONVENTIONS) {
     for (let step = 1; step < view.players.length; step++) {
       const idx = (me + step) % view.players.length;
       if (hasPendingPlay(view, idx, conventions)) continue; // they already have a play
-      const hint = findColorPlayHint(view, idx) || findNumberPlayHint(view, idx, conventions);
+      const hint = findPlayHint(view, idx, conventions);
       if (hint) {
         return {
           action: { type: 'hint', toPlayerIndex: idx, ...hint },

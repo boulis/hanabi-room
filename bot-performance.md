@@ -126,3 +126,36 @@ rainbowCriticalBlackReverse/35        2 20.50     5   31        0      6        
 rainbowCriticalBlackReverse/35        3 26.28    10   34        0      1           0.78
 rainbowCriticalBlackReverse/35        4 26.58     9   33        0      1           0.92
 ```
+
+## 1.4 — scored hint selection
+
+Hint-giving now enumerates *every* valid play hint for a receiver and scores
+the options instead of taking the first that works. The score counts the
+plays the hint causes, how soon each touched card can matter (playable now >
+next in line > distant — newly cluing a distant card scores negative), raw
+information (candidate identities eliminated), and penalises touching
+useless or already-clued-elsewhere duplicates. Colour hints still outrank
+number hints as a class — experiments showed that ordering is load-bearing —
+so the score picks the best option within the class.
+
+Modest net gain, verified at 150 seeds/row against 1.3 to get above the
+noise: +0.12 avg per row, positive on 11 of 15 rows (best: reverse-black 3p
++0.49, rainbowCritical 4p +0.38).
+
+```
+simple/25                             2 19.90     7   25        5      0           0.14
+simple/25                             3 22.68    13   25       10      0           0.20
+simple/25                             4 23.54    18   25       18      0           0.38
+rainbow/30                            2 22.14     9   28        0      0           0.12
+rainbow/30                            3 25.98    12   30        9      0           0.38
+rainbow/30                            4 27.36    22   30        8      0           0.38
+rainbowCritical/30                    2 21.22     9   29        0      0           0.10
+rainbowCritical/30                    3 26.18     7   30        3      0           0.28
+rainbowCritical/30                    4 25.58    11   30        2      0           0.40
+rainbowCriticalBlack/35               2 22.88     7   32        0      0           0.36
+rainbowCriticalBlack/35               3 29.00    14   35        3      1           0.30
+rainbowCriticalBlack/35               4 27.80    10   34        0      2           0.54
+rainbowCriticalBlackReverse/35        2 20.30     5   30        0      5           0.92
+rainbowCriticalBlackReverse/35        3 26.82    10   34        0      2           0.76
+rainbowCriticalBlackReverse/35        4 26.42    12   34        0      1           0.96
+```
