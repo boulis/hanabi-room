@@ -3,17 +3,19 @@ import assert from 'node:assert/strict';
 import { createInitialState } from './game.js';
 import { discardAction, hintAction, playAction } from './rules.js';
 import { viewState } from './view.js';
-import { decide } from './botBrain.js';
+import { decide, handCombos } from './botBrain.js';
 
 const COLORS = ['red', 'yellow', 'green', 'blue', 'white'];
 const DIST = [1, 1, 1, 2, 2, 3, 3, 4, 4, 5];
 
 // Build a full 50-card draw order where player 0 gets p0[i] and player 1 gets
-// p1[i] (dealing is round-robin), and the rest of the deck is whatever the
-// variant multiset still owes, in a stable order.
+// p1[i] (dealing is round-robin), opts.next (if given) is drawn first after
+// the deal, and the rest of the deck is whatever the variant multiset still
+// owes, in a stable order.
 function craftedState(p0, p1, opts = {}) {
   const drawOrder = [];
   for (let i = 0; i < 5; i++) drawOrder.push(p0[i], p1[i]);
+  drawOrder.push(...(opts.next || []));
   const owed = new Map();
   for (const color of COLORS) {
     for (const n of DIST) {
@@ -183,6 +185,24 @@ test('bot: counts visible copies to pin a hinted card as playable', () => {
   // rule red out and prove its 2 is playable.
   const { action, reason } = decide(viewState(s, 1));
   assert.deepEqual(action, { type: 'play', cardIndex: 0 }, reason);
+});
+
+test('bot: a card pinned to one identity claims a copy other cards cannot be', () => {
+  const s = craftedState(
+    ['red_4', 'yellow_4', 'blue_3', 'green_2', 'white_2'],
+    ['red_4', 'green_3', 'yellow_2', 'white_3', 'blue_1'],
+    { next: ['yellow_4'] },
+  );
+  hintAction(s, 0, 1, 'color', 'red'); // index 0 → colours {red}
+  playAction(s, 1, 4);                 // blue_1 plays; draws yellow_4 at index 4
+  hintAction(s, 0, 1, 'number', 4);    // touches 0 and 4; index 0 now pinned red_4
+  const combos = handCombos(viewState(s, 1), 1);
+  assert.deepEqual(combos[0], [['red', 4]]);
+  // Index 4 was drawn after the red hint, so hints alone leave all 5 colours
+  // possible. But index 0 claims one red_4 and player 0 holds the other —
+  // cross-card elimination must rule red out.
+  assert.equal(combos[4].length, 4);
+  assert.ok(combos[4].every(([color]) => color !== 'red'), 'red_4 fully claimed');
 });
 
 // Bots playing whole games against each other: the strongest regression net —

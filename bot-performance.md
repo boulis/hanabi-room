@@ -64,3 +64,31 @@ rainbowCriticalBlackReverse/35        2 19.40    10   29        0      0        
 rainbowCriticalBlackReverse/35        3 26.22    16   32        0      0           0.12
 rainbowCriticalBlackReverse/35        4 27.98    12   34        0      0           0.38
 ```
+
+## 1.2 — cross-card elimination in the own hand
+
+A card whose candidates narrow to a single identity claims one copy of it;
+when the claimed copies plus the visible ones account for every copy in the
+deck, that identity is ruled out for the other cards in the hand. Iterated to
+a fixpoint, so one pin can cascade into another. Applies to the giver-side
+receiver simulation too.
+
+Small but broad gains over 1.1 on almost every row.
+
+```
+simple/25                             2 19.16    13   25        3      0           0.00
+simple/25                             3 23.58    18   25       25      0           0.18
+simple/25                             4 23.20    19   25       15      0           0.24
+rainbow/30                            2 21.54    13   30        1      0           0.10
+rainbow/30                            3 26.58    12   30        4      0           0.22
+rainbow/30                            4 26.96    10   30        9      1           0.46
+rainbowCritical/30                    2 19.66     9   29        0      0           0.02
+rainbowCritical/30                    3 26.14    21   30        5      0           0.18
+rainbowCritical/30                    4 25.34    16   30        3      0           0.38
+rainbowCriticalBlack/35               2 20.80    10   30        0      0           0.24
+rainbowCriticalBlack/35               3 27.40    17   35        2      0           0.14
+rainbowCriticalBlack/35               4 27.62    18   33        0      0           0.46
+rainbowCriticalBlackReverse/35        2 19.26     9   31        0      0           0.14
+rainbowCriticalBlackReverse/35        3 26.32    16   32        0      0           0.14
+rainbowCriticalBlackReverse/35        4 28.06    12   34        0      0           0.36
+```

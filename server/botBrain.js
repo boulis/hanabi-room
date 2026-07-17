@@ -6,7 +6,7 @@ import { getVariant } from './variants.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '1.1';
+export const BOT_VERSION = '1.2';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -108,7 +108,35 @@ function deduceCombos(card, visible, totals) {
 function combosFor(view, hand, hiddenSeats) {
   const totals = deckCounts(view);
   const visible = visibleCounts(view, hiddenSeats);
-  return hand.map((card) => deduceCombos(card, visible, totals));
+  let combos = hand.map((card) => deduceCombos(card, visible, totals));
+  // Cross-card elimination: a card pinned to a single identity claims one
+  // copy of it. When the claimed copies plus the visible ones account for
+  // every copy, that identity is ruled out for the rest of the hand. Each
+  // pass can pin new cards, so iterate to a fixpoint (at most one new pin
+  // per pass bounds the loop by the hand size).
+  for (let pass = 0; pass < hand.length; pass++) {
+    const pinned = new Map();
+    for (const cs of combos) {
+      if (cs.length !== 1) continue;
+      const k = `${cs[0][0]}_${cs[0][1]}`;
+      pinned.set(k, (pinned.get(k) || 0) + 1);
+    }
+    let changed = false;
+    combos = combos.map((cs) => {
+      if (cs.length <= 1) return cs;
+      const kept = cs.filter(([c, n]) => {
+        const k = `${c}_${n}`;
+        return (visible.get(k) || 0) + (pinned.get(k) || 0) < (totals.get(k) || 0);
+      });
+      // Never empty a card's candidates — inconsistency would mean a server
+      // bug; keeping the wider set just makes the bot less certain.
+      if (kept.length === 0 || kept.length === cs.length) return cs;
+      changed = true;
+      return kept;
+    });
+    if (!changed) break;
+  }
+  return combos;
 }
 
 // Candidate identities for every card in `seat`'s hand, as that player can
