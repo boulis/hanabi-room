@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node server/index.js",
     "bot": "node bot.mjs",
+    "benchmark": "node benchmark.mjs",
     "test": "node --test server/*.test.js"
   },
   "dependencies": {
