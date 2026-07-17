@@ -136,6 +136,55 @@ test('bot: at full tokens with nothing useful, stalls with a hint', () => {
   assert.equal(action.hintType, 'number', 'stall hints are number hints (keep)');
 });
 
+test('bot: remembers earlier colour hints, not just the latest', () => {
+  const s = craftedState(
+    ['yellow_4', 'blue_3', 'green_2', 'white_2', 'red_4'],
+    ['red_1', 'white_3', 'green_3', 'yellow_3', 'blue_4'],
+  );
+  hintAction(s, 0, 1, 'color', 'red');   // marks red_1 (index 0) for play
+  hintAction(s, 1, 0, 'number', 4);      // stall back
+  hintAction(s, 0, 1, 'number', 3);      // save: touches indexes 1-3
+  hintAction(s, 1, 0, 'number', 4);
+  hintAction(s, 0, 1, 'color', 'white'); // pins index 1 as white_3 — not playable
+  // The latest colour hint's target is provably unplayable; the earlier red
+  // hint's target must still be honoured instead of being forgotten.
+  const { action, reason } = decide(viewState(s, 1));
+  assert.deepEqual(action, { type: 'play', cardIndex: 0 }, reason);
+});
+
+test('bot: colour hint that reveals another card cancels the newest-touched play', () => {
+  const s = craftedState(
+    ['yellow_4', 'blue_3', 'green_2', 'white_2', 'blue_4'],
+    ['red_5', 'green_3', 'yellow_3', 'blue_3', 'red_2'],
+  );
+  hintAction(s, 0, 1, 'number', 5);    // touches index 0 only → "a 5"
+  hintAction(s, 1, 0, 'number', 4);    // stall back
+  hintAction(s, 0, 1, 'color', 'red'); // touches 0 and 4 → index 0 now known red_5
+  // The hint fully identified index 0 (a reveal), so the newest touched card
+  // (index 4, red_2 — a guaranteed misplay) carries no play promise.
+  const { action, reason } = decide(viewState(s, 1));
+  assert.notEqual(action.type, 'play', `should not gamble on the newest touched card (got: ${reason})`);
+});
+
+test('bot: counts visible copies to pin a hinted card as playable', () => {
+  const s = craftedState(
+    ['yellow_1', 'green_1', 'blue_1', 'white_1', 'red_2'],
+    ['yellow_2', 'red_3', 'green_4', 'blue_4', 'white_4'],
+  );
+  // Player 0 plays their four 1s (bot stalls in between): every pile except
+  // red is at 1, and player 0 draws into [red_2, red_1, red_1, red_1, red_2].
+  for (let i = 0; i < 4; i++) {
+    playAction(s, 0, 0);
+    hintAction(s, 1, 0, 'number', 1);
+  }
+  hintAction(s, 0, 1, 'number', 2); // touches index 0 only
+  // Constraints alone leave {any colour} × {2}, and red_2 isn't playable —
+  // but both remaining red 2s are visible in player 0's hand, so the bot can
+  // rule red out and prove its 2 is playable.
+  const { action, reason } = decide(viewState(s, 1));
+  assert.deepEqual(action, { type: 'play', cardIndex: 0 }, reason);
+});
+
 // Bots playing whole games against each other: the strongest regression net —
 // every rule interacts, and the game must actually end without the brain ever
 // proposing an illegal action (rules.js throws on those).
