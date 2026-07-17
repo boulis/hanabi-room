@@ -518,7 +518,8 @@ input, select {
   position: fixed;
   z-index: 90;
   pointer-events: none;
-  animation: hint-fly 1.5s cubic-bezier(0.35, 0, 0.25, 1) forwards;
+  /* "both" keeps staggered discs hidden during their animation-delay. */
+  animation: hint-fly 1.5s cubic-bezier(0.35, 0, 0.25, 1) both;
 }
 .hint-fly .latest-hint-chip {
   width: 56px;

@@ -361,9 +361,10 @@ function maybeAnimateAction(v) {
   requestAnimationFrame(() => animateLeavingCard(v, latest));
 }
 
-// A hint flies as a large chip (colour disc or number) from the hinter's row
-// to the receiver's — landing on the touched cards — then fades. Makes "who
-// hinted whom" legible without reading the latest-action panel.
+// A hint flies as large chips (colour discs or numbers) from the hinter's row
+// to the receiver's — one chip per touched card, fanning out from a single
+// launch point to land on each card — then fades. Makes "who hinted whom" and
+// "which cards" legible without reading the latest-action panel.
 function animateHint(latest) {
   const rows = document.querySelectorAll('#game-hands .player-row');
   const from = rows[latest.fromIndex];
@@ -373,30 +374,35 @@ function animateHint(latest) {
   const startX = fr.left + fr.width / 2;
   const startY = fr.top + fr.height / 2;
 
-  // Land on the newest touched card (the one the conventions mark for play);
-  // fall back to the row centre (e.g. an allowed empty hint touches nothing).
-  const tr = to.getBoundingClientRect();
-  let endX = tr.left + tr.width / 2;
-  let endY = tr.top + tr.height / 2;
+  // One landing spot per touched card; fall back to the row centre (e.g. an
+  // allowed empty hint touches nothing).
   const cards = to.querySelectorAll('.hand > *');
-  const newest = Math.max(...(latest.touchedIndexes || [-1]));
-  const target = newest >= 0 ? cards[newest] : null;
-  if (target) {
-    const r = target.getBoundingClientRect();
-    endX = r.left + r.width / 2;
-    endY = r.top + r.height / 2;
+  const targets = (latest.touchedIndexes || [])
+    .map((i) => cards[i])
+    .filter(Boolean)
+    .map((card) => {
+      const r = card.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+  if (targets.length === 0) {
+    const tr = to.getBoundingClientRect();
+    targets.push({ x: tr.left + tr.width / 2, y: tr.top + tr.height / 2 });
   }
 
   const SIZE = 56; // keep in sync with .hint-fly .latest-hint-chip CSS
-  const fly = document.createElement('div');
-  fly.className = 'hint-fly';
-  fly.append(renderHintChip(latest.hintType, latest.value));
-  fly.style.left = `${startX - SIZE / 2}px`;
-  fly.style.top = `${startY - SIZE / 2}px`;
-  fly.style.setProperty('--fly-x', `${endX - startX}px`);
-  fly.style.setProperty('--fly-y', `${endY - startY}px`);
-  document.body.append(fly);
-  setTimeout(() => fly.remove(), 1600);
+  const STAGGER = 70; // ms between discs, so the fan-out reads as several
+  targets.forEach((t, i) => {
+    const fly = document.createElement('div');
+    fly.className = 'hint-fly';
+    fly.append(renderHintChip(latest.hintType, latest.value));
+    fly.style.left = `${startX - SIZE / 2}px`;
+    fly.style.top = `${startY - SIZE / 2}px`;
+    fly.style.setProperty('--fly-x', `${t.x - startX}px`);
+    fly.style.setProperty('--fly-y', `${t.y - startY}px`);
+    fly.style.animationDelay = `${i * STAGGER}ms`;
+    document.body.append(fly);
+    setTimeout(() => fly.remove(), 1600 + i * STAGGER);
+  });
 
   // Pulse the receiver's row as the chip arrives.
   setTimeout(() => {
