@@ -10,7 +10,7 @@
 import { createInitialState } from './server/game.js';
 import { discardAction, hintAction, playAction } from './server/rules.js';
 import { viewState } from './server/view.js';
-import { decide } from './server/botBrain.js';
+import * as brain from './server/botBrain.js';
 import { VARIANTS } from './server/variants.js';
 
 function flag(name, fallback) {
@@ -29,7 +29,7 @@ function playOut(variantId, playerCount, seed) {
   let guard = 0;
   while (state.status === 'playing' && guard++ < 1000) {
     const idx = state.currentPlayer;
-    const { action } = decide(viewState(state, idx));
+    const { action } = brain.decide(viewState(state, idx));
     switch (action.type) {
       case 'play': playAction(state, idx, action.cardIndex); break;
       case 'discard': discardAction(state, idx, action.cardIndex); break;
@@ -42,7 +42,7 @@ function playOut(variantId, playerCount, seed) {
 }
 
 const started = Date.now();
-console.log(`${seeds} seeds per row, end rule: ${endRule}\n`);
+console.log(`bot ${brain.BOT_VERSION ?? '1.0'} — ${seeds} seeds per row, end rule: ${endRule}\n`);
 console.log(
   'variant'.padEnd(31), 'players', '  avg', '  min', ' max', ' perfect', ' fused', ' misplays/game',
 );

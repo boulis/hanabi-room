@@ -4,6 +4,10 @@
 // it. Transport lives in bot.mjs.
 import { getVariant } from './variants.js';
 
+// Bumped on every change to the decision logic; bot-performance.md records
+// what each version does and the benchmark numbers it achieves.
+export const BOT_VERSION = '1.1';
+
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
 export const STANDARD_CONVENTIONS = {
