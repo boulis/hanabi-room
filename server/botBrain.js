@@ -6,7 +6,7 @@ import { getVariant } from './variants.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '1.2';
+export const BOT_VERSION = '1.3';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -19,6 +19,9 @@ export const STANDARD_CONVENTIONS = {
   colorHintPlaysNewest: true,
   // A number hint means "keep these" unless a card is provably playable.
   numberHintSaves: true,
+  // Exception to the above: a "1" hint asks for every touched card to be
+  // played (oldest first), as long as the card can still be a playable 1.
+  playAllOnes: true,
   // The chop (default discard) is the oldest untouched card.
   discardOldestUntouched: true,
 };
@@ -197,6 +200,20 @@ export function colorPlayTargets(hand, combosBySlot) {
   return targets;
 }
 
+// Cards obligated by the play-all-1s convention: touched by a "1" hint at
+// some point (numberClued with possibleNumbers narrowed to exactly [1]).
+// Constraint-based rather than marker-based on purpose — playing the first 1
+// consumes the hint's markers on the others, but the obligation persists.
+function onesObligations(hand) {
+  const out = [];
+  hand.forEach((card, i) => {
+    if (card.numberClued && card.possibleNumbers.length === 1 && card.possibleNumbers[0] === 1) {
+      out.push(i);
+    }
+  });
+  return out;
+}
+
 // A visible card worth saving: still needed, and every other copy has been
 // discarded (played copies would make it useless, handled above).
 function isCritical(view, card) {
@@ -246,11 +263,17 @@ function afterNumberHint(hand, value) {
 }
 
 // Would this player, following the conventions, already play something on
-// their own? (Known-playable card or a live colour-hint target.)
-function hasPendingPlay(view, seat) {
+// their own? (Known-playable card, a live colour-hint target, or a 1s
+// obligation that can still be playable.)
+function hasPendingPlay(view, seat, conventions = STANDARD_CONVENTIONS) {
   const hand = view.players[seat].hand;
   const combos = handCombos(view, seat);
   if (combos.some((cs) => knownPlayable(view, cs))) return true;
+  if (conventions.playAllOnes) {
+    const ones = onesObligations(hand);
+    if (!ones.some((i) => combos[i].length === 1)
+      && ones.some((i) => possiblyPlayable(view, combos[i]))) return true;
+  }
   return colorPlayTargets(hand, combos).some((t) => possiblyPlayable(view, combos[t]));
 }
 
@@ -279,12 +302,38 @@ function findColorPlayHint(view, seat) {
   return null;
 }
 
-// A number hint works as a play hint only when it makes some touched card
-// provably playable (the receiver keeps number-hinted cards otherwise).
-function findNumberPlayHint(view, seat) {
+// A number hint works as a play hint when it makes some touched card provably
+// playable — or, for a "1" hint under the play-all-1s convention, when every
+// touched 1 the receiver would go on to play really is playable (and they're
+// all different colours, so the plays can't collide).
+function findNumberPlayHint(view, seat, conventions) {
   const hand = view.players[seat].hand;
   for (const n of [...new Set(hand.map((c) => c.number))]) {
     const after = combosFor(view, afterNumberHint(hand, n), [seat, view.viewerIndex]);
+    if (n === 1 && conventions.playAllOnes) {
+      const touched = hand.map((c, i) => ({ c, i })).filter(({ c }) => c.number === 1);
+      const wouldPlay = touched.filter(({ i }) => possiblyPlayable(view, after[i]));
+      // 1s already obligated in other visible hands — a second obligation on
+      // the same colour's 1 guarantees that one of the two plays misfires.
+      const obligatedElsewhere = new Set();
+      view.players.forEach((p, other) => {
+        if (other === seat || other === view.viewerIndex) return;
+        for (const i of onesObligations(p.hand)) obligatedElsewhere.add(p.hand[i].color);
+      });
+      const colors = new Set(wouldPlay.map(({ c }) => c.color));
+      const newlyObligated = touched.some(({ c }) => !(c.numberClued && c.possibleNumbers.length === 1));
+      if (
+        wouldPlay.length > 0
+        && newlyObligated
+        && colors.size === wouldPlay.length
+        && wouldPlay.every(({ c }) => isPlayable(view, c.color, c.number))
+        && wouldPlay.every(({ c }) => !obligatedElsewhere.has(c.color))
+        && !touched.some(({ i }) => after[i].length === 1) // would read as a reveal
+      ) {
+        return { hintType: 'number', value: 1 };
+      }
+      continue; // an unsafe "1" hint would trigger the convention anyway
+    }
     if (hand.some((c, i) => c.number === n && knownPlayable(view, after[i]))) {
       return { hintType: 'number', value: n };
     }
@@ -316,7 +365,7 @@ export function decide(view, conventions = STANDARD_CONVENTIONS) {
   if (view.hintTokens > 0 && conventions.numberHintSaves) {
     const next = view.players[nextIndex];
     const chop = chopIndex(next.hand);
-    if (chop >= 0 && isCritical(view, next.hand[chop]) && !hasPendingPlay(view, nextIndex)) {
+    if (chop >= 0 && isCritical(view, next.hand[chop]) && !hasPendingPlay(view, nextIndex, conventions)) {
       urgentSave = {
         action: { type: 'hint', toPlayerIndex: nextIndex, hintType: 'number', value: next.hand[chop].number },
         reason: `save ${next.hand[chop].color} ${next.hand[chop].number} on chop`,
@@ -348,6 +397,23 @@ export function decide(view, conventions = STANDARD_CONVENTIONS) {
     }
   }
 
+  // 2b. Play-all-1s: every card touched by a "1" hint is to be played,
+  //     oldest first, while it can still be a playable 1. Reveal exception,
+  //     as with colour hints: once any obligated 1 is pinned to a single
+  //     identity, the 1s read as information (e.g. "that's the dead
+  //     duplicate"), not as a play order.
+  if (conventions.playAllOnes) {
+    const ones = onesObligations(myHand);
+    if (!ones.some((i) => myCombos[i].length === 1)) {
+      for (const i of ones) {
+        const safeEnough = lastFuse ? knownPlayable(view, myCombos[i]) : possiblyPlayable(view, myCombos[i]);
+        if (safeEnough) {
+          return { action: { type: 'play', cardIndex: i }, reason: 'play all 1s' };
+        }
+      }
+    }
+  }
+
   // 3. Final-round case: nothing of our own to play after all, so the save
   //    (deferred at step 0) is back on the table.
   if (urgentSave) return urgentSave;
@@ -356,8 +422,8 @@ export function decide(view, conventions = STANDARD_CONVENTIONS) {
     // 4. Give a play hint (closest player first; colour hints preferred).
     for (let step = 1; step < view.players.length; step++) {
       const idx = (me + step) % view.players.length;
-      if (hasPendingPlay(view, idx)) continue; // they already have a play
-      const hint = findColorPlayHint(view, idx) || findNumberPlayHint(view, idx);
+      if (hasPendingPlay(view, idx, conventions)) continue; // they already have a play
+      const hint = findColorPlayHint(view, idx) || findNumberPlayHint(view, idx, conventions);
       if (hint) {
         return {
           action: { type: 'hint', toPlayerIndex: idx, ...hint },

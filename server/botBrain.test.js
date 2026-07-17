@@ -187,6 +187,26 @@ test('bot: counts visible copies to pin a hinted card as playable', () => {
   assert.deepEqual(action, { type: 'play', cardIndex: 0 }, reason);
 });
 
+test('bot: a "1" hint means play every touched 1 that can still be playable', () => {
+  const s = craftedState(
+    ['red_1', 'yellow_3', 'blue_3', 'green_4', 'white_4'],
+    ['white_2', 'yellow_1', 'blue_2', 'green_1', 'blue_4'],
+  );
+  playAction(s, 0, 0);                 // red pile at 1 → a red 1 is now dead
+  hintAction(s, 1, 0, 'number', 3);    // stall back
+  hintAction(s, 0, 1, 'number', 1);    // touches indexes 1 and 3
+  // Neither 1 is *provably* playable (each could be the dead red 1), but the
+  // convention says play them all, oldest first.
+  const first = decide(viewState(s, 1));
+  assert.deepEqual(first.action, { type: 'play', cardIndex: 1 }, first.reason);
+  playAction(s, 1, 1);                 // yellow_1 plays; hint markers consumed
+  discardAction(s, 0, 4);
+  // The second 1 (now index 2) must still be obligated even though playing
+  // the first one consumed the hint's markers.
+  const second = decide(viewState(s, 1));
+  assert.deepEqual(second.action, { type: 'play', cardIndex: 2 }, second.reason);
+});
+
 test('bot: a card pinned to one identity claims a copy other cards cannot be', () => {
   const s = craftedState(
     ['red_4', 'yellow_4', 'blue_3', 'green_2', 'white_2'],

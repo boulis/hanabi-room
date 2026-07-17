@@ -92,3 +92,37 @@ rainbowCriticalBlackReverse/35        2 19.26     9   31        0      0        
 rainbowCriticalBlackReverse/35        3 26.32    16   32        0      0           0.14
 rainbowCriticalBlackReverse/35        4 28.06    12   34        0      0           0.36
 ```
+
+## 1.3 — play-all-1s convention
+
+A "1" hint asks the receiver to play *every* touched card, oldest first, as
+long as each can still be a playable 1 (tracked by constraints, so the
+obligation survives the marker consumption that playing the first 1 causes).
+Reveal exception as with colour hints: if any obligated 1 is pinned to a
+single identity, the 1s read as information (e.g. "that's the dead
+duplicate"), not a play order. The giver only gives a "1" hint when every 1
+the receiver would play really is playable, all different colours, and no
+other visible hand already has the same colour's 1 obligated.
+
+Big 2-player gains (rainbow +1.6, rainbowCriticalBlack +2.2 vs 1.2) and a
+jump at rainbowCriticalBlack 3p (+2.1). The reverse-black variant regresses
+slightly with more misplays — 1s are end-of-pile cards there, so the
+convention gambles more.
+
+```
+simple/25                             2 19.62     7   25        4      1           0.16
+simple/25                             3 23.12    13   25       20      0           0.26
+simple/25                             4 23.38    18   25       17      0           0.36
+rainbow/30                            2 23.14    16   30        1      0           0.12
+rainbow/30                            3 26.66    12   30       10      0           0.34
+rainbow/30                            4 26.98     8   30        6      0           0.44
+rainbowCritical/30                    2 21.34    11   30        1      0           0.08
+rainbowCritical/30                    3 26.24    10   30        5      0           0.24
+rainbowCritical/30                    4 25.28    11   30        3      0           0.38
+rainbowCriticalBlack/35               2 22.96     7   31        0      0           0.24
+rainbowCriticalBlack/35               3 29.46    23   34        0      0           0.24
+rainbowCriticalBlack/35               4 28.08     8   34        0      1           0.52
+rainbowCriticalBlackReverse/35        2 20.50     5   31        0      6           0.94
+rainbowCriticalBlackReverse/35        3 26.28    10   34        0      1           0.78
+rainbowCriticalBlackReverse/35        4 26.58     9   33        0      1           0.92
+```
