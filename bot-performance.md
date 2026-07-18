@@ -196,3 +196,44 @@ rainbowCriticalBlackReverse/35        2 22.84     3   30        0      1        
 rainbowCriticalBlackReverse/35        3 28.36     9   34        0      1           0.40
 rainbowCriticalBlackReverse/35        4 28.30    10   33        0      0           0.40
 ```
+
+## 1.6 — endgame search
+
+Once the deck is empty, the unseen multiset is exactly the bot's own hand —
+so over the last few cards (≤6 across all hands) the bot enumerates every
+consistent assignment ("world", capped at 16), simulates each legal action to
+the end of the game with the real rules engine (teammates modelled as this
+same bot), and takes the action with the best worst-case outcome, average as
+tie-break. Evaluation is final score minus a point per fuse burned — plain
+average-maximizing turned the bot into a gambler (misplays tripled, fuse-outs
+everywhere) because a lost fuse is free in raw score until the third one.
+Everything is computed from the view plus the public rules; hidden state is
+never consulted.
+
+A visible quirk: the search sometimes *deliberately* misplays a known-dead
+card when tokens are full — in lax mode that's a discard substitute that
+buys tempo — so the misplays/game stat rises while scores improve. Verified
+at 150 seeds/row against 1.5: +0.10 avg per row, positive or neutral on 12
+of 15 rows, strongest exactly where endgames are tightest (the two black
+variants, +0.12 to +0.34). Benchmark runtime roughly doubles (still ~13s).
+
+Note: this table's misplay/fused columns read worse than 1.5's; the score
+columns are the ones that matter (see above for why).
+
+```
+simple/25                             2 21.44    16   25        6      1           0.48
+simple/25                             3 22.76    14   25       13      0           0.42
+simple/25                             4 23.18    20   25       12      0           0.52
+rainbow/30                            2 23.48    17   28        0      0           0.60
+rainbow/30                            3 27.28    22   30       10      1           0.72
+rainbow/30                            4 26.90    16   30        7      1           0.52
+rainbowCritical/30                    2 22.48    15   30        1      1           0.52
+rainbowCritical/30                    3 25.22    14   30        2      1           0.94
+rainbowCritical/30                    4 25.16    11   29        0      0           0.76
+rainbowCriticalBlack/35               2 23.72    14   31        0      4           1.12
+rainbowCriticalBlack/35               3 29.14    13   34        0      0           0.90
+rainbowCriticalBlack/35               4 29.12    10   34        0      2           0.96
+rainbowCriticalBlackReverse/35        2 22.84     3   30        0      1           0.84
+rainbowCriticalBlackReverse/35        3 28.52    10   34        0      5           1.28
+rainbowCriticalBlackReverse/35        4 28.34    10   33        0      2           0.92
+```

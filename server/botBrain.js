@@ -1,12 +1,16 @@
 // Decision logic for the built-in Hanabi bot. Pure: takes the same filtered
 // view a human client renders (own cards hidden, constraints visible) and
 // returns one action. The bot cannot cheat — hidden information never reaches
-// it. Transport lives in bot.mjs.
+// it: the endgame search below simulates with the public rules over worlds
+// hypothesised from the view, never from actual hidden state. Transport lives
+// in bot.mjs.
 import { getVariant } from './variants.js';
+import { discardAction, hintAction, playAction } from './rules.js';
+import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '1.5';
+export const BOT_VERSION = '1.6';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -66,15 +70,20 @@ function isUseless(view, color, number) {
 // identity whose every copy is already visible to the deducing player —
 // played, discarded, or sitting in a hand they can see — can't be this card.
 
-// Copies of each identity in the variant's full deck.
+// Copies of each identity in the variant's full deck (memoized — the search
+// rollouts call this on every simulated turn).
+const deckCountsCache = new Map();
 function deckCounts(view) {
-  const totals = new Map();
+  let totals = deckCountsCache.get(view.variantId);
+  if (totals) return totals;
+  totals = new Map();
   for (const suit of getVariant(view.variantId).suits) {
     for (const n of suit.distribution) {
       const k = `${suit.color}_${n}`;
       totals.set(k, (totals.get(k) || 0) + 1);
     }
   }
+  deckCountsCache.set(view.variantId, totals);
   return totals;
 }
 
@@ -458,6 +467,20 @@ function findStallHint(view, hand) {
 // view: an in-room playing view where view.currentPlayer === view.viewerIndex.
 // Returns { action, reason }.
 export function decide(view, conventions = STANDARD_CONVENTIONS) {
+  // With the deck empty the endgame is exactly computable (see below); use
+  // the search over the last few cards, where the uncertainty is small
+  // enough to enumerate and the rollouts are short enough to afford.
+  const cardsLeft = view.players.reduce((sum, p) => sum + p.hand.length, 0);
+  if (view.deckSize === 0 && cardsLeft <= 6 && view.players[view.viewerIndex].hand.length > 0) {
+    const searched = endgameSearch(view, conventions);
+    if (searched) return searched;
+  }
+  return decideCore(view, conventions);
+}
+
+// The convention-following policy: used directly during the main game, and as
+// the rollout policy (for ourselves and for teammates) inside the search.
+function decideCore(view, conventions = STANDARD_CONVENTIONS) {
   const me = view.viewerIndex;
   const myHand = view.players[me].hand;
   const myCombos = handCombos(view, me);
@@ -587,4 +610,198 @@ export function decide(view, conventions = STANDARD_CONVENTIONS) {
     }
   }
   return { action: { type: 'play', cardIndex: myHand.length - 1 }, reason: 'forced play' };
+}
+
+// --- Endgame search. ---
+// Once the deck is empty the game is fully determined up to the identity of
+// our own hand: everyone else's cards are visible, and the unseen multiset
+// (the full deck minus piles, discard, and visible hands) is exactly our
+// hand. When the consistent assignments ("worlds") are few enough, simulate
+// every legal action to the end of the game — teammates modelled as this
+// same bot — and take the action with the best average final score.
+
+const SEARCH_MAX_WORLDS = 16;
+const SEARCH_MAX_SIMS = 160;
+
+// All assignments of the unseen multiset to our hand slots that respect each
+// slot's deduced candidates; null when there are too many to search.
+function enumerateWorlds(view, myCombos) {
+  const me = view.viewerIndex;
+  const totals = deckCounts(view);
+  const visible = visibleCounts(view, [me]);
+  const remaining = new Map();
+  for (const [k, total] of totals) {
+    if (total - (visible.get(k) || 0) > 0) remaining.set(k, total - (visible.get(k) || 0));
+  }
+  const slots = view.players[me].hand.length;
+  const worlds = [];
+  const acc = [];
+  const dfs = (slot) => {
+    if (worlds.length > SEARCH_MAX_WORLDS) return;
+    if (slot === slots) {
+      worlds.push(acc.slice());
+      return;
+    }
+    for (const [color, number] of myCombos[slot]) {
+      const k = `${color}_${number}`;
+      const left = remaining.get(k) || 0;
+      if (left === 0) continue;
+      remaining.set(k, left - 1);
+      acc.push([color, number]);
+      dfs(slot + 1);
+      acc.pop();
+      remaining.set(k, left + 1);
+    }
+  };
+  dfs(0);
+  return worlds.length > SEARCH_MAX_WORLDS ? null : worlds;
+}
+
+// A full rules-engine state built from the view plus one hypothesis for our
+// own hand. Everything in it is either public or hypothesised — the actual
+// hidden state is never consulted.
+function reconstructState(view, world) {
+  const me = view.viewerIndex;
+  let nextHintIndex = 0;
+  for (const p of view.players) {
+    for (const c of p.hand) {
+      for (const h of c.lastHints) nextHintIndex = Math.max(nextHintIndex, h.hintIndex + 1);
+    }
+  }
+  let nextId = 100000;
+  return {
+    status: 'playing',
+    variantId: view.variantId,
+    endRule: view.endRule,
+    shareGuarded: false,
+    allowEmptyHints: view.allowEmptyHints,
+    seed: 0,
+    players: view.players.map((p, seat) => ({
+      id: `sim${seat}`,
+      name: p.name,
+      hand: p.hand.map((c, i) => ({
+        id: c.id ?? nextId++,
+        color: seat === me ? world[i][0] : c.color,
+        number: seat === me ? world[i][1] : c.number,
+        possibleColors: c.possibleColors.slice(),
+        possibleNumbers: c.possibleNumbers.slice(),
+        colorClued: c.colorClued,
+        numberClued: c.numberClued,
+        lastHints: c.lastHints.map((h) => ({ ...h })),
+        annotations: { note: '', guarded: false },
+      })),
+    })),
+    deck: [],
+    discard: view.discard.map((c) => ({ ...c })),
+    playedPiles: Object.fromEntries(view.suits.map((s) => {
+      const pile = view.playedPiles[s.color];
+      const cards = [];
+      for (let i = 0; i < pile.count; i++) {
+        cards.push({ id: nextId++, color: s.color, number: s.direction === 'up' ? i + 1 : 5 - i });
+      }
+      return [s.color, cards];
+    })),
+    hintTokens: view.hintTokens,
+    fuseTokens: view.fuseTokens,
+    currentPlayer: view.currentPlayer,
+    turn: view.turn,
+    finalTurn: view.finalTurn,
+    log: [],
+    endReason: null,
+    nextHintIndex,
+    nextLogSeq: 0,
+    startedAt: 0,
+    endedAt: null,
+    initialDeckCards: [],
+  };
+}
+
+// Every action we could legally take right now, most promising classes
+// first (plays, then discards, then hints) so budget truncation keeps the
+// essential options.
+function candidateActions(view) {
+  const me = view.viewerIndex;
+  const out = [];
+  for (let i = 0; i < view.players[me].hand.length; i++) out.push({ type: 'play', cardIndex: i });
+  if (view.hintTokens < 8) {
+    for (let i = 0; i < view.players[me].hand.length; i++) out.push({ type: 'discard', cardIndex: i });
+  }
+  if (view.hintTokens > 0) {
+    for (let step = 1; step < view.players.length; step++) {
+      const idx = (me + step) % view.players.length;
+      const hand = view.players[idx].hand;
+      for (const color of view.hintableColors) {
+        if (colorHintTouches(view, hand, color).length > 0) {
+          out.push({ type: 'hint', toPlayerIndex: idx, hintType: 'color', value: color });
+        }
+      }
+      for (const n of [...new Set(hand.map((c) => c.number))]) {
+        out.push({ type: 'hint', toPlayerIndex: idx, hintType: 'number', value: n });
+      }
+    }
+  }
+  return out;
+}
+
+function applySim(state, idx, action) {
+  if (action.type === 'play') playAction(state, idx, action.cardIndex);
+  else if (action.type === 'discard') discardAction(state, idx, action.cardIndex);
+  else hintAction(state, idx, action.toPlayerIndex, action.hintType, action.value);
+}
+
+// Play a reconstructed state out to its end with the convention policy.
+// The evaluation is the final score minus a point per fuse burned along the
+// way: a lost fuse is "free" in raw score until the third one, so without
+// the penalty the search treats fuses as gambling chips — and three turns of
+// "free" gambles compound into fuse-outs the per-turn model never sees.
+function rolloutValue(state, conventions) {
+  const fusesBefore = state.fuseTokens;
+  let guard = 0;
+  while (state.status === 'playing' && guard++ < 60) {
+    const idx = state.currentPlayer;
+    applySim(state, idx, decideCore(viewState(state, idx), conventions).action);
+  }
+  const score = Object.values(state.playedPiles).reduce((sum, pile) => sum + pile.length, 0);
+  return score - (fusesBefore - state.fuseTokens);
+}
+
+// Maximin over worlds: a candidate is judged by its worst-case final score,
+// with the average as tie-break. Average-maximizing turned out to gamble
+// itself into fuse-outs — the model assumes future turns follow the safe
+// convention policy, but a real future turn would gamble again, compounding
+// risk the simulation never sees. Worst-case-first only accepts risks that
+// cost nothing in any consistent world.
+function endgameSearch(view, conventions) {
+  const worlds = enumerateWorlds(view, handCombos(view, view.viewerIndex));
+  if (!worlds || worlds.length === 0) return null;
+  const budget = Math.max(1, Math.floor(SEARCH_MAX_SIMS / worlds.length));
+  const candidates = candidateActions(view).slice(0, budget);
+  let best = null;
+  for (const action of candidates) {
+    let total = 0;
+    let worst = Infinity;
+    let ok = true;
+    for (const world of worlds) {
+      const state = reconstructState(view, world);
+      try {
+        applySim(state, view.viewerIndex, action);
+        const value = rolloutValue(state, conventions);
+        total += value;
+        worst = Math.min(worst, value);
+      } catch {
+        ok = false; // illegal in some world — not worth reasoning around
+        break;
+      }
+    }
+    if (!ok) continue;
+    const avg = total / worlds.length;
+    if (!best || worst > best.worst || (worst === best.worst && avg > best.avg)) {
+      best = { action, worst, avg };
+    }
+  }
+  if (!best) return null;
+  return {
+    action: best.action,
+    reason: `endgame search (${worlds.length} worlds, worst ${best.worst}, avg ${best.avg.toFixed(1)})`,
+  };
 }

@@ -279,6 +279,47 @@ test('bot: a card pinned to one identity claims a copy other cards cannot be', (
   assert.ok(combos[4].every(([color]) => color !== 'red'), 'red_4 fully claimed');
 });
 
+// A bare card for hand-built endgame states.
+function bareCard(id, color, number) {
+  return {
+    id, color, number,
+    possibleColors: COLORS.slice(), possibleNumbers: [1, 2, 3, 4, 5],
+    colorClued: false, numberClued: false, lastHints: [],
+    annotations: { note: '', guarded: false },
+  };
+}
+
+test('bot: endgame search plays into 50/50 odds instead of a losing discard', () => {
+  // Deck empty. Four piles complete; red pile empty. The bot holds the last
+  // red_1 and the last red_2 in unknown order — every other card is visible.
+  let id = 0;
+  const playedPiles = { red: [] };
+  const discard = [];
+  for (const color of ['yellow', 'green', 'blue', 'white']) {
+    playedPiles[color] = [1, 2, 3, 4, 5].map((n) => bareCard(id++, color, n));
+    for (const n of [1, 1, 2, 3, 4]) discard.push(bareCard(id++, color, n));
+  }
+  for (const n of [1, 1, 2, 3, 3, 4, 4, 5]) discard.push(bareCard(id++, 'red', n));
+  const s = {
+    status: 'playing', variantId: 'simple', endRule: 'lax',
+    shareGuarded: false, allowEmptyHints: false, seed: 1,
+    players: [
+      { id: 'a', name: 'Ann', hand: [] },
+      { id: 'b', name: 'Bot', hand: [bareCard(id++, 'red', 1), bareCard(id++, 'red', 2)] },
+    ],
+    deck: [], discard, playedPiles,
+    hintTokens: 0, fuseTokens: 3, currentPlayer: 1, turn: 40, finalTurn: null,
+    log: [], endReason: null, nextHintIndex: 0, nextLogSeq: 0,
+    startedAt: 0, endedAt: null, initialDeckCards: [],
+  };
+  // Conventions alone would discard the chop — a coin flip that kills the red
+  // pile on heads (discarding the last red_1 caps it at 0). The search sees
+  // that playing averages 21.5 against at most 20.5 for a discard.
+  const { action, reason } = decide(viewState(s, 1));
+  assert.ok(reason.startsWith('endgame search'), `expected a searched decision (got: ${reason})`);
+  assert.equal(action.type, 'play', reason);
+});
+
 // Bots playing whole games against each other: the strongest regression net —
 // every rule interacts, and the game must actually end without the brain ever
 // proposing an illegal action (rules.js throws on those).
