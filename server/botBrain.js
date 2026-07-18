@@ -6,7 +6,7 @@ import { getVariant } from './variants.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '1.4';
+export const BOT_VERSION = '1.5';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -282,7 +282,8 @@ function hasPendingPlay(view, seat, conventions = STANDARD_CONVENTIONS) {
 // be kept and eventually played), then raw information (candidate identities
 // eliminated across the hand); touching a useless card costs — it gets a
 // keep-clue it doesn't deserve and clogs the hand.
-function scoreHint(view, seat, hand, touched, before, after, plays, hint) {
+function scoreHint(view, seat, hand, touched, before, after, playIdxs, hint) {
+  const plays = playIdxs.length;
   let info = 0;
   for (let i = 0; i < hand.length; i++) info += before[i].length - after[i].length;
   // Identities already clued somewhere visible: touching another copy of one
@@ -318,7 +319,7 @@ function scoreHint(view, seat, hand, touched, before, after, plays, hint) {
   // Colour hints get a small edge: beyond the immediate play they leave a
   // pending-target obligation and colour identity that keeps paying off.
   const colorBonus = hint.hintType === 'color' ? 50 : 0;
-  return { hint, score: plays * 1000 + value + info + colorBonus - bad * 200 };
+  return { hint, playIdxs, score: plays * 1000 + value + info + colorBonus - bad * 200 };
 }
 
 // Every hint to `seat` that the receiver, reading it by the conventions,
@@ -338,15 +339,15 @@ function playHintCandidates(view, seat, conventions) {
     const touched = colorHintTouches(view, hand, color);
     if (touched.length === 0) continue;
     const after = combosFor(view, afterColorHint(view, hand, color), [seat, view.viewerIndex]);
-    let plays = touched.filter(({ i }) => knownPlayable(view, after[i])).length;
-    if (plays === 0) {
+    let playIdxs = touched.filter(({ i }) => knownPlayable(view, after[i])).map(({ i }) => i);
+    if (playIdxs.length === 0) {
       const newest = touched[touched.length - 1];
       if (!isPlayable(view, newest.card.color, newest.card.number)) continue;
       if (touched.some(({ i }) => i !== newest.i && after[i].length === 1)) continue;
       if (pending.includes(newest.i)) continue; // already their live target
-      plays = 1;
+      playIdxs = [newest.i];
     }
-    out.push(scoreHint(view, seat, hand, touched, before, after, plays, { hintType: 'color', value: color }));
+    out.push(scoreHint(view, seat, hand, touched, before, after, playIdxs, { hintType: 'color', value: color }));
   }
   for (const n of [...new Set(hand.map((c) => c.number))]) {
     const after = combosFor(view, afterNumberHint(hand, n), [seat, view.viewerIndex]);
@@ -370,13 +371,13 @@ function playHintCandidates(view, seat, conventions) {
         && wouldPlay.every(({ card }) => !obligatedElsewhere.has(card.color))
         && !touched.some(({ i }) => after[i].length === 1) // would read as a reveal
       ) {
-        out.push(scoreHint(view, seat, hand, touched, before, after, wouldPlay.length, { hintType: 'number', value: 1 }));
+        out.push(scoreHint(view, seat, hand, touched, before, after, wouldPlay.map(({ i }) => i), { hintType: 'number', value: 1 }));
       }
       continue; // an unsafe "1" hint would trigger the convention anyway
     }
-    const plays = touched.filter(({ i }) => knownPlayable(view, after[i])).length;
-    if (plays > 0) {
-      out.push(scoreHint(view, seat, hand, touched, before, after, plays, { hintType: 'number', value: n }));
+    const playIdxs = touched.filter(({ i }) => knownPlayable(view, after[i])).map(({ i }) => i);
+    if (playIdxs.length > 0) {
+      out.push(scoreHint(view, seat, hand, touched, before, after, playIdxs, { hintType: 'number', value: n }));
     }
   }
   return out;
@@ -400,6 +401,51 @@ function findPlayHint(view, seat, conventions) {
   return best && best.hint;
 }
 
+// A chop card we shouldn't let go: critical (last remaining copy), or a
+// still-needed 2 whose twin isn't anywhere we can see — losing an early 2
+// caps its pile for a long time, so it gets the benefit of the doubt.
+function saveWorthy(view, card) {
+  if (isCritical(view, card)) return true;
+  // A 2 isn't a guaranteed loss, so only spend a token on it when tokens
+  // aren't scarce.
+  if (view.hintTokens < 2) return false;
+  if (card.number !== 2 || isUseless(view, card.color, card.number)) return false;
+  const visible = visibleCounts(view, [view.viewerIndex]);
+  return (visible.get(`${card.color}_2`) || 0) - 1 === 0; // only this copy in sight
+}
+
+// The best way to protect `chop` in `seat`'s hand. A play hint that gets the
+// card played beats parking it: the card scores AND leaves the hand. Next
+// best, a colour hint that pins it as provably unplayable (informative, and
+// safe: the receiver's target check skips unplayable targets). Fallback is
+// the plain number keep-hint — except a "1" save that play-all-1s would
+// misread as a play order; then no safe save exists.
+function findSaveHint(view, seat, chop, conventions) {
+  const hand = view.players[seat].hand;
+  const card = hand[chop];
+  if (isPlayable(view, card.color, card.number)) {
+    let best = null;
+    for (const cand of playHintCandidates(view, seat, conventions)) {
+      if (!cand.playIdxs.includes(chop)) continue;
+      if (!best || cand.score > best.score) best = cand;
+    }
+    if (best) return { hint: best.hint, how: 'play' };
+  }
+  for (const color of view.hintableColors) {
+    const touched = colorHintTouches(view, hand, color);
+    if (touched.length === 0 || touched[touched.length - 1].i !== chop) continue;
+    const after = combosFor(view, afterColorHint(view, hand, color), [seat, view.viewerIndex]);
+    if (!possiblyPlayable(view, after[chop])) {
+      return { hint: { hintType: 'color', value: color }, how: 'pin' };
+    }
+  }
+  if (card.number === 1 && conventions.playAllOnes && !isPlayable(view, card.color, card.number)) {
+    const after = combosFor(view, afterNumberHint(hand, 1), [seat, view.viewerIndex]);
+    if (possiblyPlayable(view, after[chop])) return null; // would trigger a misplay
+  }
+  return { hint: { hintType: 'number', value: card.number }, how: 'keep' };
+}
+
 // Any legal hint that changes as little as possible: prefer re-hinting a
 // number the player already has clued (pure "keep" reinforcement).
 function findStallHint(view, hand) {
@@ -418,17 +464,28 @@ export function decide(view, conventions = STANDARD_CONVENTIONS) {
   const nextIndex = (me + 1) % view.players.length;
   const lastFuse = view.fuseTokens === 1;
 
-  // The one danger we can see coming: the next player, with nothing to play,
-  // will discard their chop — and it's the last copy of a needed card.
+  // The danger we can see coming: a player who, with nothing to play, will
+  // discard a chop we can't afford to lose. The next player is ours to save;
+  // players further along only when everyone between us and them has a
+  // pending play (they'll spend their turn playing, not saving). The first
+  // player free to act can handle anyone beyond them, so the scan stops.
   let urgentSave = null;
   if (view.hintTokens > 0 && conventions.numberHintSaves) {
-    const next = view.players[nextIndex];
-    const chop = chopIndex(next.hand);
-    if (chop >= 0 && isCritical(view, next.hand[chop]) && !hasPendingPlay(view, nextIndex, conventions)) {
-      urgentSave = {
-        action: { type: 'hint', toPlayerIndex: nextIndex, hintType: 'number', value: next.hand[chop].number },
-        reason: `save ${next.hand[chop].color} ${next.hand[chop].number} on chop`,
-      };
+    for (let step = 1; step < view.players.length; step++) {
+      const idx = (me + step) % view.players.length;
+      if (hasPendingPlay(view, idx, conventions)) continue;
+      const hand = view.players[idx].hand;
+      const chop = chopIndex(hand);
+      if (chop >= 0 && saveWorthy(view, hand[chop])) {
+        const save = findSaveHint(view, idx, chop, conventions);
+        if (save) {
+          urgentSave = {
+            action: { type: 'hint', toPlayerIndex: idx, ...save.hint },
+            reason: `save ${hand[chop].color} ${hand[chop].number} on chop (${save.how})`,
+          };
+        }
+      }
+      break;
     }
   }
 

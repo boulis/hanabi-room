@@ -159,3 +159,40 @@ rainbowCriticalBlackReverse/35        2 20.30     5   30        0      5        
 rainbowCriticalBlackReverse/35        3 26.82    10   34        0      2           0.76
 rainbowCriticalBlackReverse/35        4 26.42    12   34        0      1           0.96
 ```
+
+## 1.5 — better saves
+
+Four changes to the save logic. (1) *Save-by-play*: a critical chop that is
+playable right now is saved with a play hint on it — the card scores and
+leaves the hand instead of sitting parked behind a keep-clue. (2) *Pin-save*:
+when a colour hint would pin the chop as provably unplayable, prefer it over
+the bare number save (same protection, far more information). (3) *2-saves*:
+a still-needed 2 whose twin is nowhere visible is save-worthy too, but only
+with ≥2 hint tokens (a 2 isn't a guaranteed loss, so don't spend the last
+token on it). (4) *Look beyond the next player*: when everyone between us
+and an endangered player has a pending play (they'll play, not save), their
+chop is ours to save. Also refuses a "1" save that play-all-1s would misread
+as a play order.
+
+Biggest single-version gain so far, verified at 150 seeds/row: +0.57 avg per
+row over 1.4, with 2-player up +1.2 to +1.7 on every variant and the
+reverse-black variant up ~+1 at every seat count. Misplays drop sharply
+(reverse-black 2p from ~1.0 to ~0.3 per game).
+
+```
+simple/25                             2 21.40    16   25        6      0           0.06
+simple/25                             3 22.76    14   25       13      0           0.26
+simple/25                             4 23.18    20   25       12      0           0.36
+rainbow/30                            2 23.28    17   28        0      1           0.10
+rainbow/30                            3 27.20    22   30       10      0           0.22
+rainbow/30                            4 26.94    16   30        7      0           0.40
+rainbowCritical/30                    2 22.40    15   30        2      1           0.14
+rainbowCritical/30                    3 25.20    16   30        2      0           0.38
+rainbowCritical/30                    4 25.16    11   29        0      0           0.52
+rainbowCriticalBlack/35               2 23.64    14   31        0      1           0.34
+rainbowCriticalBlack/35               3 28.90    13   33        0      0           0.36
+rainbowCriticalBlack/35               4 29.00    10   34        0      0           0.30
+rainbowCriticalBlackReverse/35        2 22.84     3   30        0      1           0.34
+rainbowCriticalBlackReverse/35        3 28.36     9   34        0      1           0.40
+rainbowCriticalBlackReverse/35        4 28.30    10   33        0      0           0.40
+```

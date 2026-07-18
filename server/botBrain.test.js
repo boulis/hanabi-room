@@ -8,14 +8,14 @@ import { decide, handCombos } from './botBrain.js';
 const COLORS = ['red', 'yellow', 'green', 'blue', 'white'];
 const DIST = [1, 1, 1, 2, 2, 3, 3, 4, 4, 5];
 
-// Build a full 50-card draw order where player 0 gets p0[i] and player 1 gets
-// p1[i] (dealing is round-robin), opts.next (if given) is drawn first after
-// the deal, and the rest of the deck is whatever the variant multiset still
-// owes, in a stable order.
-function craftedState(p0, p1, opts = {}) {
+// Build a full 50-card draw order where each hand gets hands[p][i] (dealing
+// is round-robin), `next` (if given) is drawn first after the deal, and the
+// rest of the deck is whatever the variant multiset still owes, in a stable
+// order.
+function craftedDeck(hands, next = []) {
   const drawOrder = [];
-  for (let i = 0; i < 5; i++) drawOrder.push(p0[i], p1[i]);
-  drawOrder.push(...(opts.next || []));
+  for (let i = 0; i < 5; i++) for (const hand of hands) drawOrder.push(hand[i]);
+  drawOrder.push(...next);
   const owed = new Map();
   for (const color of COLORS) {
     for (const n of DIST) {
@@ -30,11 +30,24 @@ function craftedState(p0, p1, opts = {}) {
   }
   const rest = [];
   for (const [k, count] of owed) for (let i = 0; i < count; i++) rest.push(k);
+  return [...drawOrder, ...rest];
+}
+
+function craftedState(p0, p1, opts = {}) {
   return createInitialState({
     variantId: 'simple',
     endRule: opts.endRule || 'lax',
     players: [{ id: 'a', name: 'Ann' }, { id: 'b', name: 'Bot' }],
-    deckCards: [...drawOrder, ...rest],
+    deckCards: craftedDeck([p0, p1], opts.next || []),
+  });
+}
+
+function craftedState3(p0, p1, p2) {
+  return createInitialState({
+    variantId: 'simple',
+    endRule: 'lax',
+    players: [{ id: 'a', name: 'Ann' }, { id: 'b', name: 'Bot' }, { id: 'c', name: 'Cy' }],
+    deckCards: craftedDeck([p0, p1, p2]),
   });
 }
 
@@ -185,6 +198,47 @@ test('bot: counts visible copies to pin a hinted card as playable', () => {
   // rule red out and prove its 2 is playable.
   const { action, reason } = decide(viewState(s, 1));
   assert.deepEqual(action, { type: 'play', cardIndex: 0 }, reason);
+});
+
+test('bot: saves a chop 2 whose twin is nowhere in sight', () => {
+  const s = craftedState(
+    ['yellow_4', 'blue_3', 'green_2', 'white_2', 'red_4'],
+    ['yellow_2', 'red_3', 'blue_4', 'green_3', 'white_3'],
+  );
+  // yellow_2 isn't critical yet, but its twin is hidden in the deck — losing
+  // this copy would cap the yellow pile at 1 for a long time.
+  const { action, reason } = decide(viewState(s, 0));
+  assert.deepEqual(action, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 2 }, reason);
+});
+
+test('bot: a playable critical chop is saved by getting it played', () => {
+  const s = craftedState(
+    ['yellow_1', 'yellow_2', 'green_3', 'white_3', 'red_4'],
+    ['yellow_2', 'red_3', 'blue_4', 'green_4', 'white_4'],
+  );
+  playAction(s, 0, 0);              // yellow pile at 1
+  hintAction(s, 1, 0, 'number', 4); // stall back
+  discardAction(s, 0, 0);           // the other yellow_2 → p1's chop is critical
+  hintAction(s, 1, 0, 'number', 4);
+  // The chop is playable right now, so the best save is a play hint on it:
+  // the card scores instead of sitting parked behind a keep-clue.
+  const { action, reason } = decide(viewState(s, 0));
+  assert.deepEqual(action, { type: 'hint', toPlayerIndex: 1, hintType: 'color', value: 'yellow' }, reason);
+});
+
+test('bot: saves a later player\'s critical chop when everyone between will play', () => {
+  const s = craftedState3(
+    ['yellow_3', 'blue_3', 'green_3', 'white_3', 'red_3'],
+    ['green_1', 'red_2', 'blue_2', 'yellow_2', 'white_2'],
+    ['yellow_5', 'red_4', 'blue_4', 'green_4', 'white_4'],
+  );
+  hintAction(s, 0, 1, 'number', 1); // p1 now has a provable play
+  hintAction(s, 1, 2, 'number', 4); // stall; leaves p2's chop on yellow_5
+  hintAction(s, 2, 0, 'number', 3); // stall back to p0
+  // p1 will spend their turn playing, not saving — so p2's critical chop is
+  // p0's to save, even though p2 isn't the next player.
+  const { action, reason } = decide(viewState(s, 0));
+  assert.deepEqual(action, { type: 'hint', toPlayerIndex: 2, hintType: 'number', value: 5 }, reason);
 });
 
 test('bot: a "1" hint means play every touched 1 that can still be playable', () => {
