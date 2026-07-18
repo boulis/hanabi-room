@@ -237,3 +237,42 @@ rainbowCriticalBlackReverse/35        2 22.84     3   30        0      1        
 rainbowCriticalBlackReverse/35        3 28.52    10   34        0      5           1.28
 rainbowCriticalBlackReverse/35        4 28.34    10   33        0      2           0.92
 ```
+
+## 1.7 — corrected reveal rule, safer forced discards
+
+Found via a real human-vs-bot game (seed 4034317110, rainbowCritical): after
+the bot fully knew a rainbow card, it ignored every subsequent colour play
+hint and eventually discarded the known critical rainbow 5.
+
+Two fixes. (1) The reveal rule was wrong since 1.1: a colour hint that fully
+pinned another touched card cancelled the newest-touched play order
+*unconditionally* — but every colour hint unavoidably touches rainbow cards,
+so one known rainbow card made all colour hints self-cancel. The correct
+rule: if the pinned card is *playable*, play it first (its play consumes the
+hint's markers, retiring the newest-touched target); if it isn't playable,
+the hint means exactly what it always means — play the newest touched card.
+No special case needed; the guard was simply deleted on both receiver and
+giver sides. (2) The forced-discard fallback (every card clued, no chop)
+discarded the oldest card blindly; it now skips provably-critical cards.
+
+The biggest single-version gain: +1.30 avg per row over 1.6 at 150
+seeds/row, positive on all 15 rows — up to +3.5 on reverse-black 2p and
++2.3 to +2.8 on the other rainbow-variant 2p rows.
+
+```
+simple/25                             2 22.34    16   25       15      0           0.30
+simple/25                             3 22.96    13   25       17      1           0.36
+simple/25                             4 23.30    20   25       15      1           0.48
+rainbow/30                            2 26.08    21   30        7      1           0.22
+rainbow/30                            3 28.22    23   30       16      0           0.20
+rainbow/30                            4 27.24    19   30       10      1           0.58
+rainbowCritical/30                    2 24.82    15   30        4      1           0.60
+rainbowCritical/30                    3 26.40    14   30        4      4           0.68
+rainbowCritical/30                    4 25.82    15   30        3      0           0.80
+rainbowCriticalBlack/35               2 27.02    15   34        0      1           0.88
+rainbowCriticalBlack/35               3 30.24    12   34        0      0           0.54
+rainbowCriticalBlack/35               4 30.10    13   35        3      2           0.98
+rainbowCriticalBlackReverse/35        2 25.80     3   32        0      4           0.76
+rainbowCriticalBlackReverse/35        3 30.30    12   35        1      0           0.80
+rainbowCriticalBlackReverse/35        4 29.54    15   35        1      2           0.94
+```

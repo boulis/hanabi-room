@@ -10,16 +10,19 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '1.6';
+export const BOT_VERSION = '1.7';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
 export const STANDARD_CONVENTIONS = {
   id: 'standard',
   // A colour hint marks the newest touched card for play. Every colour hint
-  // still marked on the hand stays a pending play target (oldest first) until
-  // the server consumes its markers — unless the hint fully identified
-  // another touched card, in which case it was a reveal, not a play order.
+  // still marked on the hand stays a pending play target (oldest first)
+  // until the server consumes its markers. If the hint fully pins another
+  // touched card AND that card is playable, the pinned card is played first
+  // (the play consumes the hint's markers, so the newest touched card stops
+  // being a target); a pinned-but-unplayable card changes nothing — the
+  // newest touched card is still expected to be played.
   colorHintPlaysNewest: true,
   // A number hint means "keep these" unless a card is provably playable.
   numberHintSaves: true,
@@ -186,11 +189,15 @@ export function chopIndex(hand) {
 // target: the newest card it touched. The server consumes a hint's markers
 // when any card of that hint leaves the hand, so a marked hint is one that
 // hasn't been acted on yet — all of them stay live, oldest hint first (its
-// card was playable first). Exception: a hint whose touched set contains a
-// fully identified card other than the newest was a *reveal* — it exists to
-// pin that card's identity (played via known-playable when it can be), so its
-// newest touched card carries no play promise.
-export function colorPlayTargets(hand, combosBySlot) {
+// card was playable first). A hint that fully pins another touched card
+// needs no special case here: a pinned *playable* card is played first via
+// known-playable (which consumes the hint's markers and retires the target),
+// and a pinned unplayable card doesn't change what the hint asks — the
+// newest touched card is still the one to play. (An earlier version
+// cancelled the target whenever any touched card was pinned; in rainbow
+// variants that made every colour hint cancel itself, because colour hints
+// unavoidably touch the known rainbow cards in hand.)
+export function colorPlayTargets(hand) {
   const byHint = new Map();
   hand.forEach((card, slot) => {
     for (const h of card.lastHints) {
@@ -201,9 +208,7 @@ export function colorPlayTargets(hand, combosBySlot) {
   });
   const targets = [];
   for (const hintIndex of [...byHint.keys()].sort((a, b) => a - b)) {
-    const touched = byHint.get(hintIndex);
-    const newest = Math.max(...touched);
-    if (touched.some((slot) => slot !== newest && combosBySlot[slot].length === 1)) continue;
+    const newest = Math.max(...byHint.get(hintIndex));
     if (!targets.includes(newest)) targets.push(newest);
   }
   return targets;
@@ -223,17 +228,24 @@ function onesObligations(hand) {
   return out;
 }
 
-// A visible card worth saving: still needed, and every other copy has been
-// discarded (played copies would make it useless, handled above).
-function isCritical(view, card) {
-  if (isUseless(view, card.color, card.number)) return false;
-  const variant = getVariant(view.variantId);
-  const suit = variant.suits.find((s) => s.color === card.color);
-  const total = suit.distribution.filter((n) => n === card.number).length;
-  const discarded = view.discard.filter(
-    (c) => c.color === card.color && c.number === card.number,
-  ).length;
+// An identity that must not be lost: still needed, and every other copy has
+// been discarded (played copies would make it useless, handled above).
+function identityCritical(view, color, number) {
+  if (isUseless(view, color, number)) return false;
+  const suit = getVariant(view.variantId).suits.find((s) => s.color === color);
+  const total = suit.distribution.filter((n) => n === number).length;
+  const discarded = view.discard.filter((c) => c.color === color && c.number === number).length;
   return total - discarded === 1;
+}
+
+function isCritical(view, card) {
+  return identityCritical(view, card.color, card.number);
+}
+
+// Every candidate identity of this card is critical — discarding it is a
+// guaranteed loss whatever it turns out to be.
+function provablyCritical(view, combos) {
+  return combos.length > 0 && combos.every(([c, n]) => identityCritical(view, c, n));
 }
 
 // --- Hint simulation against a teammate's visible hand. ---
@@ -283,7 +295,7 @@ function hasPendingPlay(view, seat, conventions = STANDARD_CONVENTIONS) {
     if (!ones.some((i) => combos[i].length === 1)
       && ones.some((i) => possiblyPlayable(view, combos[i]))) return true;
   }
-  return colorPlayTargets(hand, combos).some((t) => possiblyPlayable(view, combos[t]));
+  return colorPlayTargets(hand).some((t) => possiblyPlayable(view, combos[t]));
 }
 
 // Score a valid play hint so competing options can be compared. Immediate
@@ -343,7 +355,7 @@ function playHintCandidates(view, seat, conventions) {
   const out = [];
   const hand = view.players[seat].hand;
   const before = handCombos(view, seat);
-  const pending = colorPlayTargets(hand, before);
+  const pending = colorPlayTargets(hand);
   for (const color of view.hintableColors) {
     const touched = colorHintTouches(view, hand, color);
     if (touched.length === 0) continue;
@@ -352,7 +364,6 @@ function playHintCandidates(view, seat, conventions) {
     if (playIdxs.length === 0) {
       const newest = touched[touched.length - 1];
       if (!isPlayable(view, newest.card.color, newest.card.number)) continue;
-      if (touched.some(({ i }) => i !== newest.i && after[i].length === 1)) continue;
       if (pending.includes(newest.i)) continue; // already their live target
       playIdxs = [newest.i];
     }
@@ -528,7 +539,7 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS) {
   // 2. Play a pending colour-hint target, oldest hint first — skipping any
   //    target deduction says can't be playable.
   if (conventions.colorHintPlaysNewest) {
-    for (const t of colorPlayTargets(myHand, myCombos)) {
+    for (const t of colorPlayTargets(myHand)) {
       const safeEnough = lastFuse ? knownPlayable(view, myCombos[t]) : possiblyPlayable(view, myCombos[t]);
       if (safeEnough) {
         return { action: { type: 'play', cardIndex: t }, reason: 'colour hint marks touched card' };
@@ -584,6 +595,14 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS) {
       const chop = chopIndex(myHand);
       if (chop >= 0) {
         return { action: { type: 'discard', cardIndex: chop }, reason: 'chop (oldest untouched)' };
+      }
+    }
+    // Forced: every card is clued. Discard the oldest card that isn't
+    // provably critical — never throw away a known last copy (e.g. a fully
+    // identified rainbow 5) while a safer option exists.
+    for (let i = 0; i < myHand.length; i++) {
+      if (!provablyCritical(view, myCombos[i])) {
+        return { action: { type: 'discard', cardIndex: i }, reason: 'forced: least dangerous' };
       }
     }
     return { action: { type: 'discard', cardIndex: 0 }, reason: 'forced: oldest card' };

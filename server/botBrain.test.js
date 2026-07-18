@@ -167,7 +167,7 @@ test('bot: remembers earlier colour hints, not just the latest', () => {
   assert.deepEqual(action, { type: 'play', cardIndex: 0 }, reason);
 });
 
-test('bot: colour hint that reveals another card cancels the newest-touched play', () => {
+test('bot: colour hint pinning an unplayable card still marks the newest touched', () => {
   const s = craftedState(
     ['yellow_4', 'blue_3', 'green_2', 'white_2', 'blue_4'],
     ['red_5', 'green_3', 'yellow_3', 'blue_3', 'red_2'],
@@ -175,10 +175,46 @@ test('bot: colour hint that reveals another card cancels the newest-touched play
   hintAction(s, 0, 1, 'number', 5);    // touches index 0 only → "a 5"
   hintAction(s, 1, 0, 'number', 4);    // stall back
   hintAction(s, 0, 1, 'color', 'red'); // touches 0 and 4 → index 0 now known red_5
-  // The hint fully identified index 0 (a reveal), so the newest touched card
-  // (index 4, red_2 — a guaranteed misplay) carries no play promise.
+  // The hint pins index 0 as red_5, but red_5 isn't playable — so the hint
+  // still asks for the newest touched card, exactly as if nothing were
+  // pinned. (An earlier version cancelled the play order whenever a touched
+  // card was pinned; in rainbow variants that made the bot ignore every
+  // colour hint once it fully knew a rainbow card in its hand.)
   const { action, reason } = decide(viewState(s, 1));
-  assert.notEqual(action.type, 'play', `should not gamble on the newest touched card (got: ${reason})`);
+  assert.deepEqual(action, { type: 'play', cardIndex: 4 }, reason);
+});
+
+test('bot: colour hint pinning a playable card plays that card first', () => {
+  const s = craftedState(
+    ['red_1', 'red_2', 'red_3', 'red_4', 'white_4'],
+    ['red_5', 'green_3', 'yellow_3', 'blue_3', 'red_2'],
+  );
+  for (let i = 0; i < 4; i++) {
+    playAction(s, 0, 0);              // red pile climbs to 4
+    hintAction(s, 1, 0, 'number', 4); // stall back
+  }
+  hintAction(s, 0, 1, 'number', 5);   // touches index 0 only
+  hintAction(s, 1, 0, 'number', 4);
+  hintAction(s, 0, 1, 'color', 'red'); // pins index 0 as red_5 — playable now
+  // The revealed card outranks the newest touched card (index 4), and
+  // playing it consumes the hint's markers, retiring the newest-touched
+  // target with it.
+  const { action, reason } = decide(viewState(s, 1));
+  assert.deepEqual(action, { type: 'play', cardIndex: 0 }, reason);
+});
+
+test('bot: forced discard (all cards clued) avoids provably critical cards', () => {
+  const s = craftedState(
+    ['yellow_4', 'blue_4', 'green_3', 'white_3', 'red_3'],
+    ['green_5', 'blue_3', 'yellow_3', 'white_3', 'red_3'],
+  );
+  hintAction(s, 0, 1, 'number', 5); // touches index 0: some 5 — critical whatever it is
+  hintAction(s, 1, 0, 'number', 4); // stall back
+  hintAction(s, 0, 1, 'number', 3); // touches 1-4: every card is now clued
+  // No chop exists. The old fallback discarded index 0 blindly — a card that
+  // is provably a 5 (a last copy in every world). Discard a 3 instead.
+  const { action, reason } = decide(viewState(s, 1));
+  assert.deepEqual(action, { type: 'discard', cardIndex: 1 }, reason);
 });
 
 test('bot: counts visible copies to pin a hinted card as playable', () => {
