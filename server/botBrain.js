@@ -29,8 +29,12 @@ export const STANDARD_CONVENTIONS = {
   // Exception to the above: a "1" hint asks for every touched card to be
   // played (oldest first), as long as the card can still be a playable 1.
   playAllOnes: true,
-  // The chop (default discard) is the oldest untouched card.
+  // The chop (default discard) is the oldest untouched, unguarded card.
   discardOldestUntouched: true,
+  // Attention-drawing discards: when hints can't cover the danger, an
+  // out-of-the-ordinary discard tells the next player to guard their oldest
+  // unclued card(s) — see findAlarmMove (sender) / alarmGuards (receiver).
+  alarmDiscards: true,
 };
 
 export const CONVENTION_SETS = { standard: STANDARD_CONVENTIONS };
@@ -177,10 +181,13 @@ function possiblyPlayable(view, combos) {
 
 // --- Convention bookkeeping. ---
 
-// Oldest (leftmost) card never touched by any hint.
+// Oldest (leftmost) card never touched by any hint and not guarded — a
+// guarded card is "taken care of" by the alarm convention and skipped.
+// (Other players' guard flags are only visible when the room shares them;
+// without that the fallback is the plain clue-based chop.)
 export function chopIndex(hand) {
   for (let i = 0; i < hand.length; i++) {
-    if (!hand[i].colorClued && !hand[i].numberClued) return i;
+    if (!hand[i].colorClued && !hand[i].numberClued && !hand[i].annotations?.guarded) return i;
   }
   return -1;
 }
@@ -478,6 +485,125 @@ function findSaveHint(view, seat, chop, conventions) {
   return { hint: { hintType: 'number', value: card.number }, how: 'keep' };
 }
 
+// Sender side of the alarm convention: an out-of-the-ordinary discard that
+// tells the next player something is amiss, used when hints can't cover the
+// danger (no tokens at all, or one hint can't protect two endangered cards).
+// Ordered safest first:
+//   1. discard a touched card that is provably not critical but still useful
+//      (discarding provable trash reads as routine, so it must be useful);
+//   2. discard the chop while holding an obvious play — the forgone play is
+//      the anomaly;
+//   3. discard PAST the chop;
+//   4. sacrifice a touched provable critical that costs fewer pile points
+//      than what it saves (e.g. throw a 5 to keep a critical 2).
+function findAlarmMove(view, myHand, myCombos, savedCost) {
+  if (view.hintTokens >= 8) return null; // discarding is illegal right now
+  const touched = (c) => c.colorClued || c.numberClued;
+  for (let i = 0; i < myHand.length; i++) {
+    if (!touched(myHand[i]) || knownUseless(view, myCombos[i]) || knownPlayable(view, myCombos[i])) continue;
+    if (myCombos[i].some(([c, n]) => identityCritical(view, c, n))) continue;
+    return { action: { type: 'discard', cardIndex: i }, reason: 'ALARM: discarding a useful touched card' };
+  }
+  // The riskier alarm types throw away an UNKNOWN own card (the chop, or a
+  // card past it) — only worth it when the endangered value clearly exceeds
+  // that price.
+  const chop = chopIndex(myHand);
+  if (savedCost >= 2 && chop >= 0 && myCombos.some((cs) => knownPlayable(view, cs))) {
+    return { action: { type: 'discard', cardIndex: chop }, reason: 'ALARM: discarding instead of an obvious play' };
+  }
+  if (savedCost >= 2 && chop >= 0) {
+    for (let i = chop + 1; i < myHand.length; i++) {
+      if (!touched(myHand[i]) && !myHand[i].annotations?.guarded) {
+        return { action: { type: 'discard', cardIndex: i }, reason: 'ALARM: discarding past the chop' };
+      }
+    }
+  }
+  let best = -1;
+  let bestCost = Infinity;
+  for (let i = 0; i < myHand.length; i++) {
+    if (!touched(myHand[i]) || !provablyCritical(view, myCombos[i])) continue;
+    const cost = Math.max(...myCombos[i].map(([c, n]) => discardCost(view, c, n)));
+    if (cost < savedCost && cost < bestCost) {
+      best = i;
+      bestCost = cost;
+    }
+  }
+  if (best >= 0) {
+    return { action: { type: 'discard', cardIndex: best }, reason: 'ALARM: sacrificing a cheaper critical' };
+  }
+  return null;
+}
+
+// Receiver side of the alarm convention: when my predecessor's last action
+// was an out-of-the-ordinary discard, guard my oldest unclued card(s) with
+// the annotate interface (turn-free), which moves my chop. Guard 2 cards
+// when the alarmer still had hint tokens (they chose the alarm because one
+// hint couldn't cover everything endangered), 1 when they had none (the
+// alarm was their only way to speak). The unguarded rest of the hand isn't
+// thereby safe — the alarmer can follow up with hints or another alarm.
+// Returns ids of own cards to mark guarded.
+export function alarmGuards(view, conventions = STANDARD_CONVENTIONS) {
+  if (!conventions.alarmDiscards) return [];
+  if (view.status !== 'playing' || view.deckSize === 0) return []; // endgame search moves are deliberate
+  const me = view.viewerIndex;
+  if (me < 0) return [];
+  const n = view.players.length;
+  let e = null;
+  for (let i = view.log.length - 1; i >= 0; i--) {
+    const t = view.log[i].type;
+    if ((t === 'play' || t === 'discard' || t === 'hint') && !view.log[i].undone) {
+      e = view.log[i];
+      break;
+    }
+  }
+  if (!e || e.type !== 'discard') return [];
+  if (e.playerIndex !== (me + n - 1) % n) return [];
+  let anomaly = false;
+  if (e.wasTouched) {
+    // A deliberate touched-discard alarm burns a USEFUL card — if the card
+    // was actually dead, this was routine trash disposal (the discarder's
+    // elimination can outrun what we can reconstruct).
+    if (isUseless(view, e.card.color, e.card.number)) return [];
+    // And if the discarder had no chop — every other card clued or guarded
+    // (their newest card is the post-discard draw) — the touched discard was
+    // forced normality, not a signal.
+    const senderFree = view.players[e.playerIndex].hand
+      .filter((c) => !c.colorClued && !c.numberClued && !c.annotations?.guarded).length;
+    if (senderFree <= 1) return [];
+    // Otherwise it's an alarm unless it was provable trash from the
+    // discarder's knowledge at the time (their recorded constraints, plus
+    // the copies visible to both of us — never my own hidden hand).
+    const totals = deckCounts(view);
+    const visible = visibleCounts(view, [me, e.playerIndex]);
+    const dk = `${e.card.color}_${e.card.number}`;
+    const combos = [];
+    for (const c of e.knownColors ?? []) {
+      for (const num of e.knownNumbers ?? []) {
+        const k = `${c}_${num}`;
+        // The discarded card itself now sits in the pile — don't count it
+        // against its own identity.
+        if ((visible.get(k) || 0) - (k === dk ? 1 : 0) < (totals.get(k) || 0)) combos.push([c, num]);
+      }
+    }
+    anomaly = !(combos.length > 0 && combos.every(([c, num]) => isUseless(view, c, num)));
+  } else if (e.chopIndex != null && e.chopIndex >= 0 && e.cardIndex !== e.chopIndex) {
+    anomaly = true; // discarded past the chop
+  } else {
+    // A normal-looking chop discard while holding an obvious play.
+    anomaly = handCombos(view, e.playerIndex).some((cs) => knownPlayable(view, cs));
+  }
+  if (!anomaly) return [];
+  // The discard restored a token, so the alarmer decided with one fewer.
+  const count = view.hintTokens - 1 > 0 ? 2 : 1;
+  const hand = view.players[me].hand;
+  const ids = [];
+  for (let i = 0; i < hand.length && ids.length < count; i++) {
+    const c = hand[i];
+    if (!c.colorClued && !c.numberClued && !c.annotations?.guarded) ids.push(c.id);
+  }
+  return ids;
+}
+
 // One-move look-ahead on saves. A keep-style save parks the chop behind a
 // clue — which slides the receiver's next discard onto their next unclued
 // card. If that card is save-worthy too, one hint can't protect both: save
@@ -563,16 +689,25 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS) {
   // players further along only when everyone between us and them has a
   // pending play (they'll spend their turn playing, not saving). The first
   // player free to act can handle anyone beyond them, so the scan stops.
+  // When hints can't cover the danger — no tokens at all, or the best save
+  // still exposes a second endangered card — an alarm discard (see
+  // findAlarmMove) makes the next player guard instead.
   let urgentSave = null;
-  if (view.hintTokens > 0 && conventions.numberHintSaves) {
+  if (conventions.numberHintSaves) {
     for (let step = 1; step < view.players.length; step++) {
       const idx = (me + step) % view.players.length;
       if (hasPendingPlay(view, idx, conventions)) continue;
       const hand = view.players[idx].hand;
       const chop = chopIndex(hand);
       if (chop >= 0 && saveWorthy(view, hand[chop])) {
-        const save = pickSave(view, idx, chop, conventions);
-        if (save) {
+        const save = view.hintTokens > 0 ? pickSave(view, idx, chop, conventions) : null;
+        const exposed = save ? save.exposed ?? 0 : 0;
+        if (conventions.alarmDiscards && idx === nextIndex && (!save || exposed > 0)) {
+          const chopCost = Math.max(1, discardCost(view, hand[chop].color, hand[chop].number));
+          const alarm = findAlarmMove(view, myHand, myCombos, Math.max(chopCost, exposed));
+          if (alarm) urgentSave = alarm;
+        }
+        if (!urgentSave && save) {
           urgentSave = {
             action: { type: 'hint', toPlayerIndex: idx, ...save.hint },
             reason: `save ${hand[save.index].color} ${hand[save.index].number} on chop (${save.how})`,

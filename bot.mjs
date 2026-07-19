@@ -12,7 +12,7 @@
 //                                         seated (only if the bot is host)
 //   node bot.mjs --server http://host:3000 --name Robo --delay 1200
 import WebSocket from 'ws';
-import { decide, CONVENTION_SETS } from './server/botBrain.js';
+import { alarmGuards, decide, CONVENTION_SETS } from './server/botBrain.js';
 
 function parseArgs(argv) {
   const args = {
@@ -189,6 +189,18 @@ function onSync(view) {
 }
 
 function act(view) {
+  // Alarm convention: guard first (annotate is turn-free), and patch the
+  // local view so the decision below already sees the moved chop.
+  try {
+    for (const cardId of alarmGuards(view, conventions)) {
+      log(`alarm received — guarding card ${cardId}`);
+      send({ type: 'action', action: { type: 'annotate', cardId, guarded: true }, reasoning: 'alarm received: guarding' });
+      const mine = view.players[view.viewerIndex].hand.find((c) => c.id === cardId);
+      if (mine) mine.annotations = { ...mine.annotations, guarded: true };
+    }
+  } catch (err) {
+    log(`alarm check failed (${err.message}) — continuing`);
+  }
   let decision;
   try {
     decision = decide(view, conventions);

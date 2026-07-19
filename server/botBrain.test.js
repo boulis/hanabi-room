@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createInitialState } from './game.js';
-import { discardAction, hintAction, playAction } from './rules.js';
+import { annotateAction, discardAction, hintAction, playAction } from './rules.js';
 import { viewState } from './view.js';
-import { decide, handCombos } from './botBrain.js';
+import { alarmGuards, decide, handCombos } from './botBrain.js';
 
 const COLORS = ['red', 'yellow', 'green', 'blue', 'white'];
 const DIST = [1, 1, 1, 2, 2, 3, 3, 4, 4, 5];
@@ -309,9 +309,90 @@ test('bot: with two endangered cards, saves the one whose loss costs more', () =
   hintAction(s, 1, 0, 'number', 1);
   // Saving the chop red_5 slides p1's discard onto red_2 — a 4-point loss
   // (the red pile would cap at 1) versus 1 point for the 5. One hint can't
-  // protect both: save the 2, accept risking the 5.
+  // protect both. At full tokens no alarm discard is legal, so the fallback
+  // is the cost-weighted save: hint the 2, accept risking the 5.
+  s.hintTokens = 8;
   const { action, reason } = decide(viewState(s, 0));
   assert.deepEqual(action, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 2 }, reason);
+});
+
+test('bot: alarms when one hint cannot protect two expensive endangered cards', () => {
+  const s = craftedState(
+    ['red_2', 'blue_3', 'white_1', 'green_3', 'yellow_1'],
+    ['red_2', 'blue_3', 'yellow_4', 'green_4', 'white_4'],
+  );
+  hintAction(s, 0, 1, 'number', 4); // clues p1's tail; chop red_2, then blue_3
+  hintAction(s, 1, 0, 'number', 1);
+  discardAction(s, 0, 0);           // the other red_2 → p1's red_2 critical (4 points)
+  hintAction(s, 1, 0, 'number', 1);
+  discardAction(s, 0, 0);           // the other blue_3 → p1's blue_3 critical (3 points)
+  hintAction(s, 1, 0, 'number', 1);
+  // Different numbers, different colours — no single hint protects both, and
+  // both losses are expensive. The bot draws attention instead: it holds
+  // known playables (its clued 1s) yet discards its chop — an anomaly the
+  // receiver reads as "guard your cards".
+  const { action, reason } = decide(viewState(s, 0));
+  assert.deepEqual(action, { type: 'discard', cardIndex: 1 }, reason);
+  assert.ok(reason.startsWith('ALARM'), reason);
+});
+
+test('bot: alarms with a useful touched discard when a critical chop needs saving at 0 tokens', () => {
+  const s = craftedState(
+    ['green_3', 'yellow_4', 'blue_4', 'white_4', 'red_2'],
+    ['yellow_5', 'red_4', 'blue_4', 'green_4', 'white_2'],
+  );
+  hintAction(s, 0, 1, 'number', 4); // keeps p1's chop on yellow_5
+  hintAction(s, 1, 0, 'number', 3); // touches p0's green_3
+  s.hintTokens = 0;                 // no way to hint a save
+  // p1's critical yellow_5 is about to be discarded and there is no token to
+  // say so. Discarding the clued (useful, provably non-critical) green_3 is
+  // the safest way to signal that something is amiss.
+  const { action, reason } = decide(viewState(s, 0));
+  assert.deepEqual(action, { type: 'discard', cardIndex: 0 }, reason);
+  assert.ok(reason.startsWith('ALARM'), reason);
+});
+
+test('bot: reads an alarm and guards — two cards when the alarmer had tokens', () => {
+  const s = craftedState(
+    ['yellow_4', 'blue_3', 'green_2', 'white_2', 'red_4'],
+    ['red_3', 'blue_2', 'green_3', 'yellow_2', 'white_4'],
+  );
+  hintAction(s, 0, 1, 'number', 4);  // touches p1's white_4 (index 4)
+  hintAction(s, 1, 0, 'number', 4);  // stall back
+  discardAction(s, 0, 2);            // past the chop (index 0) — an alarm
+  const hand = s.players[1].hand;
+  const ids = alarmGuards(viewState(s, 1));
+  assert.deepEqual(ids, [hand[0].id, hand[1].id], 'guards the two oldest unclued cards');
+  for (const cardId of ids) annotateAction(s, 1, cardId, { guarded: true });
+  // The guards move the chop: with nothing to play, the bot now discards its
+  // third card instead of the first.
+  s.hintTokens = 0;
+  const { action, reason } = decide(viewState(s, 1));
+  assert.deepEqual(action, { type: 'discard', cardIndex: 2 }, reason);
+});
+
+test('bot: reads an alarm and guards one card when the alarmer had no tokens', () => {
+  const s = craftedState(
+    ['yellow_4', 'blue_3', 'green_2', 'white_2', 'red_4'],
+    ['red_3', 'blue_2', 'green_3', 'yellow_2', 'white_4'],
+  );
+  hintAction(s, 0, 1, 'number', 4);
+  hintAction(s, 1, 0, 'number', 4);
+  s.hintTokens = 0;                  // the alarmer has no hints available
+  discardAction(s, 0, 2);            // past the chop — the only way to speak
+  const hand = s.players[1].hand;
+  assert.deepEqual(alarmGuards(viewState(s, 1)), [hand[0].id], 'guards just the chop');
+});
+
+test('bot: a routine chop discard triggers no guards', () => {
+  const s = craftedState(
+    ['yellow_4', 'blue_3', 'green_2', 'white_2', 'red_4'],
+    ['red_3', 'blue_2', 'green_3', 'yellow_2', 'white_4'],
+  );
+  hintAction(s, 0, 1, 'number', 4);
+  hintAction(s, 1, 0, 'number', 4);
+  discardAction(s, 0, 1); // plain chop discard (index 0 is "4"-clued), nothing anomalous
+  assert.deepEqual(alarmGuards(viewState(s, 1)), []);
 });
 
 test('bot: a "1" hint means play every touched 1 that can still be playable', () => {
@@ -398,10 +479,13 @@ test('bot: endgame search plays into 50/50 odds instead of a losing discard', ()
 // proposing an illegal action (rules.js throws on those).
 function playOut(seed, playerCount) {
   const players = Array.from({ length: playerCount }, (_, i) => ({ id: `p${i}`, name: `Bot${i}` }));
-  const state = createInitialState({ variantId: 'simple', endRule: 'lax', players, seed });
+  const state = createInitialState({ variantId: 'simple', endRule: 'lax', players, seed, shareGuarded: true });
   let guard = 0;
   while (state.status === 'playing' && guard++ < 500) {
     const idx = state.currentPlayer;
+    for (const cardId of alarmGuards(viewState(state, idx))) {
+      annotateAction(state, idx, cardId, { guarded: true });
+    }
     const { action } = decide(viewState(state, idx));
     switch (action.type) {
       case 'play': playAction(state, idx, action.cardIndex); break;

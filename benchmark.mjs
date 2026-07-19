@@ -8,7 +8,7 @@
 // Usage: node benchmark.mjs [--seeds N] [--players 2,3,4] [--variants a,b]
 //                           [--end lax|standard]
 import { createInitialState } from './server/game.js';
-import { discardAction, hintAction, playAction } from './server/rules.js';
+import { annotateAction, discardAction, hintAction, playAction } from './server/rules.js';
 import { viewState } from './server/view.js';
 import * as brain from './server/botBrain.js';
 import { VARIANTS } from './server/variants.js';
@@ -25,10 +25,14 @@ const endRule = flag('end', 'lax');
 
 function playOut(variantId, playerCount, seed) {
   const players = Array.from({ length: playerCount }, (_, i) => ({ id: `p${i}`, name: `Bot${i}` }));
-  const state = createInitialState({ variantId, endRule, players, seed });
+  // shareGuarded lets the bots see each other's guard marks — the alarm
+  // convention needs that to model teammates' chops accurately.
+  const state = createInitialState({ variantId, endRule, players, seed, shareGuarded: true });
   let guard = 0;
   while (state.status === 'playing' && guard++ < 1000) {
     const idx = state.currentPlayer;
+    const guards = brain.alarmGuards ? brain.alarmGuards(viewState(state, idx)) : [];
+    for (const cardId of guards) annotateAction(state, idx, cardId, { guarded: true });
     const { action } = brain.decide(viewState(state, idx));
     switch (action.type) {
       case 'play': playAction(state, idx, action.cardIndex); break;

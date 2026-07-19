@@ -2,7 +2,7 @@
 // turns are driven in-process by botBrain.decide against the same filtered
 // view a human client gets (viewFor) — no sockets, no child processes.
 // bot.mjs remains available for running a bot from another machine.
-import { decide, STANDARD_CONVENTIONS } from './botBrain.js';
+import { alarmGuards, decide, STANDARD_CONVENTIONS } from './botBrain.js';
 import { applyAction, joinRoom, leaveRoom, undoLast, viewFor } from './room.js';
 import { GameError } from './rules.js';
 
@@ -152,8 +152,15 @@ async function botAct(room, playerId) {
   if (room.phase !== 'playing' || room.state.status !== 'playing') return;
   const idx = room.state.players.findIndex((p) => p.id === playerId);
   if (idx !== room.state.currentPlayer) return; // stale schedule
-  const view = viewFor(room, playerId);
+  let view = viewFor(room, playerId);
   try {
+    // Alarm convention: guard first (annotate is turn-free), then act on a
+    // fresh view that reflects the moved chop.
+    const guards = alarmGuards(view, STANDARD_CONVENTIONS);
+    for (const cardId of guards) {
+      await applyAction(room, playerId, { type: 'annotate', cardId, guarded: true }, 'alarm received: guarding');
+    }
+    if (guards.length > 0) view = viewFor(room, playerId);
     const { action, reason } = decide(view, STANDARD_CONVENTIONS);
     await applyAction(room, playerId, action, reason);
   } catch (err) {
