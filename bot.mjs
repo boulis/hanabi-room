@@ -14,6 +14,9 @@
 import WebSocket from 'ws';
 import { alarmGuards, decide, CONVENTION_SETS } from './server/botBrain.js';
 
+// Cross-turn state for the memory-based conventions (forced-play pointer).
+const brainMemory = {};
+
 function parseArgs(argv) {
   const args = {
     server: 'http://127.0.0.1:3000',
@@ -203,7 +206,7 @@ function act(view) {
   }
   let decision;
   try {
-    decision = decide(view, conventions);
+    decision = decide(view, conventions, brainMemory);
   } catch (err) {
     log(`brain error (${err.message}) — falling back`);
     decision = fallback(view);

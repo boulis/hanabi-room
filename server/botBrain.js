@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.0';
+export const BOT_VERSION = '2.1';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -35,6 +35,11 @@ export const STANDARD_CONVENTIONS = {
   // out-of-the-ordinary discard tells the next player to guard their oldest
   // unclued card(s) — see findAlarmMove (sender) / alarmGuards (receiver).
   alarmDiscards: true,
+  // Forced-play signals in the 2-player deadlock: a discard by the player
+  // who could play advances a pointer over the locked player's possibly-
+  // playable cards; their eventual play orders the pointed card played.
+  // Needs driver-provided memory — see forcedPlayStep.
+  forcedPlaySignals: true,
 };
 
 export const CONVENTION_SETS = { standard: STANDARD_CONVENTIONS };
@@ -177,6 +182,17 @@ export function knownUseless(view, combos) {
 
 function possiblyPlayable(view, combos) {
   return combos.some(([c, n]) => isPlayable(view, c, n));
+}
+
+// Combos provable from SHARED knowledge only: hint constraints narrowed by
+// the public piles and discard — no hand-based elimination. The forced-play
+// convention needs the sender's and receiver's computations to be identical,
+// and neither player can reproduce the eliminations the other makes from
+// hands only they can see.
+function sharedCombos(view, seat) {
+  const totals = deckCounts(view);
+  const visible = visibleCounts(view, view.players.map((_, i) => i));
+  return view.players[seat].hand.map((card) => deduceCombos(card, visible, totals));
 }
 
 // --- Convention bookkeeping. ---
@@ -485,6 +501,166 @@ function findSaveHint(view, seat, chop, conventions) {
   return { hint: { hintType: 'number', value: card.number }, how: 'keep' };
 }
 
+// The most recent play/discard/hint in the log that wasn't undone.
+function lastRealAction(view) {
+  for (let i = view.log.length - 1; i >= 0; i--) {
+    const t = view.log[i].type;
+    if ((t === 'play' || t === 'discard' || t === 'hint') && !view.log[i].undone) {
+      return view.log[i];
+    }
+  }
+  return null;
+}
+
+// --- Forced-play signals (2-player deadlock; needs driver memory). ---
+// The deadlock: one player's cards are all touched/guarded (nothing
+// conventionally discardable) and they lack the info to play any, so they
+// stall with hints while the other player discards to feed them tokens. If
+// the free player holds a play fully determined by shared knowledge but
+// discards anyway, each such discard advances a pointer over the locked
+// player's possibly-playable cards (oldest first); when the free player
+// finally plays — at a moment a discard was legal — the locked player plays
+// the pointed card. While armed, the free player's plays are ONLY made as
+// signals. Everything is computed from shared knowledge so both sides agree,
+// and the pointer count lives in driver-provided memory (without memory the
+// convention is off).
+
+// Is `n` of `color` playable once `played` ([color, number] or null) lands
+// on its pile? Signal plays change the pile the pointed card must land on,
+// so both sides evaluate playability in the post-signal state.
+function playableAfter(view, color, number, played) {
+  if (played && played[0] === color) {
+    const suit = suitOf(view, color);
+    return (suit.direction === 'up' ? played[1] + 1 : played[1] - 1) === number;
+  }
+  return isPlayable(view, color, number);
+}
+
+// The locked player's pointer set: hand indexes possibly playable by shared
+// knowledge, oldest first, evaluated after the signal play `played`.
+function pointerSet(view, seat, played) {
+  const set = [];
+  sharedCombos(view, seat).forEach((cs, i) => {
+    if (cs.some(([c, n]) => playableAfter(view, c, n, played))) set.push(i);
+  });
+  return set;
+}
+
+// The deadlock is "armed" when: 2 players, a discard is legal, the locked
+// seat has no chop, no play provable from shared knowledge, but at least one
+// possibly-playable card — and the free seat holds a play FULLY determined
+// by shared knowledge (only then can both sides compute the post-play
+// pointer set identically).
+function forcedPlayArmed(view, lockedSeat, freeSeat) {
+  if (view.players.length !== 2 || view.hintTokens >= 8) return null;
+  const hand = view.players[lockedSeat].hand;
+  if (hand.length === 0 || chopIndex(hand) >= 0) return null;
+  const locked = sharedCombos(view, lockedSeat);
+  if (locked.some((cs) => knownPlayable(view, cs))) return null; // they can just play
+  if (!locked.some((cs) => possiblyPlayable(view, cs))) return null; // nothing to point at
+  const free = sharedCombos(view, freeSeat);
+  const freePlay = free.findIndex(
+    (cs) => cs.length === 1 && isPlayable(view, cs[0][0], cs[0][1]),
+  );
+  if (freePlay < 0) return null;
+  return { freePlay, playedIdentity: free[freePlay][0] };
+}
+
+function forcedPlayStep(view, conventions, memory) {
+  if (!memory || !conventions.forcedPlaySignals || view.players.length !== 2) return null;
+  // A rewound or restarted turn counter means a new game or an undo — forget.
+  if (memory.fpTurn !== undefined && view.turn <= memory.fpTurn) {
+    memory.fpRole = null;
+    memory.fpCount = 0;
+  }
+  memory.fpTurn = view.turn;
+  const me = view.viewerIndex;
+  const other = 1 - me;
+  const last = lastRealAction(view);
+
+  // Receiver reaction first (the partner's signal play just broke the armed
+  // predicate — their provable play left the hand — so this must not
+  // re-check it): while we were armed, their play orders the pointed card.
+  if (memory.fpRole === 'receiver' && last && last.type === 'play'
+      && last.playerIndex === other && last.success !== false) {
+    const pointer = memory.fpCount || 0;
+    memory.fpRole = null;
+    memory.fpCount = 0;
+    const hand = view.players[me].hand;
+    if (chopIndex(hand) < 0) {
+      const set = pointerSet(view, me, null); // their play is already on the piles
+      if (pointer < set.length) {
+        return {
+          action: { type: 'play', cardIndex: set[pointer] },
+          reason: `forced-play signal received: playing pointer ${pointer}`,
+        };
+      }
+    }
+    return null;
+  }
+
+  // Sender: my discards advance the pointer, my play fires it — so I only
+  // play when the pointed card really is playable. Engaged only at zero
+  // tokens: with tokens in the bank a real hint beats pointer games, and the
+  // deadlock this convention exists for is by definition token-starved
+  // ("used sparingly").
+  const armed = view.hintTokens === 0 ? forcedPlayArmed(view, other, me) : null;
+  if (armed) {
+    if (memory.fpRole !== 'sender') {
+      memory.fpRole = 'sender';
+      memory.fpCount = 0;
+    }
+    const count = memory.fpCount || 0;
+    const set = pointerSet(view, other, armed.playedIdentity);
+    let target = -1;
+    for (let k = count; k < set.length; k++) {
+      const card = view.players[other].hand[set[k]];
+      if (playableAfter(view, card.color, card.number, armed.playedIdentity)) {
+        target = k;
+        break;
+      }
+    }
+    if (target === count) {
+      memory.fpRole = null;
+      memory.fpCount = 0;
+      return {
+        action: { type: 'play', cardIndex: armed.freePlay },
+        reason: `forced-play signal: play your pointer ${count}`,
+      };
+    }
+    const chop = chopIndex(view.players[me].hand);
+    if (chop >= 0) {
+      memory.fpCount = count + 1;
+      return {
+        action: { type: 'discard', cardIndex: chop },
+        reason: target > count
+          ? `forced-play signal: advancing pointer to ${count + 1}`
+          : 'forced-play: feeding tokens (no valid signal yet)',
+      };
+    }
+    return null;
+  }
+
+  // Receiver bookkeeping: count the partner's able-to-play discards. The
+  // receiver's turns run right after the partner's discard restored a token,
+  // so its gate is one looser than the sender's zero.
+  if (view.hintTokens <= 1 && forcedPlayArmed(view, me, other)) {
+    if (memory.fpRole !== 'receiver') {
+      memory.fpRole = 'receiver';
+      memory.fpCount = 0;
+    }
+    if (last && last.type === 'discard' && last.playerIndex === other) {
+      memory.fpCount = (memory.fpCount || 0) + 1;
+    }
+    return null; // armed but nothing commanded — act normally (stall)
+  }
+
+  // Not armed in either role — drop any stale state.
+  memory.fpRole = null;
+  memory.fpCount = 0;
+  return null;
+}
+
 // Sender side of the alarm convention: an out-of-the-ordinary discard that
 // tells the next player something is amiss, used when hints can't cover the
 // danger (no tokens at all, or one hint can't protect two endangered cards).
@@ -548,14 +724,7 @@ export function alarmGuards(view, conventions = STANDARD_CONVENTIONS) {
   const me = view.viewerIndex;
   if (me < 0) return [];
   const n = view.players.length;
-  let e = null;
-  for (let i = view.log.length - 1; i >= 0; i--) {
-    const t = view.log[i].type;
-    if ((t === 'play' || t === 'discard' || t === 'hint') && !view.log[i].undone) {
-      e = view.log[i];
-      break;
-    }
-  }
+  const e = lastRealAction(view);
   if (!e || e.type !== 'discard') return [];
   if (e.playerIndex !== (me + n - 1) % n) return [];
   let anomaly = false;
@@ -663,7 +832,11 @@ function stallAction(view) {
 // --- The decision. ---
 // view: an in-room playing view where view.currentPlayer === view.viewerIndex.
 // Returns { action, reason }.
-export function decide(view, conventions = STANDARD_CONVENTIONS) {
+// `memory` is an optional driver-owned plain object: the brain keeps the
+// forced-play convention's pointer count (and whatever future conventions
+// need) in it across turns. Pass the same object every turn for the same
+// seat; without it the memory-based conventions stay off.
+export function decide(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   // With the deck empty the endgame is exactly computable (see below); use
   // the search over the last few cards, where the uncertainty is small
   // enough to enumerate and the rollouts are short enough to afford.
@@ -672,12 +845,13 @@ export function decide(view, conventions = STANDARD_CONVENTIONS) {
     const searched = endgameSearch(view, conventions);
     if (searched) return searched;
   }
-  return decideCore(view, conventions);
+  return decideCore(view, conventions, memory);
 }
 
 // The convention-following policy: used directly during the main game, and as
-// the rollout policy (for ourselves and for teammates) inside the search.
-function decideCore(view, conventions = STANDARD_CONVENTIONS) {
+// the rollout policy (for ourselves and for teammates) inside the search —
+// rollouts pass no memory, so the memory-based conventions don't fire there.
+function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   const me = view.viewerIndex;
   const myHand = view.players[me].hand;
   const myCombos = handCombos(view, me);
@@ -722,6 +896,11 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS) {
   //    the endangered card doesn't. Exception: in the final round a deferred
   //    play may never happen, so plays come first there.
   if (urgentSave && view.finalTurn === null) return urgentSave;
+
+  // 0b. Forced-play signals (2-player deadlock; needs driver memory) — both
+  //     the sender's pointer moves and the receiver's commanded play.
+  const forced = forcedPlayStep(view, conventions, memory);
+  if (forced) return forced;
 
   // 1. Play a card we can prove is playable (hint constraints narrowed by
   //    copy-counting over everything we can see).

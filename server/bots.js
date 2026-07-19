@@ -161,7 +161,8 @@ async function botAct(room, playerId) {
       await applyAction(room, playerId, { type: 'annotate', cardId, guarded: true }, 'alarm received: guarding');
     }
     if (guards.length > 0) view = viewFor(room, playerId);
-    const { action, reason } = decide(view, STANDARD_CONVENTIONS);
+    b.memory ??= {};
+    const { action, reason } = decide(view, STANDARD_CONVENTIONS, b.memory);
     await applyAction(room, playerId, action, reason);
   } catch (err) {
     console.error(`bot ${playerId} move rejected (${err.message}); using fallback`);

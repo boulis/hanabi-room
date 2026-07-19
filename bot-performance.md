@@ -389,3 +389,48 @@ rainbowCriticalBlackReverse/35        2 26.86    11   35        1      0        
 rainbowCriticalBlackReverse/35        3 31.12    11   35        3      2           1.04
 rainbowCriticalBlackReverse/35        4 30.52     9   35        4      0           1.38
 ```
+
+## 2.1 — forced-play signals (the 2-player deadlock)
+
+The first memory-based convention: `decide` now accepts a driver-owned
+memory object that persists across turns (all four drivers — in-process
+bots, the CLI bot, the benchmark, and the test harness — provide one).
+
+The deadlock it addresses: one player's hand is fully touched/guarded
+(nothing conventionally discardable) and they lack the info to play, so
+they stall with hints while the partner discards to feed them tokens. When
+the free partner holds a play *fully determined by shared knowledge* but is
+in this loop, their moves become a pointer: each discard made while able to
+play advances a pointer over the locked player's possibly-playable cards
+(oldest first), and their eventual play — at a moment a discard was legal —
+commands the locked player to play the pointed card. While armed, the free
+player's plays are ONLY made as signals, and everything both sides compute
+(the pointer set, the partner's ability to play) uses shared knowledge
+only (constraints + piles + discard), evaluated in the post-signal pile
+state, so sender and receiver always agree.
+
+Deliberately gated to genuine token starvation (sender engages at 0 tokens,
+receiver counts at ≤1) — ungated it hijacked useful plays and cost ~0.4 per
+2-player row. Gated: cost-neutral in self-play (−0.01 avg/row vs 2.0;
+3-4-player rows bit-identical since it's 2-player only), firing sparingly
+and almost exclusively in the difficult variants (54 signals across 750
+2-player games, three quarters of them in the rainbow/black variants), which
+is exactly the situation it was designed for in human-bot play.
+
+```
+simple/25                             2 23.32    11   25       21      1           0.52
+simple/25                             3 23.38    15   25       20      1           0.46
+simple/25                             4 23.84    19   25       21      1           0.54
+rainbow/30                            2 26.54    13   30       12      3           0.68
+rainbow/30                            3 29.02    26   30       26      0           0.22
+rainbow/30                            4 28.24    19   30       21      2           0.48
+rainbowCritical/30                    2 26.08    16   30        7      1           0.80
+rainbowCritical/30                    3 26.84     9   30        9      3           0.88
+rainbowCritical/30                    4 26.74    14   30        5      1           0.96
+rainbowCriticalBlack/35               2 26.82     8   34        0      5           1.32
+rainbowCriticalBlack/35               3 31.48    14   35       15      2           1.12
+rainbowCriticalBlack/35               4 30.72    13   35        4      1           1.22
+rainbowCriticalBlackReverse/35        2 26.68    11   35        1      0           1.24
+rainbowCriticalBlackReverse/35        3 31.12    11   35        3      2           1.04
+rainbowCriticalBlackReverse/35        4 30.52     9   35        4      0           1.38
+```

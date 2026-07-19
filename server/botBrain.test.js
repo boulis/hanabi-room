@@ -433,6 +433,64 @@ test('bot: a card pinned to one identity claims a copy other cards cannot be', (
   assert.ok(combos[4].every(([color]) => color !== 'red'), 'red_4 fully claimed');
 });
 
+test('bot: forced-play signal — pointer discards, signal play, commanded play', () => {
+  const s = craftedState(
+    ['yellow_1', 'red_2', 'yellow_2', 'green_2', 'white_3'],
+    ['green_1', 'white_2', 'red_4', 'blue_4', 'yellow_5'],
+    { next: ['white_4'] },
+  );
+  const memA = {};
+  const memB = {};
+  const conv = undefined; // default conventions
+
+  // Build the deadlock: p0 plays a 1 (so 2s become possibly playable), then
+  // NUMBER hints lock p0's whole hand (keep-convention — no play
+  // obligations) while p1's green_1 gets fully pinned. p1's chop discard of
+  // white_2 makes p0's 2s possibly critical, so p0 stalls instead of
+  // discarding a clued card.
+  playAction(s, 0, 0);                       // yellow pile 1; p0 draws white_4
+  hintAction(s, 1, 0, 'number', 2);          // touches p0's three 2s
+  hintAction(s, 0, 1, 'number', 1);          // touches green_1
+  discardAction(s, 1, 1);                    // chop discard: white_2 out
+  hintAction(s, 0, 1, 'color', 'green');     // green_1 now fully pinned
+  hintAction(s, 1, 0, 'number', 3);          // touches white_3
+  hintAction(s, 0, 1, 'number', 5);          // touches yellow_5
+  hintAction(s, 1, 0, 'number', 4);          // touches white_4 — p0 locked
+  hintAction(s, 0, 1, 'number', 5);          // harmless re-touch: burn a token
+  hintAction(s, 1, 0, 'number', 4);          // down to 1 token — true deadlock
+
+  // p0 (locked receiver): armed, nothing commanded yet — stalls.
+  const a1 = decide(viewState(s, 0), conv, memA);
+  assert.equal(a1.action.type, 'hint', a1.reason);
+  hintAction(s, 0, 1, a1.action.hintType, a1.action.value);
+
+  // p1 (sender): p0's oldest possibly-playable (red_2) is NOT playable, the
+  // next one (yellow_2) is — so advance the pointer with a chop discard
+  // instead of playing the pinned green_1.
+  const b1 = decide(viewState(s, 1), conv, memB);
+  assert.deepEqual(b1.action, { type: 'discard', cardIndex: 1 }, b1.reason);
+  assert.ok(b1.reason.startsWith('forced-play signal: advancing'), b1.reason);
+  discardAction(s, 1, 1);
+
+  // p0: counts the able-to-play discard, keeps stalling.
+  const a2 = decide(viewState(s, 0), conv, memA);
+  assert.equal(a2.action.type, 'hint', a2.reason);
+  hintAction(s, 0, 1, a2.action.hintType, a2.action.value);
+
+  // p1: pointer now matches the playable position — fire the signal.
+  const b2 = decide(viewState(s, 1), conv, memB);
+  assert.deepEqual(b2.action, { type: 'play', cardIndex: 0 }, b2.reason);
+  assert.ok(b2.reason.startsWith('forced-play signal: play'), b2.reason);
+  playAction(s, 1, 0);                       // green_1 plays
+
+  // p0: obeys — plays pointer position 1 (yellow_2), which really plays.
+  const a3 = decide(viewState(s, 0), conv, memA);
+  assert.deepEqual(a3.action, { type: 'play', cardIndex: 1 }, a3.reason);
+  assert.ok(a3.reason.startsWith('forced-play signal received'), a3.reason);
+  playAction(s, 0, 1);
+  assert.equal(s.playedPiles.yellow.length, 2, 'yellow_2 landed');
+});
+
 // A bare card for hand-built endgame states.
 function bareCard(id, color, number) {
   return {
@@ -480,13 +538,14 @@ test('bot: endgame search plays into 50/50 odds instead of a losing discard', ()
 function playOut(seed, playerCount) {
   const players = Array.from({ length: playerCount }, (_, i) => ({ id: `p${i}`, name: `Bot${i}` }));
   const state = createInitialState({ variantId: 'simple', endRule: 'lax', players, seed, shareGuarded: true });
+  const memories = players.map(() => ({}));
   let guard = 0;
   while (state.status === 'playing' && guard++ < 500) {
     const idx = state.currentPlayer;
     for (const cardId of alarmGuards(viewState(state, idx))) {
       annotateAction(state, idx, cardId, { guarded: true });
     }
-    const { action } = decide(viewState(state, idx));
+    const { action } = decide(viewState(state, idx), undefined, memories[idx]);
     switch (action.type) {
       case 'play': playAction(state, idx, action.cardIndex); break;
       case 'discard': discardAction(state, idx, action.cardIndex); break;

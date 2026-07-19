@@ -28,12 +28,13 @@ function playOut(variantId, playerCount, seed) {
   // shareGuarded lets the bots see each other's guard marks — the alarm
   // convention needs that to model teammates' chops accurately.
   const state = createInitialState({ variantId, endRule, players, seed, shareGuarded: true });
+  const memories = players.map(() => ({}));
   let guard = 0;
   while (state.status === 'playing' && guard++ < 1000) {
     const idx = state.currentPlayer;
     const guards = brain.alarmGuards ? brain.alarmGuards(viewState(state, idx)) : [];
     for (const cardId of guards) annotateAction(state, idx, cardId, { guarded: true });
-    const { action } = brain.decide(viewState(state, idx));
+    const { action } = brain.decide(viewState(state, idx), undefined, memories[idx]);
     switch (action.type) {
       case 'play': playAction(state, idx, action.cardIndex); break;
       case 'discard': discardAction(state, idx, action.cardIndex); break;
