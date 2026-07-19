@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.1';
+export const BOT_VERSION = '2.2';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -235,6 +235,69 @@ export function colorPlayTargets(hand) {
     if (!targets.includes(newest)) targets.push(newest);
   }
   return targets;
+}
+
+// The type of our own most recent card-out-of-hand action (play/discard) — the
+// only kind that consumes markers on our own hand. Used to tell why a target's
+// marker vanished (a colour hint given TO us adds markers; only our own plays
+// and discards remove them).
+export function myLastHandExit(view, seat) {
+  for (let i = view.log.length - 1; i >= 0; i--) {
+    const e = view.log[i];
+    if (!e.undone && e.playerIndex === seat && (e.type === 'play' || e.type === 'discard')) {
+      return e.type;
+    }
+  }
+  return null;
+}
+
+// The display markers (`lastHints`) are consumed whenever ANY card of a hint's
+// touched set leaves the hand — a play OR a discard — which clears the whole
+// hint, the newest-touched play target included. Two different intents hide
+// behind that one mechanism, and they must be treated oppositely:
+//   - a colour-sibling was PLAYED: the convention deliberately retired this
+//     target (a pinned-playable sibling stood in for the play, common in
+//     rainbow variants) — the obligation is finished, drop it;
+//   - a colour-sibling was DISCARDED (forced, or an alarm signal): the target
+//     is still ours to play, but the bare marker has forgotten it.
+// We record the target's card id in the driver memory the first turn its marker
+// is live (decideCore does this every turn before any branch can consume
+// markers) and keep it across a discard, but not across a play. `lastExit` is
+// our own last play/discard (see myLastHandExit) — the only action that could
+// have removed the marker since our previous turn.
+export function rememberColorTargets(hand, memory, lastExit = null) {
+  if (!memory) return;
+  if (!memory.colorPlays) memory.colorPlays = [];
+  const present = new Set(hand.map((c) => c.id));
+  const live = new Set(colorPlayTargets(hand).map((slot) => hand[slot].id));
+  const retired = lastExit === 'play';
+  memory.colorPlays = memory.colorPlays.filter((id) => {
+    if (!present.has(id)) return false; // the target itself left the hand
+    if (live.has(id)) return true;      // still marked — nothing to decide
+    return !retired;                    // marker gone: keep only if not a play-retirement
+  });
+  // Add this turn's live targets last, so a just-retired id (no longer live)
+  // isn't immediately re-recorded.
+  for (const slot of colorPlayTargets(hand)) {
+    const { id } = hand[slot];
+    if (!memory.colorPlays.includes(id)) memory.colorPlays.push(id);
+  }
+}
+
+// The slots to treat as pending colour-hint plays: every live marker target
+// (in hint order, oldest hint first — unchanged), plus any remembered
+// obligation whose marker has since been wiped by an unrelated departure
+// (appended, oldest slot first). Without memory this is exactly
+// colorPlayTargets, so rollouts and the CLI bot behave as before.
+export function mergedColorTargets(hand, memory) {
+  const live = colorPlayTargets(hand);
+  if (!memory?.colorPlays?.length) return live;
+  const seen = new Set(live);
+  const rescued = [];
+  hand.forEach((card, slot) => {
+    if (!seen.has(slot) && memory.colorPlays.includes(card.id)) rescued.push(slot);
+  });
+  return [...live, ...rescued];
 }
 
 // Cards obligated by the play-all-1s convention: touched by a "1" hint at
@@ -858,6 +921,11 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   const nextIndex = (me + 1) % view.players.length;
   const lastFuse = view.fuseTokens === 1;
 
+  // Capture our live colour-hint play targets by card id before any branch
+  // below can return an action that consumes their markers — so the obligation
+  // survives an unrelated touched card being discarded (see rememberColorTargets).
+  rememberColorTargets(myHand, memory, myLastHandExit(view, me));
+
   // The danger we can see coming: a player who, with nothing to play, will
   // discard a chop we can't afford to lose. The next player is ours to save;
   // players further along only when everyone between us and them has a
@@ -913,7 +981,7 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   // 2. Play a pending colour-hint target, oldest hint first — skipping any
   //    target deduction says can't be playable.
   if (conventions.colorHintPlaysNewest) {
-    for (const t of colorPlayTargets(myHand)) {
+    for (const t of mergedColorTargets(myHand, memory)) {
       const safeEnough = lastFuse ? knownPlayable(view, myCombos[t]) : possiblyPlayable(view, myCombos[t]);
       if (safeEnough) {
         return { action: { type: 'play', cardIndex: t }, reason: 'colour hint marks touched card' };

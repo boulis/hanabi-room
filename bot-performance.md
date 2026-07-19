@@ -434,3 +434,46 @@ rainbowCriticalBlackReverse/35        2 26.68    11   35        1      0        
 rainbowCriticalBlackReverse/35        3 31.12    11   35        3      2           1.04
 rainbowCriticalBlackReverse/35        4 30.52     9   35        4      0           1.38
 ```
+
+## 2.2 — colour-hint play targets survive a sibling discard
+
+The play obligation from a colour hint was tracked only through the display
+markers (`lastHints`), which the server consumes whenever *any* card of the
+hint's touched set leaves the hand. So if the receiver discarded an older card
+that merely shared the hint — a forced discard, or an alarm-convention signal
+— before playing the newest-touched target, the marker for the target itself
+was wiped too and the bot forgot it was meant to play it (a bare colour clue is
+otherwise indistinguishable from a save/info clue).
+
+The driver memory now records each live colour target's card id (before any
+branch can consume markers) and keeps it across an unrelated *discard*. The
+distinction matters: the same consumption also fires when a pinned-playable
+sibling is *played* first, which deliberately retires the newest-touched target
+(the documented reveal/pin convention, common in rainbow variants). A first
+naive version revived those too and regressed every row (rainbow 2p 26.54→24.62,
+misplays up across the board); keying the rescue to "my last hand-exit was a
+discard, not a play" (`myLastHandExit`) fixes only the intended case.
+
+Score-neutral in self-play (±0.02/row vs 2.1 — the rescue fires only on the
+rare alarm/forced discard of a colour sibling while an unplayable colour target
+is held); the value is correctness in human-bot play, where a partner expects a
+colour-hinted card to eventually be played even after the bot has to shed a
+touched card.
+
+```
+simple/25                             2 23.32    11   25       21      1           0.52
+simple/25                             3 23.38    15   25       20      1           0.46
+simple/25                             4 23.84    19   25       21      1           0.54
+rainbow/30                            2 26.54    13   30       12      3           0.68
+rainbow/30                            3 29.00    25   30       26      0           0.24
+rainbow/30                            4 28.26    19   30       21      2           0.48
+rainbowCritical/30                    2 26.08    16   30        7      1           0.80
+rainbowCritical/30                    3 26.84     9   30        9      3           0.88
+rainbowCritical/30                    4 26.72    14   30        4      1           0.96
+rainbowCriticalBlack/35               2 26.82     8   34        0      5           1.32
+rainbowCriticalBlack/35               3 31.50    14   35       15      2           1.10
+rainbowCriticalBlack/35               4 30.72    13   35        4      1           1.20
+rainbowCriticalBlackReverse/35        2 26.66    11   35        1      0           1.24
+rainbowCriticalBlackReverse/35        3 31.12    11   35        3      2           1.04
+rainbowCriticalBlackReverse/35        4 30.54     9   35        5      0           1.42
+```

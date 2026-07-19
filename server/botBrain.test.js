@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createInitialState } from './game.js';
 import { annotateAction, discardAction, hintAction, playAction } from './rules.js';
 import { viewState } from './view.js';
-import { alarmGuards, decide, handCombos } from './botBrain.js';
+import { alarmGuards, colorPlayTargets, decide, handCombos, mergedColorTargets, rememberColorTargets } from './botBrain.js';
 
 const COLORS = ['red', 'yellow', 'green', 'blue', 'white'];
 const DIST = [1, 1, 1, 2, 2, 3, 3, 4, 4, 5];
@@ -68,6 +68,84 @@ test('bot: colour hint received → plays the newest touched card', () => {
   hintAction(s, 0, 1, 'color', 'red'); // touches indexes 0 and 2; newest is 2
   const { action, reason } = decide(viewState(s, 1));
   assert.deepEqual(action, { type: 'play', cardIndex: 2 }, reason);
+});
+
+test('bot: colour-hint play target survives discarding an older card of the same hint', () => {
+  // Bot's reds are at slots 0 (red_4, older) and 2 (red_2, newest → play target).
+  // Discarding slot 0 consumes the hint's display markers across the whole hand,
+  // wiping the target's marker too — but the driver memory keeps the obligation.
+  const s = craftedState(
+    ['white_4', 'white_3', 'blue_4', 'green_4', 'yellow_4'],
+    ['red_4', 'blue_2', 'red_2', 'green_3', 'yellow_2'],
+  );
+  hintAction(s, 0, 1, 'color', 'red'); // touches slots 0 and 2; target is slot 2
+
+  const memory = {};
+  const beforeHand = viewState(s, 1).players[1].hand;
+  rememberColorTargets(beforeHand, memory, null); // the bot's turn records the target id
+  assert.deepEqual(colorPlayTargets(beforeHand), [2], 'target is the newest touched red');
+  const targetId = beforeHand[2].id;
+  assert.deepEqual(memory.colorPlays, [targetId]);
+
+  discardAction(s, 1, 0); // bot discards the older red before playing the target
+  const afterHand = viewState(s, 1).players[1].hand;
+  // The card shifted from slot 2 to slot 1 when slot 0 was removed.
+  const targetSlot = afterHand.findIndex((c) => c.id === targetId);
+  assert.equal(targetSlot, 1);
+
+  rememberColorTargets(afterHand, memory, 'discard');
+  assert.deepEqual(colorPlayTargets(afterHand), [], 'marker is gone — the whole hint was consumed');
+  assert.deepEqual(mergedColorTargets(afterHand, memory), [targetSlot], 'memory rescues the obligation');
+  assert.deepEqual(memory.colorPlays, [targetId], 'obligation kept — the card is still in hand');
+});
+
+test('bot: colour-hint obligation is NOT revived when a sibling was played (pinned retirement)', () => {
+  // Bot's reds at slots 0 (red_1, playable now) and 2 (red_4, newest → target).
+  // Convention: a pinned-playable sibling (red_1) is played first, and that
+  // play deliberately retires the newest-touched target — memory must not
+  // resurrect it, or it would misplay red_4.
+  const s = craftedState(
+    ['white_4', 'white_3', 'blue_4', 'green_4', 'yellow_4'],
+    ['red_1', 'blue_2', 'red_4', 'green_3', 'yellow_2'],
+  );
+  hintAction(s, 0, 1, 'color', 'red'); // touches slots 0 and 2
+  const memory = {};
+  const before = viewState(s, 1).players[1].hand;
+  rememberColorTargets(before, memory, null);
+  assert.deepEqual(memory.colorPlays, [before[2].id], 'target red_4 recorded');
+
+  playAction(s, 1, 0); // play the pinned red_1 — retires the red hint
+  const after = viewState(s, 1).players[1].hand;
+  rememberColorTargets(after, memory, 'play');
+  assert.deepEqual(colorPlayTargets(after), [], 'hint consumed by the play');
+  assert.deepEqual(mergedColorTargets(after, memory), [], 'target NOT revived after a play-retirement');
+  assert.deepEqual(memory.colorPlays, [], 'obligation dropped');
+});
+
+test('bot: colour-hint obligation is dropped once the target itself leaves the hand', () => {
+  const s = craftedState(
+    ['white_4', 'white_3', 'blue_4', 'green_4', 'yellow_4'],
+    ['red_3', 'blue_2', 'red_1', 'green_3', 'yellow_2'],
+  );
+  hintAction(s, 0, 1, 'color', 'red'); // target slot 2 = red_1, playable now
+  const memory = {};
+  rememberColorTargets(viewState(s, 1).players[1].hand, memory, null);
+  const targetId = viewState(s, 1).players[1].hand[2].id;
+  assert.deepEqual(memory.colorPlays, [targetId]);
+
+  playAction(s, 1, 2); // play the target
+  rememberColorTargets(viewState(s, 1).players[1].hand, memory, 'play');
+  assert.deepEqual(memory.colorPlays, [], 'target left the hand → obligation cleared');
+});
+
+test('bot: without memory, mergedColorTargets is exactly colorPlayTargets', () => {
+  const s = craftedState(
+    ['white_4', 'white_3', 'blue_4', 'green_4', 'yellow_4'],
+    ['red_4', 'blue_2', 'red_2', 'green_3', 'yellow_2'],
+  );
+  hintAction(s, 0, 1, 'color', 'red');
+  const hand = viewState(s, 1).players[1].hand;
+  assert.deepEqual(mergedColorTargets(hand, null), colorPlayTargets(hand));
 });
 
 test('bot: number hint means keep — discards chop instead of playing', () => {
