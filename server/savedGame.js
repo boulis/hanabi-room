@@ -144,6 +144,7 @@ function applyEvent(state, ev, ctx) {
       if (UNDOABLE_ACTIONS.has(ev.action.type)) {
         undoStack.push({ playerId: ev.playerId, snapshot: structuredClone(state) });
       }
+      const logLenBefore = state.log.length;
       switch (ev.action.type) {
         case 'play':
           playAction(state, idx, ev.action.cardIndex);
@@ -168,6 +169,11 @@ function applyEvent(state, ev, ctx) {
           break;
         default:
           throw new Error(`Unknown action type during replay: ${ev.action.type}`);
+      }
+      // Stamp any recorded reasoning on the action's own log entry (the
+      // first one it appended) so replay and finished-game review show it.
+      if (typeof ev.reasoning === 'string' && state.log.length > logLenBefore) {
+        state.log[logLenBefore].reasoning = ev.reasoning;
       }
       break;
     }

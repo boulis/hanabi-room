@@ -154,12 +154,12 @@ async function botAct(room, playerId) {
   if (idx !== room.state.currentPlayer) return; // stale schedule
   const view = viewFor(room, playerId);
   try {
-    const { action } = decide(view, STANDARD_CONVENTIONS);
-    await applyAction(room, playerId, action);
+    const { action, reason } = decide(view, STANDARD_CONVENTIONS);
+    await applyAction(room, playerId, action, reason);
   } catch (err) {
     console.error(`bot ${playerId} move rejected (${err.message}); using fallback`);
     try {
-      await applyAction(room, playerId, fallbackAction(view));
+      await applyAction(room, playerId, fallbackAction(view), 'fallback (primary move rejected)');
     } catch (err2) {
       console.error(`bot ${playerId} fallback rejected too: ${err2.message}`);
       return; // give up this turn; humans can abandon the game

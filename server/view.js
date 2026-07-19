@@ -74,7 +74,16 @@ export function viewState(state, viewerIndex) {
         }),
       ),
     })),
-    log: state.log.slice(-50),
+    // A recorded reasoning can reference cards the players aren't allowed to
+    // see ("save rainbow 2 on chop"), so it's stripped from live views: only
+    // the omniscient replay viewer (viewerIndex -1) and finished games get it.
+    log: state.log.slice(-50).map((entry) => {
+      if (entry.reasoning === undefined || viewerIndex === -1 || state.status === 'finished') {
+        return entry;
+      }
+      const { reasoning, ...rest } = entry;
+      return rest;
+    }),
   };
 }
 

@@ -290,16 +290,24 @@ export async function voteAbandon(room, playerId) {
   return { abandoned: false };
 }
 
-export async function applyAction(room, playerId, action) {
+// `reasoning` is optional free text explaining WHY the player (bot or,
+// later, human) took this action. It's recorded in the save file alongside
+// the action and stamped on the action's log entry — but the live view only
+// reveals it on finished games and to the omniscient replay viewer, because
+// it can reference cards the players aren't allowed to see ("save rainbow 2
+// on chop").
+export async function applyAction(room, playerId, action, reasoning) {
   if (room.phase !== 'playing') throw new GameError('No active game', 'no_game');
   const idx = playerIndex(room, playerId);
   if (idx < 0) throw new GameError('Not in this game', 'not_seated');
+  const why = typeof reasoning === 'string' ? reasoning.trim().slice(0, 200) : '';
 
   let snapshotPushed = false;
   if (UNDOABLE_ACTIONS.has(action.type)) {
     room.undoStack.push({ playerId, snapshot: structuredClone(room.state) });
     snapshotPushed = true;
   }
+  const logLenBefore = room.state.log.length;
   try {
     switch (action.type) {
       case 'play':
@@ -326,7 +334,12 @@ export async function applyAction(room, playerId, action) {
   }
   // A new action changes who can undo, so pending requests are stale.
   if (action.type !== 'annotate') room.undoRequests.clear();
-  await safeAppend(room, { kind: 'action', playerId, action });
+  if (why && room.state.log.length > logLenBefore) {
+    room.state.log[logLenBefore].reasoning = why;
+  }
+  const event = { kind: 'action', playerId, action };
+  if (why) event.reasoning = why;
+  await safeAppend(room, event);
   if (room.state.status === 'finished') {
     // Keep savePath set: an undo + continuation after game-over should still
     // be persisted. The 'end' line is metadata; further events appended after

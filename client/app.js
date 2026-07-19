@@ -1189,6 +1189,14 @@ function renderGame() {
     } else {
       div.textContent = formatLog(e);
     }
+    // Recorded reasoning (bot's decision logic, or a human's note) — the
+    // server only sends it on replays and finished games.
+    if (e.reasoning) {
+      const why = document.createElement('div');
+      why.className = 'log-reasoning';
+      why.textContent = `“${e.reasoning}”`;
+      div.append(why);
+    }
     log.append(div);
   }
 
@@ -1752,6 +1760,12 @@ function renderLatestAction(v) {
       chop.textContent = 'Card was not the chop.';
       body.append(chop);
     }
+  }
+  if (e.reasoning) {
+    const why = document.createElement('div');
+    why.className = 'log-reasoning';
+    why.textContent = `“${e.reasoning}”`;
+    body.append(why);
   }
   root.append(body);
 }

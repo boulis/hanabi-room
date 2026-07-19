@@ -901,6 +901,13 @@ input, select {
 }
 .log-entry { padding: 0.15rem 0; border-bottom: 1px dotted rgba(127,127,127,0.2); }
 .log-entry:last-child { border-bottom: 0; }
+/* Recorded reasoning for an action — only present on replays / finished games. */
+.log-reasoning {
+  font-size: 0.78rem;
+  font-style: italic;
+  opacity: 0.65;
+  margin-left: 1.1em;
+}
 
 #game-discard {
   display: grid;

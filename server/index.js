@@ -501,7 +501,8 @@ wss.on('connection', async (ws) => {
         }
         case 'action': {
           const room = requireSeat(conn);
-          await applyAction(room, conn.playerId, msg.action);
+          await applyAction(room, conn.playerId, msg.action,
+            typeof msg.reasoning === 'string' ? msg.reasoning : undefined);
           await broadcastRoomAndLobby(room.id);
           break;
         }

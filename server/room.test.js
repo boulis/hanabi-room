@@ -25,6 +25,7 @@ import {
   voteAbandon,
 } from './room.js';
 import { exportDeckOrder } from './game.js';
+import { viewState } from './view.js';
 import {
   branchSave,
   deleteSave,
@@ -55,6 +56,37 @@ async function setupRoom() {
   await startGame(room, alice.id, { seed: 12345 });
   return { room, alice, bob };
 }
+
+test('action reasoning is saved, shown on replay and finished games, hidden live', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    const cur = room.state.currentPlayer;
+    const actor = [alice, bob][cur];
+    const value = room.state.players[1 - cur].hand[0].number;
+    await applyAction(
+      room,
+      actor.id,
+      { type: 'hint', toPlayerIndex: 1 - cur, hintType: 'number', value },
+      'testing my hunch',
+    );
+    const lastHint = (log) => log.findLast((e) => e.type === 'hint');
+    assert.equal(lastHint(room.state.log).reasoning, 'testing my hunch');
+    // Live views hide it — it may reference cards players cannot see…
+    for (const p of [alice, bob]) {
+      assert.equal(lastHint(viewFor(room, p.id).log).reasoning, undefined);
+    }
+    // …but the save records it and reconstruction stamps it back on the log…
+    const loaded = await loadSave(room.savePath);
+    assert.equal(loaded.events.at(-1).reasoning, 'testing my hunch');
+    assert.equal(lastHint(loaded.state.log).reasoning, 'testing my hunch');
+    // …the omniscient replay viewer (viewerIndex -1) sees it…
+    assert.equal(lastHint(viewState(loaded.state, -1).log).reasoning, 'testing my hunch');
+    // …and so does everyone once the game is finished.
+    await voteAbandon(room, alice.id);
+    await voteAbandon(room, bob.id);
+    assert.equal(lastHint(viewFor(room, alice.id).log).reasoning, 'testing my hunch');
+  });
+});
 
 test('abandon: single vote does not abandon the game', async () => {
   await withTmpSaveDir(async () => {
