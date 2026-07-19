@@ -348,3 +348,44 @@ rainbowCriticalBlackReverse/35        2 27.52    13   35        1      0        
 rainbowCriticalBlackReverse/35        3 30.80    11   35        2      0           0.98
 rainbowCriticalBlackReverse/35        4 29.62     9   35        3      1           1.10
 ```
+
+## 2.0 — alarm convention (attention-drawing discards, guard reactions)
+
+The first convention that changes what a *move itself* means — opening the
+advanced-conventions era. When hints can't cover the danger (no tokens at
+all, or one hint can't protect two endangered cards whose loss is
+expensive), the bot makes an out-of-the-ordinary discard, safest option
+first: a useful touched card; the chop despite holding an obvious play; a
+card past the chop; a cheaper touched critical. The next player detects the
+anomaly from the log and reacts by guarding their oldest unclued card(s)
+through the turn-free annotate interface — 2 cards when the alarmer still
+had hint tokens, 1 when they had none — which moves their chop. Guarded
+cards are skipped by the chop everywhere, and guard flags feed back into
+the sender's model when the room shares them (`shareGuarded`; the benchmark
+and bot-vs-bot tests now turn it on).
+
+Two rounds of tuning were needed: receiver-side checks suppress false
+alarms (routine forced discards and elimination-based trash discards were
+being misread — 49 of 79 guard events in the first cut), and the risky
+alarm types (which burn an unknown own card) are price-gated to saves worth
+≥2 points. Final: +0.11 avg per row over 1.9 at 150 seeds/row — gains at
+3-4 players (+0.2 to +0.6), a small residual cost at 2-player rainbow
+variants where guards clog 5-card hands.
+
+```
+simple/25                             2 23.32    11   25       21      1           0.52
+simple/25                             3 23.38    15   25       20      1           0.46
+simple/25                             4 23.84    19   25       21      1           0.54
+rainbow/30                            2 26.78    13   30       13      2           0.64
+rainbow/30                            3 29.02    26   30       26      0           0.22
+rainbow/30                            4 28.24    19   30       21      2           0.48
+rainbowCritical/30                    2 26.16    16   30        7      1           0.80
+rainbowCritical/30                    3 26.84     9   30        9      3           0.88
+rainbowCritical/30                    4 26.74    14   30        5      1           0.96
+rainbowCriticalBlack/35               2 26.78     8   34        0      5           1.32
+rainbowCriticalBlack/35               3 31.48    14   35       15      2           1.12
+rainbowCriticalBlack/35               4 30.72    13   35        4      1           1.22
+rainbowCriticalBlackReverse/35        2 26.86    11   35        1      0           1.24
+rainbowCriticalBlackReverse/35        3 31.12    11   35        3      2           1.04
+rainbowCriticalBlackReverse/35        4 30.52     9   35        4      0           1.38
+```
