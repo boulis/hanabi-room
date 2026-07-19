@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.3';
+export const BOT_VERSION = '2.4';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -1261,14 +1261,50 @@ function rolloutValue(state, conventions) {
   return score - (fusesBefore - state.fuseTokens);
 }
 
+// Tie-break among endgame moves that reach the same worst/avg score. The
+// search models the partner as this same bot, so once a win is guaranteed
+// every move looks equal — including reckless-looking ones. When a real human
+// sits across the table this matters. Preference order:
+//   +1  a hint that hands the partner an actionable play (they win with it now)
+//    0  a discard, or a play that could still score in some world (a real gamble)
+//   -1  a hint touching only dead cards — inert to a bot, but a human may read
+//       it as a play cue and misfire
+//   -2  "playing" a provably dead card — a guaranteed wasteful misfire, strictly
+//       worse than discarding the same card; only taken when nothing ties it
+// The maximin worst/avg still decides first; this only orders genuine ties.
+export function endgameHelpfulness(view, action, myCombos) {
+  if (action.type === 'play') {
+    return knownUseless(view, myCombos[action.cardIndex]) ? -2 : 0;
+  }
+  if (action.type !== 'hint') return 0;
+  const seat = action.toPlayerIndex;
+  const hand = view.players[seat].hand;
+  const after = action.hintType === 'color'
+    ? combosFor(view, afterColorHint(view, hand, action.value), [seat, view.viewerIndex])
+    : combosFor(view, afterNumberHint(hand, action.value), [seat, view.viewerIndex]);
+  const touched = hand
+    .map((c, i) => ({ c, i }))
+    .filter(({ c }) => (action.hintType === 'color'
+      ? touchedColorSet(view, action.value).has(c.color)
+      : c.number === action.value));
+  const enablesPlay = touched.some(({ i }) => knownPlayable(view, after[i]))
+    || (action.hintType === 'color' && touched.length > 0
+      && possiblyPlayable(view, after[touched[touched.length - 1].i]));
+  if (enablesPlay) return 1;
+  if (touched.length > 0 && touched.every(({ c }) => isUseless(view, c.color, c.number))) return -1;
+  return 0;
+}
+
 // Maximin over worlds: a candidate is judged by its worst-case final score,
-// with the average as tie-break. Average-maximizing turned out to gamble
-// itself into fuse-outs — the model assumes future turns follow the safe
-// convention policy, but a real future turn would gamble again, compounding
-// risk the simulation never sees. Worst-case-first only accepts risks that
-// cost nothing in any consistent world.
+// then the average, then helpfulness to a human partner (see above) as the
+// final tie-break. Average-maximizing turned out to gamble itself into
+// fuse-outs — the model assumes future turns follow the safe convention
+// policy, but a real future turn would gamble again, compounding risk the
+// simulation never sees. Worst-case-first only accepts risks that cost nothing
+// in any consistent world.
 function endgameSearch(view, conventions) {
-  const worlds = enumerateWorlds(view, handCombos(view, view.viewerIndex));
+  const myCombos = handCombos(view, view.viewerIndex);
+  const worlds = enumerateWorlds(view, myCombos);
   if (!worlds || worlds.length === 0) return null;
   const budget = Math.max(1, Math.floor(SEARCH_MAX_SIMS / worlds.length));
   const candidates = candidateActions(view).slice(0, budget);
@@ -1291,8 +1327,12 @@ function endgameSearch(view, conventions) {
     }
     if (!ok) continue;
     const avg = total / worlds.length;
-    if (!best || worst > best.worst || (worst === best.worst && avg > best.avg)) {
-      best = { action, worst, avg };
+    const help = endgameHelpfulness(view, action, myCombos);
+    if (!best
+      || worst > best.worst
+      || (worst === best.worst && avg > best.avg)
+      || (worst === best.worst && avg === best.avg && help > best.help)) {
+      best = { action, worst, avg, help };
     }
   }
   if (!best) return null;

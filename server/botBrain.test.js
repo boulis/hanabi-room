@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createInitialState } from './game.js';
 import { annotateAction, discardAction, hintAction, playAction } from './rules.js';
 import { viewState } from './view.js';
-import { alarmGuards, colorPlayTargets, decide, handCombos, mergedColorTargets, protectiveStall, rememberColorTargets } from './botBrain.js';
+import { alarmGuards, colorPlayTargets, decide, endgameHelpfulness, handCombos, mergedColorTargets, protectiveStall, rememberColorTargets } from './botBrain.js';
 
 const COLORS = ['red', 'yellow', 'green', 'blue', 'white'];
 const DIST = [1, 1, 1, 2, 2, 3, 3, 4, 4, 5];
@@ -632,6 +632,51 @@ test('bot: endgame search plays into 50/50 odds instead of a losing discard', ()
   const { action, reason } = decide(viewState(s, 1));
   assert.ok(reason.startsWith('endgame search'), `expected a searched decision (got: ${reason})`);
   assert.equal(action.type, 'play', reason);
+});
+
+test('bot: endgame tie-break ranks a play-enabling hint over a dead misfire or inert hint', () => {
+  // Deck empty, near-perfect: white pile at 4, everything else complete.
+  // Ann (p0) holds the last white_5 (unclued) plus a dead blue_2; the bot (p1)
+  // holds a provably dead red_1. Among moves the search proves reach the same
+  // score, the tie-break must prefer telling Ann about white_5, and rank
+  // "playing" the dead red_1 (a guaranteed misfire) below simply discarding it.
+  let id = 0;
+  const playedPiles = {};
+  for (const color of ['red', 'yellow', 'green', 'blue']) {
+    playedPiles[color] = [1, 2, 3, 4, 5].map((n) => bareCard(id++, color, n));
+  }
+  playedPiles.white = [1, 2, 3, 4].map((n) => bareCard(id++, 'white', n));
+  const pin = (color, number) => ({
+    ...bareCard(id++, color, number),
+    possibleColors: [color], possibleNumbers: [number], colorClued: true, numberClued: true,
+  });
+  const s = {
+    status: 'playing', variantId: 'simple', endRule: 'lax',
+    shareGuarded: false, allowEmptyHints: false, seed: 1,
+    players: [
+      { id: 'a', name: 'Ann', hand: [bareCard(id++, 'white', 5), pin('blue', 2)] },
+      { id: 'b', name: 'Bot', hand: [pin('red', 1)] },
+    ],
+    deck: [], discard: [], playedPiles,
+    hintTokens: 3, fuseTokens: 3, currentPlayer: 1, turn: 40, finalTurn: null,
+    log: [], endReason: null, nextHintIndex: 0, nextLogSeq: 0,
+    startedAt: 0, endedAt: null, initialDeckCards: [],
+  };
+  const view = viewState(s, 1);
+  const myCombos = handCombos(view, 1);
+  const h = (action) => endgameHelpfulness(view, action, myCombos);
+
+  const hintWhite = h({ type: 'hint', toPlayerIndex: 0, hintType: 'color', value: 'white' });
+  const hintBlue = h({ type: 'hint', toPlayerIndex: 0, hintType: 'color', value: 'blue' });
+  const playDead = h({ type: 'play', cardIndex: 0 });
+  const discardDead = h({ type: 'discard', cardIndex: 0 });
+
+  assert.equal(hintWhite, 1, 'hinting white_5 enables Ann to play it');
+  assert.equal(hintBlue, -1, 'a colour hint touching only the dead blue_2 is inert/misleading');
+  assert.equal(playDead, -2, 'playing the provably dead red_1 is a guaranteed wasteful misfire');
+  assert.equal(discardDead, 0, 'discarding the dead card is neutral');
+  assert.ok(hintWhite > discardDead && discardDead > hintBlue && hintBlue > playDead,
+    'ranking: enable-play > discard > inert hint > dead misfire');
 });
 
 // Bots playing whole games against each other: the strongest regression net —

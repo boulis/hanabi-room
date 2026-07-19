@@ -515,3 +515,44 @@ rainbowCriticalBlackReverse/35        2 26.80    12   35        1      0        
 rainbowCriticalBlackReverse/35        3 31.02    13   35        1      2           1.10
 rainbowCriticalBlackReverse/35        4 31.38    17   35        5      1           1.46
 ```
+
+## 2.4 — endgame moves that read well to a human partner
+
+The endgame search proves a worst-case outcome by modelling the partner as this
+same bot. Once a win is guaranteed, every candidate scores the same 30, so the
+search — taking the first such move in candidate order (plays first) — would do
+reckless-looking things that a bot partner shrugs off but a human does not:
+"play" a provably dead card (a misfire that reaches the same score because
+there was fuse slack), or give a hint touching only dead cards (inert to the
+model, but a human reads it as a play cue and misfires). Meanwhile it would
+never just tell the partner which card is their last playable one, because
+discarding/misfiring reached 30 all the same in the model.
+
+`endgameHelpfulness` breaks genuine (worst, avg) ties by legibility: enable the
+partner's play (+1) > discard or real gamble (0) > inert dead-only hint (−1) >
+play a provably dead card (−2). It only reorders equally-winning moves, so the
+worst-case score is untouched — but the bot now hands the partner the hint that
+lets them play their winning card, instead of misfiring or misleading them.
+
+Scores flat vs 2.3 (as expected — ties only), but **misplays/game roughly
+halve on every row** (simple 2p 0.54→0.18, rainbowCriticalBlack 2p 1.18→0.48,
+reverse 4p 1.46→0.58): the gratuitous endgame misfires are gone. Fuse-outs also
+edge down.
+
+```
+simple/25                             2 23.38    11   25       24      1           0.18
+simple/25                             3 23.84    20   25       20      0           0.36
+simple/25                             4 23.88    20   25       21      1           0.40
+rainbow/30                            2 27.04    17   30       14      1           0.24
+rainbow/30                            3 29.10    25   30       26      0           0.26
+rainbow/30                            4 28.34    22   30       22      1           0.42
+rainbowCritical/30                    2 25.92    19   30        4      0           0.22
+rainbowCritical/30                    3 27.40    18   30       12      1           0.46
+rainbowCritical/30                    4 27.18    21   30        2      0           0.52
+rainbowCriticalBlack/35               2 27.00     8   34        0      3           0.48
+rainbowCriticalBlack/35               3 31.88    15   35       15      0           0.36
+rainbowCriticalBlack/35               4 31.06    18   35        3      1           0.48
+rainbowCriticalBlackReverse/35        2 26.84    12   35        1      0           0.44
+rainbowCriticalBlackReverse/35        3 31.10    13   35        1      0           0.46
+rainbowCriticalBlackReverse/35        4 31.42    17   35        5      1           0.58
+```
