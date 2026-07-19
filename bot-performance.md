@@ -276,3 +276,40 @@ rainbowCriticalBlackReverse/35        2 25.80     3   32        0      4        
 rainbowCriticalBlackReverse/35        3 30.30    12   35        1      0           0.80
 rainbowCriticalBlackReverse/35        4 29.54    15   35        1      2           0.94
 ```
+
+## 1.8 — save look-ahead (cost-weighted saves)
+
+Found via a live human-vs-bot game (seed 1581845067, rainbowCritical, move
+29): the human's chop was rainbow 5 with rainbow 2 right behind it — both
+critical. The bot saved the 5, which slid the human's discard onto the 2: a
+4-point loss (the rainbow pile capped at 1) traded for a 1-point card.
+
+The save logic now looks one move ahead. A keep-style save parks the chop
+behind a clue, so the receiver's next discard lands on their next unclued
+card; if that card is save-worthy too, one hint can't protect both — the bot
+computes the pile points lost by each discard (`discardCost`: everything
+past a last copy becomes unreachable) and saves whichever card costs more,
+accepting the cheaper exposure. A play-save (the receiver plays instead of
+discarding) is still preferred outright since nothing gets discarded.
+
++0.45 avg per row over 1.7 at 150 seeds/row, positive on all 15 rows —
+biggest on the critical-heavy variants (reverse-black 2p +1.18,
+rainbowCriticalBlack 2p +1.04, rainbowCritical 2p +0.75).
+
+```
+simple/25                             2 22.82    17   25       16      0           0.38
+simple/25                             3 22.92    13   25       13      1           0.40
+simple/25                             4 23.40    21   25       15      1           0.52
+rainbow/30                            2 26.80    21   30        9      0           0.18
+rainbow/30                            3 28.38    25   30       14      0           0.18
+rainbow/30                            4 27.56    21   30       12      1           0.64
+rainbowCritical/30                    2 25.30    18   30        5      0           0.46
+rainbowCritical/30                    3 26.90    17   30        7      2           0.70
+rainbowCritical/30                    4 26.32    21   30        3      1           0.92
+rainbowCriticalBlack/35               2 27.74    15   35        1      2           1.00
+rainbowCriticalBlack/35               3 30.46    12   35        2      1           0.74
+rainbowCriticalBlack/35               4 30.70    13   35        3      3           0.96
+rainbowCriticalBlackReverse/35        2 27.26     3   33        0      1           0.70
+rainbowCriticalBlackReverse/35        3 30.86    12   35        1      0           0.84
+rainbowCriticalBlackReverse/35        4 29.74     8   34        0      2           1.02
+```

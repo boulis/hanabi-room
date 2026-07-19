@@ -277,6 +277,22 @@ test('bot: saves a later player\'s critical chop when everyone between will play
   assert.deepEqual(action, { type: 'hint', toPlayerIndex: 2, hintType: 'number', value: 5 }, reason);
 });
 
+test('bot: with two endangered cards, saves the one whose loss costs more', () => {
+  const s = craftedState(
+    ['red_2', 'white_1', 'green_4', 'white_4', 'blue_2'],
+    ['red_5', 'red_2', 'blue_4', 'yellow_4', 'green_4'],
+  );
+  hintAction(s, 0, 1, 'number', 4); // clues indexes 2-4; chop is red_5, then red_2
+  hintAction(s, 1, 0, 'number', 1); // stall back
+  discardAction(s, 0, 0);           // the other red_2 → p1's red_2 is now critical
+  hintAction(s, 1, 0, 'number', 1);
+  // Saving the chop red_5 slides p1's discard onto red_2 — a 4-point loss
+  // (the red pile would cap at 1) versus 1 point for the 5. One hint can't
+  // protect both: save the 2, accept risking the 5.
+  const { action, reason } = decide(viewState(s, 0));
+  assert.deepEqual(action, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 2 }, reason);
+});
+
 test('bot: a "1" hint means play every touched 1 that can still be playable', () => {
   const s = craftedState(
     ['red_1', 'yellow_3', 'blue_3', 'green_4', 'white_4'],

@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '1.7';
+export const BOT_VERSION = '1.8';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -248,6 +248,18 @@ function provablyCritical(view, combos) {
   return combos.length > 0 && combos.every(([c, n]) => identityCritical(view, c, n));
 }
 
+// Points the team loses if this identity is discarded: losing a last
+// remaining copy makes everything past it in its pile unreachable, so early
+// criticals are far more expensive than late ones (losing rainbow 2 costs 4
+// points; losing rainbow 5 costs 1). Non-critical identities cost nothing —
+// another copy is still out there.
+function discardCost(view, color, number) {
+  if (!identityCritical(view, color, number)) return 0;
+  const cap = view.playedPiles[color].cap;
+  const reachableWithout = suitOf(view, color).direction === 'up' ? number - 1 : 5 - number;
+  return cap - Math.min(cap, reachableWithout);
+}
+
 // --- Hint simulation against a teammate's visible hand. ---
 
 // The suit colours a colour hint touches (rainbow-style suits match any).
@@ -466,6 +478,43 @@ function findSaveHint(view, seat, chop, conventions) {
   return { hint: { hintType: 'number', value: card.number }, how: 'keep' };
 }
 
+// One-move look-ahead on saves. A keep-style save parks the chop behind a
+// clue — which slides the receiver's next discard onto their next unclued
+// card. If that card is save-worthy too, one hint can't protect both: save
+// whichever loss would cost the team more points and accept exposing the
+// cheaper one (a chop rainbow 5 with rainbow 2 right behind it gets the "2"
+// hint — losing the 5 costs 1 point, losing the 2 costs 4).
+function pickSave(view, seat, chop, conventions) {
+  const hand = view.players[seat].hand;
+  const primary = findSaveHint(view, seat, chop, conventions);
+  if (!primary) return null;
+  // A play-save gets the card played: the receiver discards nothing.
+  if (primary.how === 'play') return { index: chop, ...primary };
+  // Where the receiver's discard lands after a hint's clue marks are down.
+  const exposedIndex = (hint) => {
+    const touches = (card) => (hint.hintType === 'number'
+      ? card.number === hint.value
+      : touchedColorSet(view, hint.value).has(card.color));
+    return hand.findIndex((card) => !card.colorClued && !card.numberClued && !touches(card));
+  };
+  const cost = (i) => (i >= 0 && saveWorthy(view, hand[i])
+    ? Math.max(1, discardCost(view, hand[i].color, hand[i].number))
+    : 0);
+  const primaryExposed = exposedIndex(primary.hint);
+  let best = { index: chop, ...primary, exposed: cost(primaryExposed) };
+  if (best.exposed > 0) {
+    const alt = findSaveHint(view, seat, primaryExposed, conventions);
+    if (alt && (alt.how === 'play' || cost(exposedIndex(alt.hint)) < best.exposed)) {
+      best = {
+        index: primaryExposed,
+        ...alt,
+        exposed: alt.how === 'play' ? 0 : cost(exposedIndex(alt.hint)),
+      };
+    }
+  }
+  return best;
+}
+
 // Any legal hint that changes as little as possible: prefer re-hinting a
 // number the player already has clued (pure "keep" reinforcement).
 function findStallHint(view, hand) {
@@ -511,11 +560,11 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS) {
       const hand = view.players[idx].hand;
       const chop = chopIndex(hand);
       if (chop >= 0 && saveWorthy(view, hand[chop])) {
-        const save = findSaveHint(view, idx, chop, conventions);
+        const save = pickSave(view, idx, chop, conventions);
         if (save) {
           urgentSave = {
             action: { type: 'hint', toPlayerIndex: idx, ...save.hint },
-            reason: `save ${hand[chop].color} ${hand[chop].number} on chop (${save.how})`,
+            reason: `save ${hand[save.index].color} ${hand[save.index].number} on chop (${save.how})`,
           };
         }
       }
