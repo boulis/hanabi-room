@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '1.8';
+export const BOT_VERSION = '1.9';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -523,6 +523,17 @@ function findStallHint(view, hand) {
   return pick(clued) || pick(hand);
 }
 
+// A harmless stall hint to whoever accepts one (closest player first).
+function stallAction(view) {
+  const me = view.viewerIndex;
+  for (let step = 1; step < view.players.length; step++) {
+    const idx = (me + step) % view.players.length;
+    const stall = findStallHint(view, view.players[idx].hand);
+    if (stall) return { type: 'hint', toPlayerIndex: idx, ...stall };
+  }
+  return null;
+}
+
 // --- The decision. ---
 // view: an in-room playing view where view.currentPlayer === view.viewerIndex.
 // Returns { action, reason }.
@@ -646,27 +657,33 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS) {
         return { action: { type: 'discard', cardIndex: chop }, reason: 'chop (oldest untouched)' };
       }
     }
-    // Forced: every card is clued. Discard the oldest card that isn't
-    // provably critical — never throw away a known last copy (e.g. a fully
-    // identified rainbow 5) while a safer option exists.
+    // Every card is clued: teammates spent hints marking them all as worth
+    // keeping. Pick the least dangerous card — the oldest one that isn't
+    // provably a last copy. If even that card COULD be critical, and tokens
+    // remain, a harmless stall hint is cheaper than gambling a card the team
+    // paid hints to protect; a provably safe card is simply discarded (the
+    // draw keeps the game moving).
+    let forced = 0;
     for (let i = 0; i < myHand.length; i++) {
       if (!provablyCritical(view, myCombos[i])) {
-        return { action: { type: 'discard', cardIndex: i }, reason: 'forced: least dangerous' };
+        forced = i;
+        break;
       }
     }
-    return { action: { type: 'discard', cardIndex: 0 }, reason: 'forced: oldest card' };
+    const mightBeCritical = myCombos[forced].some(([c, n]) => identityCritical(view, c, n));
+    if (mightBeCritical && view.hintTokens > 0) {
+      const stall = stallAction(view);
+      if (stall) {
+        return { action: stall, reason: 'stall (nothing safe to discard)' };
+      }
+    }
+    return { action: { type: 'discard', cardIndex: forced }, reason: 'forced: least dangerous' };
   }
 
   // 6. Tokens are full — discarding is illegal, so stall with a harmless hint.
-  for (let step = 1; step < view.players.length; step++) {
-    const idx = (me + step) % view.players.length;
-    const stall = findStallHint(view, view.players[idx].hand);
-    if (stall) {
-      return {
-        action: { type: 'hint', toPlayerIndex: idx, ...stall },
-        reason: 'stall (tokens full)',
-      };
-    }
+  const stall = stallAction(view);
+  if (stall) {
+    return { action: stall, reason: 'stall (tokens full)' };
   }
 
   // 7. Tokens full AND nobody left to hint (lax endgame with empty hands):

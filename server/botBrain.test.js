@@ -211,10 +211,31 @@ test('bot: forced discard (all cards clued) avoids provably critical cards', () 
   hintAction(s, 0, 1, 'number', 5); // touches index 0: some 5 — critical whatever it is
   hintAction(s, 1, 0, 'number', 4); // stall back
   hintAction(s, 0, 1, 'number', 3); // touches 1-4: every card is now clued
+  s.hintTokens = 0;                 // no tokens → discarding is truly forced
   // No chop exists. The old fallback discarded index 0 blindly — a card that
   // is provably a 5 (a last copy in every world). Discard a 3 instead.
   const { action, reason } = decide(viewState(s, 1));
   assert.deepEqual(action, { type: 'discard', cardIndex: 1 }, reason);
+});
+
+test('bot: with every card clued and tokens to spend, stalls instead of discarding', () => {
+  const s = craftedState(
+    ['yellow_4', 'blue_4', 'green_3', 'white_3', 'red_3'],
+    ['green_5', 'blue_3', 'yellow_3', 'white_3', 'red_3'],
+    { next: ['yellow_5'] },
+  );
+  hintAction(s, 0, 1, 'number', 5);
+  hintAction(s, 1, 0, 'number', 4);
+  hintAction(s, 0, 1, 'number', 3); // every bot card is now clued
+  hintAction(s, 1, 0, 'number', 4);
+  discardAction(s, 0, 4);           // the other red_3 → the bot's 3s might be critical
+  // Teammates spent hints marking every card as worth keeping, and any of the
+  // 3s could now be the critical red_3 — burning one is worse than spending
+  // a token on a harmless keep-hint. (A provably safe card would just be
+  // discarded; see the forced-discard test.)
+  const { action, reason } = decide(viewState(s, 1));
+  assert.equal(action.type, 'hint', `should stall, not discard a protected card (got: ${reason})`);
+  assert.ok(reason.startsWith('stall'), reason);
 });
 
 test('bot: counts visible copies to pin a hinted card as playable', () => {

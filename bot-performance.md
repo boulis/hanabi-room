@@ -313,3 +313,38 @@ rainbowCriticalBlackReverse/35        2 27.26     3   33        0      1        
 rainbowCriticalBlackReverse/35        3 30.86    12   35        1      0           0.84
 rainbowCriticalBlackReverse/35        4 29.74     8   34        0      2           1.02
 ```
+
+## 1.9 — stall instead of discarding protected cards
+
+Found via the same live game as 1.8 (move 41): every card in the bot's hand
+was clued, hint tokens were plentiful, no play hint existed — and the bot
+discarded a card the human had deliberately protected.
+
+When every card is clued and no chop exists, the bot picks the least
+dangerous card (oldest not provably a last copy) as before — but if even
+that card *could* be critical and hint tokens remain, it now spends a token
+on a harmless stall hint instead of gambling with a card the team paid hints
+to protect. A provably safe card is still discarded (the draw keeps the deck
+moving) — an unconditional stall was tried first and cost points at 2
+players by burning tokens and stalling the deck.
+
++0.15 avg per row over 1.8 at 150 seeds/row (rainbow 2p +0.69,
+rainbowCriticalBlack 3p +0.66).
+
+```
+simple/25                             2 23.34    11   25       21      0           0.54
+simple/25                             3 22.92    15   25       14      1           0.42
+simple/25                             4 23.36    19   25       16      1           0.54
+rainbow/30                            2 27.30    13   30       12      1           0.38
+rainbow/30                            3 28.58    26   30       15      0           0.22
+rainbow/30                            4 27.58    19   30       12      1           0.68
+rainbowCritical/30                    2 26.20    18   30        7      0           0.80
+rainbowCritical/30                    3 26.52    13   30        7      2           0.78
+rainbowCritical/30                    4 26.60    19   30        4      0           0.96
+rainbowCriticalBlack/35               2 27.10     8   34        0      2           1.16
+rainbowCriticalBlack/35               3 31.12    14   35        9      1           1.02
+rainbowCriticalBlack/35               4 30.82    13   35        5      1           1.00
+rainbowCriticalBlackReverse/35        2 27.52    13   35        1      0           0.78
+rainbowCriticalBlackReverse/35        3 30.80    11   35        2      0           0.98
+rainbowCriticalBlackReverse/35        4 29.62     9   35        3      1           1.10
+```
