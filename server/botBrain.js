@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.2';
+export const BOT_VERSION = '2.3';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -892,6 +892,34 @@ function stallAction(view) {
   return null;
 }
 
+// A stall we're forced into (no play, nothing safe to discard) spends a hint
+// token on a do-nothing keep-hint. If a partner's chop is save-worthy, spend
+// that same token protecting it instead — even when the partner has a pending
+// play, so the section-0 save was skipped on the assumption they'll play and
+// not discard. The save is free here (we were going to burn the token anyway)
+// and it guards the critical card if the partner discards after all — the exact
+// failure where a known-playable partner still dumps their critical chop.
+// Returns { action, reason } (protective save preferred, harmless stall else).
+export function protectiveStall(view, conventions = STANDARD_CONVENTIONS) {
+  const me = view.viewerIndex;
+  for (let step = 1; step < view.players.length; step++) {
+    const idx = (me + step) % view.players.length;
+    const hand = view.players[idx].hand;
+    const chop = chopIndex(hand);
+    if (chop >= 0 && saveWorthy(view, hand[chop])) {
+      const save = findSaveHint(view, idx, chop, conventions);
+      if (save) {
+        return {
+          action: { type: 'hint', toPlayerIndex: idx, ...save.hint },
+          reason: `stall-save ${hand[chop].color} ${hand[chop].number} on ${view.players[idx].name}'s chop (${save.how})`,
+        };
+      }
+    }
+  }
+  const stall = stallAction(view);
+  return stall ? { action: stall } : null;
+}
+
 // --- The decision. ---
 // view: an in-room playing view where view.currentPlayer === view.viewerIndex.
 // Returns { action, reason }.
@@ -1054,18 +1082,19 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
     }
     const mightBeCritical = myCombos[forced].some(([c, n]) => identityCritical(view, c, n));
     if (mightBeCritical && view.hintTokens > 0) {
-      const stall = stallAction(view);
+      const stall = protectiveStall(view, conventions);
       if (stall) {
-        return { action: stall, reason: 'stall (nothing safe to discard)' };
+        return { reason: 'stall (nothing safe to discard)', ...stall };
       }
     }
     return { action: { type: 'discard', cardIndex: forced }, reason: 'forced: least dangerous' };
   }
 
-  // 6. Tokens are full — discarding is illegal, so stall with a harmless hint.
-  const stall = stallAction(view);
+  // 6. Tokens are full — discarding is illegal, so stall with a harmless hint
+  //    (or a protective save on a partner's critical chop, same cost).
+  const stall = protectiveStall(view, conventions);
   if (stall) {
-    return { action: stall, reason: 'stall (tokens full)' };
+    return { reason: 'stall (tokens full)', ...stall };
   }
 
   // 7. Tokens full AND nobody left to hint (lax endgame with empty hands):

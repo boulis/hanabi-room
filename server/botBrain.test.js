@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createInitialState } from './game.js';
 import { annotateAction, discardAction, hintAction, playAction } from './rules.js';
 import { viewState } from './view.js';
-import { alarmGuards, colorPlayTargets, decide, handCombos, mergedColorTargets, rememberColorTargets } from './botBrain.js';
+import { alarmGuards, colorPlayTargets, decide, handCombos, mergedColorTargets, protectiveStall, rememberColorTargets } from './botBrain.js';
 
 const COLORS = ['red', 'yellow', 'green', 'blue', 'white'];
 const DIST = [1, 1, 1, 2, 2, 3, 3, 4, 4, 5];
@@ -146,6 +146,30 @@ test('bot: without memory, mergedColorTargets is exactly colorPlayTargets', () =
   hintAction(s, 0, 1, 'color', 'red');
   const hand = viewState(s, 1).players[1].hand;
   assert.deepEqual(mergedColorTargets(hand, null), colorPlayTargets(hand));
+});
+
+test('bot: a forced stall protects a partner\'s critical chop instead of a useless hint', () => {
+  // Player 0 plays their 1, leaving a critical 5 (red_5, last copy) on their
+  // chop. When the bot is reduced to stalling, the otherwise-wasted hint token
+  // should protect that 5 rather than emit a do-nothing keep-hint.
+  const s = craftedState(
+    ['red_1', 'red_5', 'green_2', 'blue_2', 'yellow_2'],
+    ['green_4', 'red_4', 'blue_4', 'white_4', 'yellow_3'],
+    { next: ['green_3'] }, // player 0's draw after their play — not a 5
+  );
+  playAction(s, 0, 0); // p0 plays red_1; chop is now red_5 (critical)
+  const view = viewState(s, 1);
+
+  const prot = protectiveStall(view);
+  assert.equal(prot.action.type, 'hint');
+  assert.equal(prot.action.toPlayerIndex, 0);
+  assert.match(prot.reason, /stall-save red 5/);
+  // The hint actually touches red_5 — a number 5 keep, or a red colour pin.
+  assert.ok(
+    (prot.action.hintType === 'number' && prot.action.value === 5)
+    || (prot.action.hintType === 'color' && prot.action.value === 'red'),
+    `hint should cover red_5, got ${JSON.stringify(prot.action)}`,
+  );
 });
 
 test('bot: number hint means keep — discards chop instead of playing', () => {

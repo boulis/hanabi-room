@@ -477,3 +477,41 @@ rainbowCriticalBlackReverse/35        2 26.66    11   35        1      0        
 rainbowCriticalBlackReverse/35        3 31.12    11   35        3      2           1.04
 rainbowCriticalBlackReverse/35        4 30.54     9   35        5      0           1.42
 ```
+
+## 2.3 — a forced stall protects a partner's critical chop
+
+When the bot has no play and nothing safe to discard, it stalls with a harmless
+keep-hint. Previously that token did nothing. Now, if a partner's chop is
+save-worthy (a critical or lone 2), the stall spends the same token protecting
+it instead (`protectiveStall`).
+
+This closes a real hole seen in play: the section-0 save is skipped when the
+partner has a *pending play* (the bot assumes they'll play, not discard). But a
+partner can still dump their critical chop — a human misread, or their own view
+differing — and the bot, having concluded it must stall anyway, would emit a
+useless hint while a last-copy critical sat one discard from death. Since the
+stall token is otherwise wasted, protecting the chop is free insurance: it costs
+nothing when the partner does play, and saves the pile when they don't.
+
+Net gain in self-play, concentrated at 3-4 players and in the critical variants
+where losing a last copy caps a whole pile (rainbow 2p 26.54→27.02, rainbowCritical
+3p 26.84→27.34 and 4p 26.72→27.18, rainbowCriticalBlack 3p 31.50→31.84); two rows
+dip within noise (rainbowCritical 2p −0.16, reverse 3p −0.10).
+
+```
+simple/25                             2 23.34    11   25       22      2           0.54
+simple/25                             3 23.78    17   25       20      1           0.46
+simple/25                             4 23.88    20   25       21      1           0.52
+rainbow/30                            2 27.02    17   30       14      2           0.66
+rainbow/30                            3 29.10    25   30       26      0           0.26
+rainbow/30                            4 28.34    22   30       22      1           0.46
+rainbowCritical/30                    2 25.92    19   30        6      2           0.86
+rainbowCritical/30                    3 27.34    18   30        9      3           0.84
+rainbowCritical/30                    4 27.18    21   30        2      0           0.88
+rainbowCriticalBlack/35               2 27.02     8   34        0      3           1.18
+rainbowCriticalBlack/35               3 31.84    15   35       15      2           1.16
+rainbowCriticalBlack/35               4 31.12    18   35        3      0           1.28
+rainbowCriticalBlackReverse/35        2 26.80    12   35        1      0           1.20
+rainbowCriticalBlackReverse/35        3 31.02    13   35        1      2           1.10
+rainbowCriticalBlackReverse/35        4 31.38    17   35        5      1           1.46
+```
