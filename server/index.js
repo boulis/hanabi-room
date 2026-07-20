@@ -149,6 +149,7 @@ async function serverLobbyView() {
     basename: s.basename,
     variantId: s.variantId,
     playerNames: s.playerNames,
+    playerBots: s.playerBots,
     moves: s.moves,
     startedAt: s.startedAt,
   }));
