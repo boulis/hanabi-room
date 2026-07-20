@@ -202,6 +202,54 @@ test('bot: saves the next player\'s critical chop with a number hint', () => {
   assert.deepEqual(action, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 5 }, reason);
 });
 
+test('bot (2p): gives the next player a play hint instead of parking their critical chop', () => {
+  // p1's chop is a critical red_5, but p1 also holds a playable green_1. Rather
+  // than a bare "5" keep-save (which would make p1 discard a useful card next
+  // turn to sit behind the clue), the bot hands them the green play hint: p1
+  // plays instead of discarding, the red_5 survives untouched, and the bot —
+  // strictly alternating in 2p — comes back to save it next turn.
+  const s = craftedState(
+    ['yellow_4', 'blue_4', 'green_2', 'white_2', 'red_4'],
+    ['red_5', 'green_1', 'blue_3', 'white_3', 'yellow_3'],
+  );
+  const { action, reason } = decide(viewState(s, 0));
+  assert.deepEqual(
+    action,
+    { type: 'hint', toPlayerIndex: 1, hintType: 'color', value: 'green' },
+    `should defer the red_5 save and hand p1 the green play (got: ${reason})`,
+  );
+  assert.match(reason, /defers red 5/);
+});
+
+test('bot (3p): the play-hint deferral does NOT apply — the critical chop is saved', () => {
+  // Same shape as the 2p case, but with three players the strict-alternation
+  // guarantee is gone, so the deferral is gated off and the bot saves red_5
+  // with the plain "5" keep-hint (the pre-2.6 behaviour).
+  const s = craftedState3(
+    ['yellow_4', 'blue_4', 'green_2', 'white_2', 'red_4'],
+    ['red_5', 'green_1', 'blue_3', 'white_3', 'yellow_3'],
+    ['yellow_4', 'blue_4', 'white_4', 'red_3', 'green_3'],
+  );
+  const { action, reason } = decide(viewState(s, 0));
+  assert.deepEqual(
+    action,
+    { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 5 },
+    `3p should save the critical chop, not defer (got: ${reason})`,
+  );
+});
+
+test('bot: prefers a two-play "1" hint over a colour hint that reveals one', () => {
+  // p1 holds two playable 1s of different colours (green_1, blue_1). A colour
+  // hint reveals a single one; a lone "1" hint sends both. The colour-as-a-class
+  // preference yields because the number hint starts strictly more cards playing.
+  const s = craftedState(
+    ['white_4', 'red_4', 'green_4', 'blue_3', 'yellow_4'],
+    ['green_1', 'blue_1', 'red_3', 'white_3', 'yellow_3'],
+  );
+  const { action, reason } = decide(viewState(s, 0));
+  assert.deepEqual(action, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 1 }, reason);
+});
+
 test('bot: urgent save outranks its own playable card', () => {
   const s = craftedState(
     ['green_1', 'blue_3', 'red_2', 'white_2', 'red_4'],
@@ -436,6 +484,20 @@ test('bot: alarms when one hint cannot protect two expensive endangered cards', 
   const { action, reason } = decide(viewState(s, 0));
   assert.deepEqual(action, { type: 'discard', cardIndex: 1 }, reason);
   assert.ok(reason.startsWith('ALARM'), reason);
+});
+
+test('bot: hints the certain criticals instead of alarming when the only exposed card is a recoverable 2', () => {
+  // p1's chop is a lone green_2 — its twin is still in the deck, so losing it
+  // costs zero pile points — sitting in front of two critical 5s. One "5" hint
+  // protects both 5s and exposes only that recoverable 2, so the bot just hints;
+  // it does NOT burn a self-sacrificing alarm to protect a 2 the twin makes free.
+  const s = craftedState(
+    ['white_4', 'red_4', 'green_4', 'red_3', 'yellow_3'],
+    ['green_2', 'blue_5', 'white_5', 'red_4', 'yellow_4'],
+  );
+  const { action, reason } = decide(viewState(s, 0));
+  assert.deepEqual(action, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 5 }, reason);
+  assert.ok(!reason.startsWith('ALARM'), reason);
 });
 
 test('bot: alarms with a useful touched discard when a critical chop needs saving at 0 tokens', () => {

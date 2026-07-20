@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.5';
+export const BOT_VERSION = '2.6';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -562,7 +562,11 @@ function playHintCandidates(view, seat, conventions) {
 // The best valid play hint for `seat`, or null. Colour hints outrank number
 // hints as a class (they leave a lasting pending-target obligation); the
 // score picks the best option *within* the class. Ties keep the first
-// candidate in enumeration order, so the choice is deterministic.
+// candidate in enumeration order, so the choice is deterministic. The one
+// exception to the class preference: a number hint that starts strictly MORE
+// cards playing than the best colour hint wins — a single "1" hint that sends
+// two 1s at once (play-all-1s) is worth more tempo than a colour hint that
+// reveals just one, and card economy trumps the colour bonus there.
 function findPlayHint(view, seat, conventions) {
   let bestColor = null;
   let bestNumber = null;
@@ -573,7 +577,10 @@ function findPlayHint(view, seat, conventions) {
       bestNumber = cand;
     }
   }
-  const best = bestColor || bestNumber;
+  let best = bestColor || bestNumber;
+  if (bestColor && bestNumber && bestNumber.playIdxs.length > bestColor.playIdxs.length) {
+    best = bestNumber;
+  }
   return best && best.hint;
 }
 
@@ -913,9 +920,15 @@ function pickSave(view, seat, chop, conventions) {
       : touchedColorSet(view, hint.value).has(card.color));
     return hand.findIndex((card) => !card.colorClued && !card.numberClued && !touches(card));
   };
-  const cost = (i) => (i >= 0 && saveWorthy(view, hand[i])
-    ? Math.max(1, discardCost(view, hand[i].color, hand[i].number))
-    : 0);
+  // Pile points lost if the card at index i is discarded. A lone-2 whose twin
+  // is still in the deck is save-worthy but NOT identityCritical, so its
+  // discardCost is 0 — losing it costs no pile points (the twin will come). It
+  // must therefore weigh less than a certain last-copy (a 5, or a 2 whose twin
+  // is already gone) when we choose which exposure to accept and whether to
+  // alarm; flooring it to 1 made a recoverable 2 look as expensive as a
+  // guaranteed critical, which triggered self-sacrificing alarms to protect a
+  // 2 while a genuine critical sat exposed.
+  const cost = (i) => (i >= 0 ? discardCost(view, hand[i].color, hand[i].number) : 0);
   const primaryExposed = exposedIndex(primary.hint);
   let best = { index: chop, ...primary, exposed: cost(primaryExposed) };
   if (best.exposed > 0) {
@@ -1030,7 +1043,30 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
       if (chop >= 0 && saveWorthy(view, hand[chop])) {
         const save = view.hintTokens > 0 ? pickSave(view, idx, chop, conventions) : null;
         const exposed = save ? save.exposed ?? 0 : 0;
-        if (conventions.alarmDiscards && idx === nextIndex && (!save || exposed > 0)) {
+        // Prefer handing this player a play over parking their chop behind a
+        // keep/pin clue. A hinted player plays rather than discards, so the
+        // endangered chop survives this turn untouched — and because we strictly
+        // alternate with them, we come back around to save it for real before
+        // they could ever discard it. Deferring buys tempo (they don't burn a
+        // turn discarding a useful card just to sit behind the clue, which is
+        // what parking the chop makes them do) and can save a token later — a
+        // card drawn onto the same colour may let one hint then cover both.
+        // Skip when the chop is playable now (a play-save both scores AND
+        // protects, strictly better) or in the final round (no next turn to
+        // defer the save into). Restricted to 2-player: only there does the
+        // strict alternation guarantee we re-save in time, and only there does
+        // tempo dominate enough to beat spending a second token on the deferred
+        // save (benchmarks regress slightly at 3-4 players).
+        if (view.players.length === 2 && save && save.how !== 'play' && view.finalTurn === null) {
+          const playHint = findPlayHint(view, idx, conventions);
+          if (playHint) {
+            urgentSave = {
+              action: { type: 'hint', toPlayerIndex: idx, ...playHint },
+              reason: `play hint for ${view.players[idx].name} (defers ${hand[chop].color} ${hand[chop].number} chop save)`,
+            };
+          }
+        }
+        if (!urgentSave && conventions.alarmDiscards && idx === nextIndex && (!save || exposed > 0)) {
           const chopCost = Math.max(1, discardCost(view, hand[chop].color, hand[chop].number));
           const alarm = findAlarmMove(view, myHand, myCombos, Math.max(chopCost, exposed));
           if (alarm) urgentSave = alarm;

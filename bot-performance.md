@@ -636,3 +636,71 @@ rainbowCriticalBlackReverse/35        2 28.86    15   34        0      0        
 rainbowCriticalBlackReverse/35        3 31.00    13   35        2      0           0.50
 rainbowCriticalBlackReverse/35        4 31.14    17   35        3      1           0.66
 ```
+
+## 2.6 — read the receiver: defer premature saves, prefer multi-play hints, stop over-valuing recoverable 2s
+
+Three fixes, all surfaced in one live human-vs-bot game (rainbowCritical), all
+the same mistake: the bot mis-read what the human would actually do with a hint.
+
+**(1) Hand a play instead of parking the critical chop (2-player).** At turn 2
+the bot gave a bare "5" keep-save to protect the human's critical red-5 chop —
+but the human had cards to play. A human prioritises playing, so the save was
+premature: it parked the chop behind a clue and, next turn, the human discarded
+a *useful* card instead of playing. The save logic now looks ahead: when the
+next player's chop is save-worthy but *not* playable now (so the save would only
+park it), and that player also holds a hintable play, the bot gives the **play
+hint instead** and defers the save. The hinted player plays rather than
+discards, so the chop survives untouched — and because 2-player turns strictly
+alternate, the bot re-saves it before the receiver could ever discard it.
+Deferring buys tempo and can save a token later (a same-colour draw may let one
+hint cover both). A play-save (chop playable now) still wins outright; the final
+round is excluded. Restricted to **2-player**, where the alternation guarantee
+and tempo pressure both hold — 3-4 player rows are unaffected by this fix.
+
+**(2) A multi-play number hint beats a single-play colour hint.** `findPlayHint`
+preferred any colour hint over any number hint as a class (1.4 found that
+ordering load-bearing). But a single "1" hint that sends *two* 1s at once
+(play-all-1s) is worth more tempo than a colour hint revealing one — so when the
+best number hint starts strictly more cards playing than the best colour hint,
+it now wins (colour still breaks ties at equal play-count). "Tell me the 1s" now
+does exactly that. Score-flat in self-play (a bot reads a single colour hint
+just as well; the gain is for a human who would otherwise discard an un-hinted
+playable 1), the same shape as 2.4.
+
+**(3) A recoverable lone-2 no longer triggers a self-sacrificing alarm.**
+`pickSave`'s exposure-cost floored every save-worthy card to ≥1 point, so a
+lone-2 whose twin is still in the deck (save-worthy but not `identityCritical`,
+so `discardCost` 0) looked as costly to lose as a certain last-copy. With a
+chop-2 sitting in front of two critical 5s and 7 tokens in hand, the bot judged
+"save the 2 → expose a 5" and "save the 5s → expose the 2" a tie, kept the
+2-save, and — a save-worthy 5 still exposed — raised an alarm (which, via the
+guard convention, would have cost the *certain* 5 to protect the recoverable 2).
+Dropping the floor lets the true pile cost speak: the lone-2 weighs 0, so the
+bot simply hints the 5s. The alarm still fires when two genuine criticals
+collide.
+
+Combined vs 2.5 at 150 seeds/row: **2-player +0.63/row** (driven by (1), biggest
+on the critical variants — rainbowCriticalBlack 27.29→28.46, reverse
+27.03→28.31), **3-player +0.12/row** (mostly (3)), **4-player −0.09/row** (a
+small cost from (2) in the rainbow variants); net +0.22/row. The 50-seed table
+below is the raw `npm run benchmark` output — simple 2p reads low there, but
+that's noise (it's flat at 150 seeds).
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 22.60    13   25       21      1           0.48
+simple/25                             3 24.08    17   25       28      1           0.40
+simple/25                             4 23.96    20   25       27      0           0.52
+rainbow/30                            2 27.84    19   30       16      0           0.26
+rainbow/30                            3 28.72    16   30       28      0           0.26
+rainbow/30                            4 28.22    22   30       14      1           0.68
+rainbowCritical/30                    2 26.74    13   30       12      0           0.34
+rainbowCritical/30                    3 27.74    18   30       16      1           0.50
+rainbowCritical/30                    4 27.22    19   30        9      0           0.64
+rainbowCriticalBlack/35               2 28.78    14   35        2      0           0.56
+rainbowCriticalBlack/35               3 32.48    19   35       14      0           0.46
+rainbowCriticalBlack/35               4 30.94    17   35        4      1           0.66
+rainbowCriticalBlackReverse/35        2 28.30    18   34        0      1           0.66
+rainbowCriticalBlackReverse/35        3 31.58    19   35        6      0           0.70
+rainbowCriticalBlackReverse/35        4 30.90    16   35        9      0           0.70
+```
