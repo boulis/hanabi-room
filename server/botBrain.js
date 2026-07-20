@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.6';
+export const BOT_VERSION = '2.7';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -789,6 +789,20 @@ function forcedPlayStep(view, conventions, memory) {
   return null;
 }
 
+// Expected pile-point cost of discarding one of our own UNKNOWN cards. An
+// unclued card is a uniform draw from what we cannot see (our own hand + the
+// deck), so each candidate identity that is a last remaining copy contributes
+// its discardCost weighted by 1/unseen (exactly one copy of a critical sits
+// unseen). Non-critical candidates cost nothing — another copy is still out
+// there. This is what the sacrifice really risks, on average.
+function expectedDiscardCost(view, combos) {
+  const unseen = view.players[view.viewerIndex].hand.length + view.deckSize;
+  if (unseen <= 0) return 0;
+  let sum = 0;
+  for (const [c, n] of combos) sum += discardCost(view, c, n);
+  return sum / unseen;
+}
+
 // Sender side of the alarm convention: an out-of-the-ordinary discard that
 // tells the next player something is amiss, used when hints can't cover the
 // danger (no tokens at all, or one hint can't protect two endangered cards).
@@ -809,17 +823,32 @@ function findAlarmMove(view, myHand, myCombos, savedCost) {
     return { action: { type: 'discard', cardIndex: i }, reason: 'ALARM: discarding a useful touched card' };
   }
   // The riskier alarm types throw away an UNKNOWN own card (the chop, or a
-  // card past it) — only worth it when the endangered value clearly exceeds
-  // that price.
+  // card past it). Two ways to clear the bar:
+  //   - mid-game: the endangered value must clearly beat the price of burning
+  //     an own card AND the downstream cost of the alarm itself (it forces the
+  //     partner to guard two cards, clogging their hand for the rest of the
+  //     game) — a fixed static threshold of 2 prices that in;
+  //   - late game (deck nearly empty): little game is left for the guard-clog
+  //     to hurt and any lost critical is permanent, so the downstream cost
+  //     nearly vanishes and the plain EV test applies — sacrifice when the sure
+  //     save (savedCost) beats the EXPECTED pile cost of the specific card we
+  //     throw (an unclued card near the end is mostly spent copies, ~0.5).
   const chop = chopIndex(myHand);
-  if (savedCost >= 2 && chop >= 0 && myCombos.some((cs) => knownPlayable(view, cs))) {
+  const late = view.deckSize <= 10;
+  const worthIt = (i) => savedCost >= 2 || (late && savedCost > expectedDiscardCost(view, myCombos[i]));
+  if (chop >= 0 && myCombos.some((cs) => knownPlayable(view, cs)) && worthIt(chop)) {
     return { action: { type: 'discard', cardIndex: chop }, reason: 'ALARM: discarding instead of an obvious play' };
   }
-  if (savedCost >= 2 && chop >= 0) {
+  if (chop >= 0) {
+    let best = -1;
+    let bestExp = Infinity;
     for (let i = chop + 1; i < myHand.length; i++) {
-      if (!touched(myHand[i]) && !myHand[i].annotations?.guarded) {
-        return { action: { type: 'discard', cardIndex: i }, reason: 'ALARM: discarding past the chop' };
-      }
+      if (touched(myHand[i]) || myHand[i].annotations?.guarded) continue;
+      const exp = expectedDiscardCost(view, myCombos[i]);
+      if (exp < bestExp) { best = i; bestExp = exp; }
+    }
+    if (best >= 0 && (savedCost >= 2 || (late && savedCost > bestExp))) {
+      return { action: { type: 'discard', cardIndex: best }, reason: 'ALARM: discarding past the chop' };
     }
   }
   let best = -1;
@@ -944,6 +973,40 @@ function pickSave(view, seat, chop, conventions) {
   return best;
 }
 
+// A colour "sweep" save: in rainbow-bearing variants one colour hint touches
+// every rainbow card at once, so it can clue TWO endangered criticals the same
+// turn — something no single number hint can do when they differ (a rainbow 5
+// on the chop with a rainbow 4 right behind it). The price is that the hint's
+// newest touched card becomes a play target; we only sweep when that newest
+// card is provably useless (dead), so the induced play is a harmless misfire —
+// or the receiver, seeing it is dead, simply keeps everything. Either way both
+// criticals end up clued and off the chop. This is the hint-form of the alarm:
+// a deliberate throwaway (here a wasted play, not a discard) that buys the
+// protection a normal save can't. Used only when a normal save can't shield
+// every endangered card and a fuse can be spared. `endangered` is the set of
+// save-worthy untouched card indices in the receiver's hand.
+function findSweepSave(view, seat, endangered) {
+  if (endangered.length < 2) return null;
+  const hand = view.players[seat].hand;
+  for (const color of view.hintableColors) {
+    const touched = colorHintTouches(view, hand, color);
+    if (touched.length < 2) continue;
+    const newest = touched[touched.length - 1];
+    // The play target the hint creates must be a dead card (harmless misfire),
+    // and none of the criticals may be the newest (they'd become the target).
+    if (endangered.includes(newest.i)) continue;
+    if (!isUseless(view, newest.card.color, newest.card.number)) continue;
+    // Every endangered critical must be swept off the chop (clued).
+    if (!endangered.every((i) => touched.some((t) => t.i === i))) continue;
+    // The dead newest must be the ONLY play the hint reads as — no other
+    // touched card should come out provably playable and misfire.
+    const after = combosFor(view, afterColorHint(view, hand, color), [seat, view.viewerIndex]);
+    if (touched.some((t) => t.i !== newest.i && knownPlayable(view, after[t.i]))) continue;
+    return { hint: { hintType: 'color', value: color }, newest: newest.i };
+  }
+  return null;
+}
+
 // Any legal hint that changes as little as possible: prefer re-hinting a
 // number the player already has clued (pure "keep" reinforcement).
 function findStallHint(view, hand) {
@@ -1066,6 +1129,29 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
             };
           }
         }
+        // Sweep save (preferred over a discard alarm): one colour hint clues
+        // two rainbow criticals at once, forcing a harmless misfire on a
+        // provably-dead newest card. It risks ZERO points — the thrown card is
+        // certainly useless — at the cost of a single fuse, which is nearly free
+        // with a couple to spare. A discard alarm instead sacrifices an UNKNOWN
+        // own card that might turn out critical, so the sweep is the safer of
+        // the two whenever it exists and a fuse can be spared.
+        if (!urgentSave && conventions.alarmDiscards && idx === nextIndex && exposed > 0
+          && view.hintTokens > 0 && view.fuseTokens >= 2) {
+          const endangered = hand
+            .map((c, i) => i)
+            .filter((i) => !hand[i].colorClued && !hand[i].numberClued
+              && !hand[i].annotations?.guarded && saveWorthy(view, hand[i]));
+          const sweep = findSweepSave(view, idx, endangered);
+          if (sweep) {
+            urgentSave = {
+              action: { type: 'hint', toPlayerIndex: idx, ...sweep.hint },
+              reason: `sweep-save ${endangered.map((i) => `${hand[i].color} ${hand[i].number}`).join(' + ')} (dead ${hand[sweep.newest].color} ${hand[sweep.newest].number} misfires)`,
+            };
+          }
+        }
+        // Discard alarm (fallback when no sweep exists): the next player guards
+        // their endangered cards after an out-of-the-ordinary discard.
         if (!urgentSave && conventions.alarmDiscards && idx === nextIndex && (!save || exposed > 0)) {
           const chopCost = Math.max(1, discardCost(view, hand[chop].color, hand[chop].number));
           const alarm = findAlarmMove(view, myHand, myCombos, Math.max(chopCost, exposed));

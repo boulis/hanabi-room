@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createInitialState } from './game.js';
+import { getVariant } from './variants.js';
 import { annotateAction, discardAction, hintAction, playAction } from './rules.js';
 import { viewState } from './view.js';
 import { alarmGuards, colorPlayTargets, decide, endgameHelpfulness, handCombos, mergedColorTargets, protectiveStall, rememberColorTargets } from './botBrain.js';
@@ -48,6 +49,42 @@ function craftedState3(p0, p1, p2) {
     endRule: 'lax',
     players: [{ id: 'a', name: 'Ann' }, { id: 'b', name: 'Bot' }, { id: 'c', name: 'Cy' }],
     deckCards: craftedDeck([p0, p1, p2]),
+  });
+}
+
+// Variant-aware crafted deck: same idea as craftedDeck but the owed multiset
+// comes from the chosen variant's suits (so rainbow/black cards can be placed).
+function craftedDeckV(variantId, hands, next = []) {
+  const variant = getVariant(variantId);
+  const drawOrder = [];
+  const handLen = Math.max(...hands.map((h) => h.length));
+  for (let i = 0; i < handLen; i++) for (const hand of hands) if (hand[i]) drawOrder.push(hand[i]);
+  drawOrder.push(...next);
+  const owed = new Map();
+  for (const suit of variant.suits) {
+    for (const n of suit.distribution) {
+      const k = `${suit.color}_${n}`;
+      owed.set(k, (owed.get(k) || 0) + 1);
+    }
+  }
+  for (const k of drawOrder) {
+    const left = owed.get(k);
+    if (!left) throw new Error(`crafted hand overdraws ${k}`);
+    owed.set(k, left - 1);
+  }
+  const rest = [];
+  for (const [k, count] of owed) for (let i = 0; i < count; i++) rest.push(k);
+  return [...drawOrder, ...rest];
+}
+
+function craftedStateV(variantId, p0, p1, opts = {}) {
+  return createInitialState({
+    variantId,
+    endRule: opts.endRule || 'lax',
+    players: [{ id: 'a', name: 'Ann' }, { id: 'b', name: 'Bot' }],
+    deckCards: craftedDeckV(variantId, [p0, p1], opts.next || []),
+    shareGuarded: true,
+    allowEmptyHints: true,
   });
 }
 
@@ -498,6 +535,24 @@ test('bot: hints the certain criticals instead of alarming when the only exposed
   const { action, reason } = decide(viewState(s, 0));
   assert.deepEqual(action, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 5 }, reason);
   assert.ok(!reason.startsWith('ALARM'), reason);
+});
+
+test('bot: sweep-saves two rainbow criticals with a colour hint that forces a dead-card misfire', () => {
+  // Ann plays her red_1 (red pile → 1) and draws a second red_1, now dead.
+  // Her hand becomes rainbow_5 (chop), rainbow_4, white_4, green_4, red_1(dead).
+  // Both rainbow 5 and 4 are critical and no single NUMBER hint saves both — but
+  // a red hint touches every rainbow card (and her dead red_1), with the dead
+  // red_1 as the newest touched card. The bot gives it: both rainbows are clued
+  // (off the chop) and the only play it induces is a harmless misfire.
+  const s = craftedStateV('rainbowCritical',
+    ['red_1', 'rainbow_5', 'rainbow_4', 'white_4', 'green_4'],
+    ['yellow_2', 'blue_2', 'white_2', 'green_2', 'yellow_3'],
+    { next: ['red_1'] },
+  );
+  playAction(s, 0, 0);
+  const { action, reason } = decide(viewState(s, 1));
+  assert.deepEqual(action, { type: 'hint', toPlayerIndex: 0, hintType: 'color', value: 'red' }, reason);
+  assert.match(reason, /sweep-save/);
 });
 
 test('bot: alarms with a useful touched discard when a critical chop needs saving at 0 tokens', () => {

@@ -704,3 +704,60 @@ rainbowCriticalBlackReverse/35        2 28.30    18   34        0      1        
 rainbowCriticalBlackReverse/35        3 31.58    19   35        6      0           0.70
 rainbowCriticalBlackReverse/35        4 30.90    16   35        9      0           0.70
 ```
+
+## 2.7 — save two criticals at once: the sweep, and a late-game alarm gate
+
+Found in a live human-vs-bot game (rainbowCritical, turn 65): the human held two
+rainbow criticals — a 5 on the chop with a 4 right behind — that no single
+*number* hint could both save, and the bot, unable to protect both, gave up one
+of them. Two ways to do better, both about spending something cheap to save a
+sure critical.
+
+**(1) Sweep save** (`findSweepSave`). In a rainbow-bearing variant one colour
+hint touches *every* rainbow card, so it clues both rainbow criticals at once —
+and if its newest touched card (the play target the convention creates) is a
+provably-dead card, the induced play is a harmless misfire (or the receiver,
+seeing it's dead, just keeps everything). Either way both criticals end up clued
+and off the chop. It risks **zero pile points** — the thrown card is certainly
+useless — for the price of at most one fuse, so it's preferred over a discard
+alarm whenever it exists and a fuse can be spared (`fuseTokens ≥ 2`). At turn 65
+the bot now plays the blue hint (blue pile already complete, so the touched
+blue 3 is the dead misfire) and keeps both rainbow 4 and 5.
+
+**(2) Expected-value alarm gate.** The "burn an unknown own card" alarm types
+(discard past the chop / discard the chop while holding a play) were gated to a
+static ≥2 endangered points. That's right *mid-game* — the alarm also forces the
+partner to guard two cards, clogging their hand for the rest of the game, a
+downstream cost the static 2 implicitly prices in. But near the end that clog
+barely matters and lost criticals are permanent, so the gate now relaxes in the
+late game (deck ≤ 10) to a direct EV test: sacrifice when the certain save beats
+the specific card's `expectedDiscardCost` (an unclued card near the end is mostly
+spent copies, ~0.5 average). The sweep is preferred when available; this covers
+the cases it can't reach.
+
+A pure EV gate (no late-game scoping) was tried first and regressed ~0.09/row —
+worst on the critical/reverse variants — by over-firing mid-game where the
+guard-clog cost is real; scoping it to the endgame removes that.
+
+Net **≈ flat vs 2.6** (−0.01/row at 150 seeds/row): both changes fire only in
+narrow two-critical spots, so self-play barely moves — the value is the
+human-facing saves they rescue. 50-seed `npm run benchmark`:
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 22.64    13   25       21      1           0.48
+simple/25                             3 24.08    17   25       28      1           0.40
+simple/25                             4 23.86    19   25       27      0           0.56
+rainbow/30                            2 27.60    18   30       16      1           0.34
+rainbow/30                            3 28.72    16   30       28      0           0.26
+rainbow/30                            4 28.22    22   30       14      1           0.68
+rainbowCritical/30                    2 26.78    13   30       13      0           0.38
+rainbowCritical/30                    3 27.70    18   30       16      1           0.52
+rainbowCritical/30                    4 27.32    19   30        9      0           0.68
+rainbowCriticalBlack/35               2 28.58    14   35        2      1           0.56
+rainbowCriticalBlack/35               3 32.44    19   35       14      0           0.48
+rainbowCriticalBlack/35               4 30.98    17   35        5      1           0.68
+rainbowCriticalBlackReverse/35        2 28.30    18   34        0      1           0.66
+rainbowCriticalBlackReverse/35        3 31.60    19   35        6      0           0.70
+rainbowCriticalBlackReverse/35        4 30.92    16   35        9      0           0.74
+```
