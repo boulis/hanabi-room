@@ -5,6 +5,24 @@ version does, and the full output of `npm run benchmark` at that version
 (50 seeds × all variants × 2/3/4 players, lax end rule, deterministic — the
 same code always reproduces the same numbers). Newest version last.
 
+Each table row is one variant × player-count combination; the columns are:
+
+| column | meaning |
+| ------ | ------- |
+| `variant` | variant id and its **maximum possible score** (`suits × 5`), e.g. `simple/25` |
+| `players` | number of players (2/3/4) |
+| `avg` | **average** score over the seeds in that run |
+| `min` | lowest score across those seeds |
+| `max` | highest score across those seeds |
+| `perfect` | **count** of games that ended with a perfect score |
+| `fused` | **count** of games lost to the third fuse |
+| `misplays/game` | **average** misplays per game (`3 − remaining fuse tokens`) |
+
+Note the mixed units: `perfect` and `fused` are counts out of the seed total,
+while `misplays/game` is a per-game average — they sit side by side but don't
+share a scale. The header line printed atop each table is the literal
+`npm run benchmark` output.
+
 ## 1.0 — newest-touched conventions (original)
 
 The initial rule-based brain. Conventions: a colour hint marks the newest
@@ -15,6 +33,7 @@ next player's critical chop with a number hint; stalls with a harmless number
 hint at full tokens.
 
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 20.06    13   25        4      3           0.32
 simple/25                             3 22.36    14   25       12      0           0.22
 simple/25                             4 22.42    12   25        8      1           0.38
@@ -48,6 +67,7 @@ rows), but 2-player scores *regress* vs 1.0 — the extra caution costs tempo
 when only one teammate can act on hints.
 
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 18.88    11   25        3      0           0.00
 simple/25                             3 23.56    19   25       23      0           0.18
 simple/25                             4 23.06    15   25       17      0           0.24
@@ -76,6 +96,7 @@ receiver simulation too.
 Small but broad gains over 1.1 on almost every row.
 
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 19.16    13   25        3      0           0.00
 simple/25                             3 23.58    18   25       25      0           0.18
 simple/25                             4 23.20    19   25       15      0           0.24
@@ -110,6 +131,7 @@ slightly with more misplays — 1s are end-of-pile cards there, so the
 convention gambles more.
 
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 19.62     7   25        4      1           0.16
 simple/25                             3 23.12    13   25       20      0           0.26
 simple/25                             4 23.38    18   25       17      0           0.36
@@ -143,6 +165,7 @@ noise: +0.12 avg per row, positive on 11 of 15 rows (best: reverse-black 3p
 +0.49, rainbowCritical 4p +0.38).
 
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 19.90     7   25        5      0           0.14
 simple/25                             3 22.68    13   25       10      0           0.20
 simple/25                             4 23.54    18   25       18      0           0.38
@@ -180,6 +203,7 @@ reverse-black variant up ~+1 at every seat count. Misplays drop sharply
 (reverse-black 2p from ~1.0 to ~0.3 per game).
 
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 21.40    16   25        6      0           0.06
 simple/25                             3 22.76    14   25       13      0           0.26
 simple/25                             4 23.18    20   25       12      0           0.36
@@ -221,6 +245,7 @@ Note: this table's misplay/fused columns read worse than 1.5's; the score
 columns are the ones that matter (see above for why).
 
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 21.44    16   25        6      1           0.48
 simple/25                             3 22.76    14   25       13      0           0.42
 simple/25                             4 23.18    20   25       12      0           0.52
@@ -260,6 +285,7 @@ seeds/row, positive on all 15 rows — up to +3.5 on reverse-black 2p and
 +2.3 to +2.8 on the other rainbow-variant 2p rows.
 
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 22.34    16   25       15      0           0.30
 simple/25                             3 22.96    13   25       17      1           0.36
 simple/25                             4 23.30    20   25       15      1           0.48
@@ -297,6 +323,7 @@ biggest on the critical-heavy variants (reverse-black 2p +1.18,
 rainbowCriticalBlack 2p +1.04, rainbowCritical 2p +0.75).
 
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 22.82    17   25       16      0           0.38
 simple/25                             3 22.92    13   25       13      1           0.40
 simple/25                             4 23.40    21   25       15      1           0.52
@@ -332,6 +359,7 @@ players by burning tokens and stalling the deck.
 rainbowCriticalBlack 3p +0.66).
 
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 23.34    11   25       21      0           0.54
 simple/25                             3 22.92    15   25       14      1           0.42
 simple/25                             4 23.36    19   25       16      1           0.54
@@ -373,6 +401,7 @@ alarm types (which burn an unknown own card) are price-gated to saves worth
 variants where guards clog 5-card hands.
 
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 23.32    11   25       21      1           0.52
 simple/25                             3 23.38    15   25       20      1           0.46
 simple/25                             4 23.84    19   25       21      1           0.54
@@ -418,6 +447,7 @@ and almost exclusively in the difficult variants (54 signals across 750
 is exactly the situation it was designed for in human-bot play.
 
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 23.32    11   25       21      1           0.52
 simple/25                             3 23.38    15   25       20      1           0.46
 simple/25                             4 23.84    19   25       21      1           0.54
@@ -461,6 +491,7 @@ colour-hinted card to eventually be played even after the bot has to shed a
 touched card.
 
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 23.32    11   25       21      1           0.52
 simple/25                             3 23.38    15   25       20      1           0.46
 simple/25                             4 23.84    19   25       21      1           0.54
@@ -499,6 +530,7 @@ where losing a last copy caps a whole pile (rainbow 2p 26.54→27.02, rainbowCri
 dip within noise (rainbowCritical 2p −0.16, reverse 3p −0.10).
 
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 23.34    11   25       22      2           0.54
 simple/25                             3 23.78    17   25       20      1           0.46
 simple/25                             4 23.88    20   25       21      1           0.52
@@ -540,6 +572,7 @@ reverse 4p 1.46→0.58): the gratuitous endgame misfires are gone. Fuse-outs als
 edge down.
 
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 23.38    11   25       24      1           0.18
 simple/25                             3 23.84    20   25       20      0           0.36
 simple/25                             4 23.88    20   25       21      1           0.40
@@ -586,6 +619,7 @@ players can leave it off.
 
 `--emptyhints`, convention ON:
 ```
+variant                         players   avg   min  max  perfect  fused  misplays/game
 simple/25                             2 23.52    20   25       22      0           0.12
 simple/25                             3 23.88    20   25       21      0           0.30
 simple/25                             4 23.92    21   25       22      0           0.44
