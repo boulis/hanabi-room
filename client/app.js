@@ -19,11 +19,15 @@ function joinPlayerNames(names, bots) {
 // Bot ids whose convention-options panel is expanded, so it survives the full
 // lobby re-render every sync triggers.
 const openBotOptions = new Set();
-// Toggleable per-bot convention options, in display order.
+// Toggleable per-bot convention options, in display order: key, label, and a
+// short explanation shown under the label.
 const BOT_OPTION_LABELS = [
-  ['alarmDiscards', 'Alarm discards'],
-  ['forcedPlaySignals', 'Forced plays'],
-  ['zeroHintPlaysChop', '0-card hint → play chop'],
+  ['alarmDiscards', 'Alarm discards',
+    'A warning signal for danger a hint can’t cover. The bot makes a deliberately odd discard (burning a useful card, or discarding despite an obvious play) to tell the next player "guard your oldest card". As receiver, it reacts to such a discard by guarding its own oldest unclued card(s).'],
+  ['forcedPlaySignals', 'Forced plays',
+    'A 2-player deadlock breaker for when hint tokens run out and one player is stuck with nothing safe to do. The free player’s discards step a pointer across the stuck player’s maybe-playable cards, and their eventual play commands the pointed card to be played.'],
+  ['zeroHintPlaysChop', '0-card hint → play chop',
+    'Only works if the room allows empty hints. A hint that touches none of your cards means "play your chop" — your oldest unclued card. The bot both sends these (when your chop is playable but not cleanly hintable) and obeys them.'],
 ];
 const ROOM_KEY = 'hanabi-room.roomId';
 const SPECTATE_KEY = 'hanabi-room.spectating';
@@ -931,7 +935,9 @@ function renderBotOptions(p) {
   title.textContent = 'Conventions';
   panel.append(title);
   const opts = p.botOptions || {};
-  for (const [key, text] of BOT_OPTION_LABELS) {
+  for (const [key, text, description] of BOT_OPTION_LABELS) {
+    const item = document.createElement('div');
+    item.className = 'bot-option-item';
     const row = document.createElement('label');
     row.className = 'bot-option';
     const cb = document.createElement('input');
@@ -941,7 +947,12 @@ function renderBotOptions(p) {
       send({ type: 'configureBot', playerId: p.id, options: { [key]: cb.checked } });
     });
     row.append(cb, document.createTextNode(' ' + text));
-    panel.append(row);
+    item.append(row);
+    const desc = document.createElement('div');
+    desc.className = 'bot-option-desc';
+    desc.textContent = description;
+    item.append(desc);
+    panel.append(item);
   }
   det.append(panel);
   return det;

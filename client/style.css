@@ -694,8 +694,9 @@ input, select {
   z-index: 5;
   top: 1.5rem;
   left: 0;
-  min-width: 12rem;
-  padding: 0.5rem 0.6rem;
+  width: 19rem;
+  max-width: 80vw;
+  padding: 0.5rem 0.7rem 0.6rem;
   background: Canvas;
   color: CanvasText;
   border: 1px solid #6b4fbb;
@@ -709,15 +710,23 @@ input, select {
   opacity: 0.6;
   margin-bottom: 0.35rem;
 }
+.bot-option-item { padding: 0.3rem 0; }
+.bot-option-item + .bot-option-item { border-top: 1px solid var(--border); }
 .bot-option {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.85rem;
-  padding: 0.15rem 0;
+  font-size: 0.88rem;
+  font-weight: 600;
   cursor: pointer;
 }
-.bot-option input { margin: 0; }
+.bot-option input { margin: 0; flex: none; }
+.bot-option-desc {
+  margin: 0.2rem 0 0 1.4rem;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  opacity: 0.72;
+}
 
 .player-row.active { border-color: #2b6ad1; box-shadow: 0 0 0 2px rgba(43,106,209,0.25); }
 .player-row header { padding: 0; border: 0; display: flex; gap: 0.5rem; align-items: center; }
