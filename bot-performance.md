@@ -556,3 +556,49 @@ rainbowCriticalBlackReverse/35        2 26.84    12   35        1      0        
 rainbowCriticalBlackReverse/35        3 31.10    13   35        1      0           0.46
 rainbowCriticalBlackReverse/35        4 31.42    17   35        5      1           0.58
 ```
+
+## 2.5 — zero-card-hint convention ("play your chop")
+
+When a room enables empty hints, a hint that touches none of the receiver's
+cards now means "play your chop". Receiver: honour it above everything (even a
+save — our own next action consumes the signal, so deferring loses the command)
+unless the chop is provably unplayable. Sender: a fallback, after ordinary play
+hints, for when a player's chop is playable but no clean play hint reaches it (a
+colour points elsewhere, a number is ambiguous) — signalled with a colour or
+number the receiver wholly lacks. Gated on `view.allowEmptyHints` and the
+`zeroHintPlaysChop` flag.
+
+Standard benchmark (empty hints off) is **bit-identical to 2.4** — bots never
+emit empty hints unless this convention tells them to, so the feature is inert
+in ordinary play. With `--emptyhints` (added to benchmark.mjs), convention on
+vs off:
+
+- 2-player is a clear win, concentrated in the hard variants
+  (rainbowCriticalBlackReverse 2p 26.84→28.86, rainbowCriticalBlack 2p
+  27.00→27.84), with fewer fuse-outs and misplays;
+- 3-4 player is modestly mixed (rainbow 3p 29.10→28.70, rainbowCriticalBlack 3p
+  31.88→31.56) — the receiver honouring a chop command over a downstream save
+  occasionally costs a critical when more than one teammate is exposed.
+
+Net positive overall, strongly so at 2 players (the natural home for a
+play-your-chop signal). Per-bot toggleable, so a table that dislikes it at 3-4
+players can leave it off.
+
+`--emptyhints`, convention ON:
+```
+simple/25                             2 23.52    20   25       22      0           0.12
+simple/25                             3 23.88    20   25       21      0           0.30
+simple/25                             4 23.92    21   25       22      0           0.44
+rainbow/30                            2 27.12    17   30       15      1           0.20
+rainbow/30                            3 28.70    22   30       21      0           0.30
+rainbow/30                            4 28.16    21   30       19      2           0.44
+rainbowCritical/30                    2 25.84    18   30        4      0           0.26
+rainbowCritical/30                    3 27.44    18   30       12      1           0.46
+rainbowCritical/30                    4 27.14    23   30        2      0           0.52
+rainbowCriticalBlack/35               2 27.84     8   34        0      3           0.46
+rainbowCriticalBlack/35               3 31.56    15   35       12      0           0.40
+rainbowCriticalBlack/35               4 31.16    18   35        4      0           0.48
+rainbowCriticalBlackReverse/35        2 28.86    15   34        0      0           0.48
+rainbowCriticalBlackReverse/35        3 31.00    13   35        2      0           0.50
+rainbowCriticalBlackReverse/35        4 31.14    17   35        3      1           0.66
+```

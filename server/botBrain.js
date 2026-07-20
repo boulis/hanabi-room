@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.4';
+export const BOT_VERSION = '2.5';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -40,6 +40,10 @@ export const STANDARD_CONVENTIONS = {
   // playable cards; their eventual play orders the pointed card played.
   // Needs driver-provided memory — see forcedPlayStep.
   forcedPlaySignals: true,
+  // Zero-card hint = "play your chop". Only meaningful when the room allows
+  // empty hints (view.allowEmptyHints); a hint that touches none of the
+  // receiver's cards tells them to play their oldest untouched card.
+  zeroHintPlaysChop: true,
 };
 
 export const CONVENTION_SETS = { standard: STANDARD_CONVENTIONS };
@@ -206,6 +210,38 @@ export function chopIndex(hand) {
     if (!hand[i].colorClued && !hand[i].numberClued && !hand[i].annotations?.guarded) return i;
   }
   return -1;
+}
+
+// Zero-card-hint convention (only when the room allows empty hints): a hint
+// touching none of the receiver's cards means "play your chop".
+// Receiver side — is such a signal live for us right now? The most recent hint
+// aimed at us was empty, and we haven't taken a turn since (our own play,
+// discard, or hint consumes it; a later non-empty hint to us overrides it).
+// Other players' actions between the signal and our turn are transparent.
+function emptyHintChopSignal(view) {
+  const me = view.viewerIndex;
+  for (let i = view.log.length - 1; i >= 0; i--) {
+    const e = view.log[i];
+    if (e.undone) continue;
+    if ((e.type === 'play' || e.type === 'discard') && e.playerIndex === me) return false;
+    if (e.type === 'hint' && e.fromIndex === me) return false;
+    if (e.type === 'hint' && e.toIndex === me) return e.touchedIndexes.length === 0;
+  }
+  return false;
+}
+
+// Sender side — a colour or number that touches none of `seat`'s cards, to use
+// as the "play your chop" signal. Colours first (a colour they wholly lack),
+// then an absent number. Null when every colour and number touches something.
+function findEmptyHint(view, seat) {
+  const hand = view.players[seat].hand;
+  for (const color of view.hintableColors) {
+    if (colorHintTouches(view, hand, color).length === 0) return { hintType: 'color', value: color };
+  }
+  for (const n of [1, 2, 3, 4, 5]) {
+    if (!hand.some((c) => c.number === n)) return { hintType: 'number', value: n };
+  }
+  return null;
 }
 
 // Every colour hint still marked on the hand contributes one pending play
@@ -988,6 +1024,19 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
     }
   }
 
+  // 0a. Zero-card-hint convention: an empty hint aimed at us is an explicit
+  //     "play your chop" command from a teammate who can see our hand. Honour
+  //     it above everything — including a save — because our own next action
+  //     consumes the signal, so deferring it loses the command entirely. Skip
+  //     only if the chop is provably unplayable (a careless empty hint); an
+  //     unclued chop is almost always possiblyPlayable, so this rarely bites.
+  if (conventions.zeroHintPlaysChop && view.allowEmptyHints && emptyHintChopSignal(view)) {
+    const chop = chopIndex(myHand);
+    if (chop >= 0 && possiblyPlayable(view, myCombos[chop])) {
+      return { action: { type: 'play', cardIndex: chop }, reason: 'empty hint: play chop' };
+    }
+  }
+
   // 0. The save outranks even our own play: the play keeps for next turn,
   //    the endangered card doesn't. Exception: in the final round a deferred
   //    play may never happen, so plays come first there.
@@ -1049,6 +1098,26 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
           action: { type: 'hint', toPlayerIndex: idx, ...hint },
           reason: `play hint for ${view.players[idx].name}`,
         };
+      }
+    }
+    // 4b. Zero-card-hint fallback: no ordinary play hint exists, but a player's
+    //     chop is playable — signal it with an empty hint (touches nothing) so
+    //     they play their chop. Closest player first, like the normal loop.
+    if (conventions.zeroHintPlaysChop && view.allowEmptyHints) {
+      for (let step = 1; step < view.players.length; step++) {
+        const idx = (me + step) % view.players.length;
+        if (hasPendingPlay(view, idx, conventions)) continue;
+        const chop = chopIndex(view.players[idx].hand);
+        if (chop < 0) continue;
+        const card = view.players[idx].hand[chop];
+        if (!isPlayable(view, card.color, card.number)) continue;
+        const empty = findEmptyHint(view, idx);
+        if (empty) {
+          return {
+            action: { type: 'hint', toPlayerIndex: idx, ...empty },
+            reason: `empty hint → play chop for ${view.players[idx].name}`,
+          };
+        }
       }
     }
   }

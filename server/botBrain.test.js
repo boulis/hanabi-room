@@ -679,6 +679,55 @@ test('bot: endgame tie-break ranks a play-enabling hint over a dead misfire or i
     'ranking: enable-play > discard > inert hint > dead misfire');
 });
 
+function zeroHintState(allowEmptyHints) {
+  // red pile at 2, green complete; Ann (p0) has nothing playable, Bot (p1)'s
+  // chop red_3 is playable but not cleanly hintable (a red hint points at
+  // red_5, a number-3 hint is ambiguous against dead green_3).
+  let id = 0;
+  const playedPiles = {
+    red: [1, 2].map((n) => bareCard(id++, 'red', n)),
+    green: [1, 2, 3, 4].map((n) => bareCard(id++, 'green', n)),
+    yellow: [], blue: [], white: [],
+  };
+  return {
+    status: 'playing', variantId: 'simple', endRule: 'lax',
+    shareGuarded: false, allowEmptyHints, seed: 1,
+    players: [
+      { id: 'a', name: 'Ann', hand: [bareCard(id++, 'white', 5), bareCard(id++, 'blue', 4), bareCard(id++, 'yellow', 5)] },
+      { id: 'b', name: 'Bot', hand: [bareCard(id++, 'red', 3), bareCard(id++, 'red', 5), bareCard(id++, 'blue', 4)] },
+    ],
+    deck: [], discard: [], playedPiles,
+    hintTokens: 5, fuseTokens: 3, currentPlayer: 0, turn: 20, finalTurn: null,
+    log: [], endReason: null, nextHintIndex: 0, nextLogSeq: 0,
+    startedAt: 0, endedAt: null, initialDeckCards: [],
+  };
+}
+
+test('bot: zero-card-hint convention signals and plays the chop', () => {
+  const s = zeroHintState(true);
+  // Sender: no play, no ordinary play hint for Bot's chop → signal it empty.
+  const send = decide(viewState(s, 0), undefined, {});
+  assert.equal(send.action.type, 'hint', send.reason);
+  assert.equal(send.action.toPlayerIndex, 1);
+  assert.match(send.reason, /empty hint/);
+  // It really touches nothing: a colour Bot wholly lacks (its cards are red/blue).
+  assert.equal(send.action.hintType, 'color');
+  assert.ok(!s.players[1].hand.some((c) => c.color === send.action.value),
+    `empty hint colour ${send.action.value} must touch none of Bot's cards`);
+
+  // Receiver: reads the empty hint as "play your chop" (red_3 at slot 0).
+  hintAction(s, 0, 1, send.action.hintType, send.action.value);
+  const recv = decide(viewState(s, 1), undefined, {});
+  assert.deepEqual(recv.action, { type: 'play', cardIndex: 0 }, recv.reason);
+  assert.match(recv.reason, /empty hint: play chop/);
+});
+
+test('bot: no empty-hint signal when the room disallows empty hints', () => {
+  const s = zeroHintState(false);
+  const send = decide(viewState(s, 0), undefined, {});
+  assert.notEqual(send.action.type, 'hint', `should not hint (got ${send.reason})`);
+});
+
 // Bots playing whole games against each other: the strongest regression net —
 // every rule interacts, and the game must actually end without the brain ever
 // proposing an illegal action (rules.js throws on those).

@@ -22,12 +22,15 @@ const seeds = Number(flag('seeds', '50'));
 const playerCounts = flag('players', '2,3,4').split(',').map(Number);
 const variantIds = flag('variants', Object.keys(VARIANTS).join(',')).split(',');
 const endRule = flag('end', 'lax');
+// Off by default (matches a fresh room); pass --emptyhints to exercise the
+// zero-card-hint convention (play-your-chop signals need allowEmptyHints).
+const allowEmptyHints = process.argv.includes('--emptyhints');
 
 function playOut(variantId, playerCount, seed) {
   const players = Array.from({ length: playerCount }, (_, i) => ({ id: `p${i}`, name: `Bot${i}` }));
   // shareGuarded lets the bots see each other's guard marks — the alarm
   // convention needs that to model teammates' chops accurately.
-  const state = createInitialState({ variantId, endRule, players, seed, shareGuarded: true });
+  const state = createInitialState({ variantId, endRule, players, seed, shareGuarded: true, allowEmptyHints });
   const memories = players.map(() => ({}));
   let guard = 0;
   while (state.status === 'playing' && guard++ < 1000) {
