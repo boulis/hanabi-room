@@ -8,6 +8,13 @@ const nameInput = document.getElementById('name-input');
 
 const PLAYER_KEY = 'hanabi-room.playerId';
 const NAME_KEY = 'hanabi-room.name';
+
+// Player names joined for display, each bot prefixed with the robot badge.
+// `bots` is a parallel boolean array (from a save summary's playerBots); a
+// missing array just renders plain names.
+function joinPlayerNames(names, bots) {
+  return (names || []).map((n, i) => (bots?.[i] ? `🤖 ${n}` : n)).join(', ');
+}
 const ROOM_KEY = 'hanabi-room.roomId';
 const SPECTATE_KEY = 'hanabi-room.spectating';
 const ART_KEY = 'hanabi-room.useArt';
@@ -649,7 +656,7 @@ function renderServerLobby(v) {
     label.append(title);
     const meta = document.createElement('div');
     meta.className = 'save-meta';
-    meta.textContent = `${s.variantId} · ${s.moves} moves · ${(s.playerNames || []).join(', ')}`;
+    meta.textContent = `${s.variantId} · ${s.moves} moves · ${joinPlayerNames(s.playerNames, s.playerBots)}`;
     label.append(meta);
     row.append(label);
     const resume = document.createElement('button');
@@ -723,7 +730,7 @@ function renderLibrary(entries) {
 
     const meta = document.createElement('div');
     meta.className = 'save-meta';
-    meta.textContent = `${e.variantId ?? ''}${e.playerNames ? ' · ' + e.playerNames.join(', ') : ''}`;
+    meta.textContent = `${e.variantId ?? ''}${e.playerNames ? ' · ' + joinPlayerNames(e.playerNames, e.playerBots) : ''}`;
     label.append(meta);
 
     if (e.tags && e.tags.length) {
