@@ -523,6 +523,30 @@ test('bot: alarms when one hint cannot protect two expensive endangered cards', 
   assert.ok(reason.startsWith('ALARM'), reason);
 });
 
+test('bot: with guards unshared, infers its own alarm guarded the criticals and does not re-alarm', () => {
+  // Same two-critical alarm as above (craftedState defaults shareGuarded off).
+  // The first decision alarms; the second, with the driver memory carried over,
+  // must treat the receiver's two oldest cards as guarded (we can't see the
+  // marks) and NOT alarm again to "save" cards already protected.
+  const s = craftedState(
+    ['red_2', 'blue_3', 'white_1', 'green_3', 'yellow_1'],
+    ['red_2', 'blue_3', 'yellow_4', 'green_4', 'white_4'],
+  );
+  hintAction(s, 0, 1, 'number', 4);
+  hintAction(s, 1, 0, 'number', 1);
+  discardAction(s, 0, 0);
+  hintAction(s, 1, 0, 'number', 1);
+  discardAction(s, 0, 0);
+  hintAction(s, 1, 0, 'number', 1);
+  const memory = {};
+  const first = decide(viewState(s, 0), undefined, memory);
+  assert.ok(first.reason.startsWith('ALARM'), `expected an alarm first (got: ${first.reason})`);
+  assert.equal(memory.inferredGuards?.size, 2, 'the alarm should record two inferred guards');
+  const second = decide(viewState(s, 0), undefined, memory);
+  assert.ok(!(second.reason || '').startsWith('ALARM'),
+    `should not re-alarm once guards are inferred (got: ${second.reason})`);
+});
+
 test('bot: hints the certain criticals instead of alarming when the only exposed card is a recoverable 2', () => {
   // p1's chop is a lone green_2 — its twin is still in the deck, so losing it
   // costs zero pile points — sitting in front of two critical 5s. One "5" hint

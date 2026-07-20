@@ -705,13 +705,15 @@ rainbowCriticalBlackReverse/35        3 31.58    19   35        6      0        
 rainbowCriticalBlackReverse/35        4 30.90    16   35        9      0           0.70
 ```
 
-## 2.7 — save two criticals at once: the sweep, and a late-game alarm gate
+## 2.7 — save two criticals at once (the sweep + a late-game alarm gate), and stop re-alarming already-guarded cards
 
-Found in a live human-vs-bot game (rainbowCritical, turn 65): the human held two
-rainbow criticals — a 5 on the chop with a 4 right behind — that no single
-*number* hint could both save, and the bot, unable to protect both, gave up one
-of them. Two ways to do better, both about spending something cheap to save a
-sure critical.
+Found in live human-vs-bot games (rainbowCritical). First, at turn 65 the human
+held two rainbow criticals — a 5 on the chop with a 4 right behind — that no
+single *number* hint could both save, and the bot, unable to protect both, gave
+up one of them. Then, in a later game, the bot fired the out-of-order discard
+alarm over and over even though the human had already guarded the endangered
+cards. Three fixes, all about spending something cheap to save a sure critical —
+and not paying twice.
 
 **(1) Sweep save** (`findSweepSave`). In a rainbow-bearing variant one colour
 hint touches *every* rainbow card, so it clues both rainbow criticals at once —
@@ -739,25 +741,39 @@ A pure EV gate (no late-game scoping) was tried first and regressed ~0.09/row �
 worst on the critical/reverse variants — by over-firing mid-game where the
 guard-clog cost is real; scoping it to the endgame removes that.
 
-Net **≈ flat vs 2.6** (−0.01/row at 150 seeds/row): both changes fire only in
-narrow two-critical spots, so self-play barely moves — the value is the
-human-facing saves they rescue. 50-seed `npm run benchmark`:
+**(3) Read (and infer) the receiver's guards.** The bot re-alarmed already-safe
+cards because `pickSave`'s "where does the next discard land" step ignored guard
+marks: after the human guarded their old criticals (moving their chop forward),
+the bot still counted a guarded critical as the exposed second card, saw a
+phantom double-save it couldn't cover, and alarmed again. That step now skips
+guarded cards, so with `shareGuarded` on the bot just gives the plain keep-hint
+for the one truly-endangered card. When guards are *not* shared the bot can't see
+them at all, so it now remembers what its own alarms prompt — the receiver guards
+their oldest 1–2 unclued cards (per the alarm convention) — in driver memory
+(`inferredGuards`) and re-applies them each turn (`recordInferredGuards` /
+`applyInferredGuards`), so it stops re-alarming the same cards. This is inert in
+the benchmark (which shares guards); its value is correctness in real play.
+
+Net **≈ flat vs 2.6** (−0.01/row at 150 seeds/row): all three fire only in narrow
+spots (and (3)'s shared-guard fix mostly *removes* wasted alarm-sacrifices, a
+small gain on the critical variants), so self-play barely moves — the value is
+the human-facing saves and the stopped double-alarms. 50-seed `npm run benchmark`:
 
 ```
 variant                         players   avg   min  max  perfect  fused  misplays/game
-simple/25                             2 22.64    13   25       21      1           0.48
-simple/25                             3 24.08    17   25       28      1           0.40
-simple/25                             4 23.86    19   25       27      0           0.56
-rainbow/30                            2 27.60    18   30       16      1           0.34
-rainbow/30                            3 28.72    16   30       28      0           0.26
-rainbow/30                            4 28.22    22   30       14      1           0.68
-rainbowCritical/30                    2 26.78    13   30       13      0           0.38
-rainbowCritical/30                    3 27.70    18   30       16      1           0.52
-rainbowCritical/30                    4 27.32    19   30        9      0           0.68
-rainbowCriticalBlack/35               2 28.58    14   35        2      1           0.56
-rainbowCriticalBlack/35               3 32.44    19   35       14      0           0.48
-rainbowCriticalBlack/35               4 30.98    17   35        5      1           0.68
-rainbowCriticalBlackReverse/35        2 28.30    18   34        0      1           0.66
-rainbowCriticalBlackReverse/35        3 31.60    19   35        6      0           0.70
-rainbowCriticalBlackReverse/35        4 30.92    16   35        9      0           0.74
+simple/25                             2 22.78    13   25       23      1           0.50
+simple/25                             3 24.08    17   25       28      1           0.42
+simple/25                             4 23.76    19   25       26      1           0.58
+rainbow/30                            2 27.50    18   30       17      1           0.34
+rainbow/30                            3 28.90    19   30       29      0           0.28
+rainbow/30                            4 28.20    22   30       14      1           0.70
+rainbowCritical/30                    2 26.80    13   30       14      0           0.40
+rainbowCritical/30                    3 27.66    18   30       15      1           0.54
+rainbowCritical/30                    4 27.36    19   30        9      0           0.70
+rainbowCriticalBlack/35               2 28.72    14   35        3      1           0.50
+rainbowCriticalBlack/35               3 32.52    19   35       15      0           0.44
+rainbowCriticalBlack/35               4 31.10    17   35        7      1           0.66
+rainbowCriticalBlackReverse/35        2 28.18    18   34        0      1           0.66
+rainbowCriticalBlackReverse/35        3 31.40    19   35        5      0           0.68
+rainbowCriticalBlackReverse/35        4 30.84    16   35        9      0           0.76
 ```

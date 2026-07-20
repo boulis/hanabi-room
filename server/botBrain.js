@@ -867,6 +867,47 @@ function findAlarmMove(view, myHand, myCombos, savedCost) {
   return null;
 }
 
+// --- Off-guard inference (only when guards aren't shared). ---
+// With shareGuarded off we cannot see the guard marks our own alarms prompt, so
+// on later turns we'd think the same criticals are still on the chop and alarm
+// again and again. Instead we remember which cards each alarm made the receiver
+// guard (their oldest unclued cards, per the alarmGuards convention) and re-mark
+// them ourselves, so our chop/exposed model matches what the receiver actually
+// did. Kept in driver memory as a Set of card ids; inert when guards are shared.
+
+// After choosing an alarm against `idx`, record the cards it will guard: the
+// receiver marks their oldest `count` still-unclued, still-unguarded cards.
+function recordInferredGuards(view, memory, idx, count) {
+  if (!memory) return;
+  if (!memory.inferredGuards) memory.inferredGuards = new Set();
+  const hand = view.players[idx].hand;
+  let added = 0;
+  for (let i = 0; i < hand.length && added < count; i++) {
+    const c = hand[i];
+    if (!c.colorClued && !c.numberClued && !c.annotations?.guarded) {
+      memory.inferredGuards.add(c.id);
+      added++;
+    }
+  }
+}
+
+// Re-apply remembered guards to this turn's view, and forget ids for cards that
+// have since left every hand (played/discarded).
+function applyInferredGuards(view, memory) {
+  const ids = memory?.inferredGuards;
+  if (!ids || ids.size === 0) return;
+  const present = new Set();
+  for (const p of view.players) {
+    for (const c of p.hand) {
+      if (ids.has(c.id)) {
+        c.annotations = { ...(c.annotations || {}), guarded: true };
+        present.add(c.id);
+      }
+    }
+  }
+  for (const id of ids) if (!present.has(id)) ids.delete(id);
+}
+
 // Receiver side of the alarm convention: when my predecessor's last action
 // was an out-of-the-ordinary discard, guard my oldest unclued card(s) with
 // the annotate interface (turn-free), which moves my chop. Guard 2 cards
@@ -942,12 +983,17 @@ function pickSave(view, seat, chop, conventions) {
   if (!primary) return null;
   // A play-save gets the card played: the receiver discards nothing.
   if (primary.how === 'play') return { index: chop, ...primary };
-  // Where the receiver's discard lands after a hint's clue marks are down.
+  // Where the receiver's discard lands after a hint's clue marks are down: the
+  // oldest card that is neither clued, guarded, nor touched by this hint. A
+  // guarded card is off the chop (the receiver won't discard it), so the slide
+  // skips it — without this the bot sees a guarded critical as still-endangered
+  // and re-alarms to "save" a card the receiver already protected.
   const exposedIndex = (hint) => {
     const touches = (card) => (hint.hintType === 'number'
       ? card.number === hint.value
       : touchedColorSet(view, hint.value).has(card.color));
-    return hand.findIndex((card) => !card.colorClued && !card.numberClued && !touches(card));
+    return hand.findIndex((card) => !card.colorClued && !card.numberClued
+      && !card.annotations?.guarded && !touches(card));
   };
   // Pile points lost if the card at index i is discarded. A lone-2 whose twin
   // is still in the deck is save-worthy but NOT identityCritical, so its
@@ -1088,6 +1134,10 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   // survives an unrelated touched card being discarded (see rememberColorTargets).
   rememberColorTargets(myHand, memory, myLastHandExit(view, me));
 
+  // When guards aren't shared, re-apply the ones our past alarms prompted so the
+  // danger model below sees the receiver's real (hidden) chop, not a stale one.
+  if (memory && !view.shareGuarded) applyInferredGuards(view, memory);
+
   // The danger we can see coming: a player who, with nothing to play, will
   // discard a chop we can't afford to lose. The next player is ours to save;
   // players further along only when everyone between us and them has a
@@ -1155,7 +1205,15 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
         if (!urgentSave && conventions.alarmDiscards && idx === nextIndex && (!save || exposed > 0)) {
           const chopCost = Math.max(1, discardCost(view, hand[chop].color, hand[chop].number));
           const alarm = findAlarmMove(view, myHand, myCombos, Math.max(chopCost, exposed));
-          if (alarm) urgentSave = alarm;
+          if (alarm) {
+            urgentSave = alarm;
+            // Guards aren't shared: remember what this alarm makes the receiver
+            // guard (oldest 2 cards if we still hold a token after the discard
+            // restores one, else 1) so we don't re-alarm the same cards.
+            if (memory && !view.shareGuarded) {
+              recordInferredGuards(view, memory, idx, view.hintTokens > 0 ? 2 : 1);
+            }
+          }
         }
         if (!urgentSave && save) {
           urgentSave = {
