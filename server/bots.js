@@ -2,7 +2,9 @@
 // turns are driven in-process by botBrain.decide against the same filtered
 // view a human client gets (viewFor) — no sockets, no child processes.
 // bot.mjs remains available for running a bot from another machine.
-import { alarmGuards, decide, STANDARD_CONVENTIONS } from './botBrain.js';
+import {
+  alarmGuards, conventionsFromOptions, decide, defaultBotOptions, sanitizeBotOptions,
+} from './botBrain.js';
 import { applyAction, joinRoom, leaveRoom, undoLast, viewFor } from './room.js';
 import { GameError } from './rules.js';
 
@@ -50,7 +52,20 @@ export function addBot(room) {
   }
   const player = joinRoom(room, { name: pickName(room) });
   player.isBot = true;
+  player.botOptions = defaultBotOptions();
   bots.set(player.id, { roomId: room.id, timer: null, graceUntil: 0 });
+  return player;
+}
+
+// Update a bot's convention options (host-side; lobby only). Merges the given
+// flags over the current ones, ignoring anything that isn't a known boolean.
+export function configureBot(room, playerId, options) {
+  const player = room.players.find((p) => p.id === playerId);
+  if (!player || !player.isBot) throw new GameError('Not a bot', 'not_a_bot');
+  if (room.phase !== 'lobby') {
+    throw new GameError('Bots can only be configured in the room lobby', 'not_lobby');
+  }
+  player.botOptions = { ...(player.botOptions ?? defaultBotOptions()), ...sanitizeBotOptions(options) };
   return player;
 }
 
@@ -79,6 +94,7 @@ export function adoptRoomBots(room) {
       continue;
     }
     p.online = true;
+    p.botOptions ??= defaultBotOptions();
     bots.set(p.id, { roomId: room.id, timer: null, graceUntil: 0 });
   }
 }
@@ -154,15 +170,17 @@ async function botAct(room, playerId) {
   if (idx !== room.state.currentPlayer) return; // stale schedule
   let view = viewFor(room, playerId);
   try {
+    // Per-bot convention options, chosen by whoever created the bot.
+    const conventions = conventionsFromOptions(room.players[idx].botOptions);
     // Alarm convention: guard first (annotate is turn-free), then act on a
     // fresh view that reflects the moved chop.
-    const guards = alarmGuards(view, STANDARD_CONVENTIONS);
+    const guards = alarmGuards(view, conventions);
     for (const cardId of guards) {
       await applyAction(room, playerId, { type: 'annotate', cardId, guarded: true }, 'alarm received: guarding');
     }
     if (guards.length > 0) view = viewFor(room, playerId);
     b.memory ??= {};
-    const { action, reason } = decide(view, STANDARD_CONVENTIONS, b.memory);
+    const { action, reason } = decide(view, conventions, b.memory);
     await applyAction(room, playerId, action, reason);
   } catch (err) {
     console.error(`bot ${playerId} move rejected (${err.message}); using fallback`);

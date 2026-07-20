@@ -15,6 +15,16 @@ const NAME_KEY = 'hanabi-room.name';
 function joinPlayerNames(names, bots) {
   return (names || []).map((n, i) => (bots?.[i] ? `🤖 ${n}` : n)).join(', ');
 }
+
+// Bot ids whose convention-options panel is expanded, so it survives the full
+// lobby re-render every sync triggers.
+const openBotOptions = new Set();
+// Toggleable per-bot convention options, in display order.
+const BOT_OPTION_LABELS = [
+  ['alarmDiscards', 'Alarm discards'],
+  ['forcedPlaySignals', 'Forced plays'],
+  ['zeroHintPlaysChop', '0-card hint → play chop'],
+];
 const ROOM_KEY = 'hanabi-room.roomId';
 const SPECTATE_KEY = 'hanabi-room.spectating';
 const ART_KEY = 'hanabi-room.useArt';
@@ -899,6 +909,44 @@ function show(screen) {
   }
 }
 
+// A ⚙️ panel of a bot's toggleable convention options. Native <details> so it
+// collapses/expands without extra state; open state is mirrored into
+// openBotOptions so it persists across the re-render each toggle triggers.
+function renderBotOptions(p) {
+  const det = document.createElement('details');
+  det.className = 'bot-options';
+  det.open = openBotOptions.has(p.id);
+  det.addEventListener('toggle', () => {
+    if (det.open) openBotOptions.add(p.id);
+    else openBotOptions.delete(p.id);
+  });
+  const sum = document.createElement('summary');
+  sum.textContent = '⚙️';
+  sum.title = 'Bot conventions';
+  det.append(sum);
+  const panel = document.createElement('div');
+  panel.className = 'bot-options-panel';
+  const title = document.createElement('div');
+  title.className = 'bot-options-title';
+  title.textContent = 'Conventions';
+  panel.append(title);
+  const opts = p.botOptions || {};
+  for (const [key, text] of BOT_OPTION_LABELS) {
+    const row = document.createElement('label');
+    row.className = 'bot-option';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!opts[key];
+    cb.addEventListener('change', () => {
+      send({ type: 'configureBot', playerId: p.id, options: { [key]: cb.checked } });
+    });
+    row.append(cb, document.createTextNode(' ' + text));
+    panel.append(row);
+  }
+  det.append(panel);
+  return det;
+}
+
 function renderLobby() {
   const listEl = document.getElementById('lobby-players');
   listEl.innerHTML = '';
@@ -917,7 +965,8 @@ function renderLobby() {
     label.textContent = `${i + 1}. ${p.isBot ? '🤖 ' : ''}${p.name} [${p.id}]${tagStr}`;
     li.append(label);
     if (p.isBot && !isSpectator) {
-      // Anyone seated may remove a bot — spectators aren't seated.
+      // Anyone seated may configure or remove a bot — spectators aren't seated.
+      li.append(renderBotOptions(p));
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.textContent = 'Remove';

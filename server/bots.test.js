@@ -12,6 +12,7 @@ const {
   MAX_TOTAL_BOTS,
   addBot,
   adoptRoomBots,
+  configureBot,
   initBots,
   pokeBots,
   removeBot,
@@ -19,6 +20,7 @@ const {
   resetBots,
   totalBots,
 } = await import('./bots.js');
+const { conventionsFromOptions } = await import('./botBrain.js');
 const { applyAction, joinRoom, requestUndo, resumeRoom, startGame } = await import('./room.js');
 const { branchSave } = await import('./savedGame.js');
 const { GameError } = await import('./rules.js');
@@ -65,6 +67,28 @@ test('addBot: seats a bot in the lobby; rejected mid-game', async () => {
     assert.throws(() => removeBot(room, bot.id), GameError, 'no removal mid-game');
     resetBots();
   });
+});
+
+test('configureBot: options default on, toggle in lobby, drive conventions', () => {
+  purgeRooms();
+  resetBots();
+  const room = createRoom('Opts');
+  joinRoom(room, { name: 'Ann' });
+  const bot = addBot(room);
+  assert.deepEqual(bot.botOptions, { alarmDiscards: true, forcedPlaySignals: true, zeroHintPlaysChop: true });
+
+  configureBot(room, bot.id, { alarmDiscards: false, zeroHintPlaysChop: false, bogus: 5 });
+  assert.deepEqual(bot.botOptions, { alarmDiscards: false, forcedPlaySignals: true, zeroHintPlaysChop: false });
+  assert.equal('bogus' in bot.botOptions, false, 'unknown keys ignored');
+
+  const conv = conventionsFromOptions(bot.botOptions);
+  assert.equal(conv.alarmDiscards, false);
+  assert.equal(conv.forcedPlaySignals, true);
+  assert.equal(conv.zeroHintPlaysChop, false);
+  assert.equal(conv.colorHintPlaysNewest, true, 'non-optional flags stay on');
+
+  assert.throws(() => configureBot(room, 'nobody', {}), GameError, 'not a bot');
+  resetBots();
 });
 
 test('addBot: global cap of MAX_TOTAL_BOTS across all rooms', () => {

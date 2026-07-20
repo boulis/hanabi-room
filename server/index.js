@@ -31,6 +31,7 @@ import {
   MAX_TOTAL_BOTS,
   addBot,
   adoptRoomBots,
+  configureBot,
   initBots,
   pokeBots,
   removeBot,
@@ -390,6 +391,12 @@ wss.on('connection', async (ws) => {
         case 'removeBot': {
           const room = requireSeat(conn);
           removeBot(room, msg.playerId);
+          await broadcastRoomAndLobby(room.id);
+          break;
+        }
+        case 'configureBot': {
+          const room = requireSeat(conn);
+          configureBot(room, msg.playerId, msg.options || {});
           await broadcastRoomAndLobby(room.id);
           break;
         }

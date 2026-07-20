@@ -678,6 +678,47 @@ input, select {
 }
 #add-bot-button { margin: 0.4rem 0 1rem; font-size: 0.9rem; }
 
+/* Per-bot convention options: a ⚙️ summary that opens a small popover so the
+   lobby row keeps its height. */
+.bot-options { position: relative; }
+.bot-options > summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  user-select: none;
+}
+.bot-options > summary::-webkit-details-marker { display: none; }
+.bot-options-panel {
+  position: absolute;
+  z-index: 5;
+  top: 1.5rem;
+  left: 0;
+  min-width: 12rem;
+  padding: 0.5rem 0.6rem;
+  background: Canvas;
+  color: CanvasText;
+  border: 1px solid #6b4fbb;
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+.bot-options-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+  margin-bottom: 0.35rem;
+}
+.bot-option {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  padding: 0.15rem 0;
+  cursor: pointer;
+}
+.bot-option input { margin: 0; }
+
 .player-row.active { border-color: #2b6ad1; box-shadow: 0 0 0 2px rgba(43,106,209,0.25); }
 .player-row header { padding: 0; border: 0; display: flex; gap: 0.5rem; align-items: center; }
 .player-row .player-name { font-weight: bold; }

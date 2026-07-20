@@ -48,6 +48,28 @@ export const STANDARD_CONVENTIONS = {
 
 export const CONVENTION_SETS = { standard: STANDARD_CONVENTIONS };
 
+// The convention flags a bot's creator can toggle per bot from the room lobby
+// (each governs both sides — using the signal and reacting to it). All default
+// on; the rest of the standard set is always active.
+export const BOT_OPTION_KEYS = ['alarmDiscards', 'forcedPlaySignals', 'zeroHintPlaysChop'];
+
+export function defaultBotOptions() {
+  return Object.fromEntries(BOT_OPTION_KEYS.map((k) => [k, true]));
+}
+
+// Sanitize an options object to just the known boolean flags (unknown keys and
+// non-booleans are ignored, so it's safe to feed straight from the wire).
+export function sanitizeBotOptions(options = {}) {
+  const out = {};
+  for (const k of BOT_OPTION_KEYS) if (typeof options?.[k] === 'boolean') out[k] = options[k];
+  return out;
+}
+
+// A conventions object for a bot with the given per-bot option overrides.
+export function conventionsFromOptions(options = {}) {
+  return { ...STANDARD_CONVENTIONS, ...sanitizeBotOptions(options) };
+}
+
 // --- Pile arithmetic (all from the view's playedPiles {top, count, cap}). ---
 
 function suitOf(view, color) {
