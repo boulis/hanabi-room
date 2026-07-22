@@ -886,3 +886,48 @@ rainbowCriticalBlackReverse/35        2 28.84    20   34        0      0        
 rainbowCriticalBlackReverse/35        3 32.22    25   35        6      0           0.62
 rainbowCriticalBlackReverse/35        4 31.54     7   35       10      2           0.78
 ```
+
+## 2.10 — emission and detection of the forgone-play alarm, perfectly synced
+
+Supersedes 2.9's decision to leave emission narrow. That call was justified with
+"relaxing emission makes the bot deliberately forgo a possibly-playable target,
+which is a gamble" — and that reasoning was simply wrong on the mechanics. This
+alarm discards the **chop**, which is by definition untouched: throwing it
+consumes no hint markers, so the colour target stays in hand (and 2.2's memory
+rescue explicitly keeps the obligation across a discard) to be played next turn.
+The alarm costs a turn of tempo and the chop card, never the target.
+
+With that corrected, the asymmetry had no defence left: a convention where the
+bot *reads* a signal it would never *send* is half a convention, and the half
+that pays — actually raising the alarm when a critical needs saving — was the
+missing one. `findAlarmMove`'s type-2 condition is now literally the same
+`hasPendingPlay` call that `alarmGuards` uses to read it, so a colour-hint
+obligation counts identically on both ends and the two cannot drift. It reads
+live `lastHints` markers only, never the bot's private memory, which is exactly
+what the partner is able to reconstruct.
+
+**+0.03 avg per row over 2.9's detection-only state**, positive on 9 of 15 rows;
+the notable movement is in **perfect games** (simple 2p 25→26, 3p 29→30, 4p
+27→29, rainbow 4p 15→17), since the alarm now fires in the many positions where
+the bot's only play was a colour obligation. rainbowCriticalBlack 2p is the one
+real dip (29.40→29.24). Against 2.8, the two halves together are **+0.10 avg per
+row**, positive on 13 of 15 rows.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.70    18   25       26      0           0.46
+simple/25                             3 24.34    22   25       30      0           0.40
+simple/25                             4 23.98    21   25       29      0           0.56
+rainbow/30                            2 27.92    21   30       16      0           0.34
+rainbow/30                            3 28.98     8   30       32      1           0.30
+rainbow/30                            4 28.94    27   30       17      0           0.58
+rainbowCritical/30                    2 27.42    22   30       12      0           0.46
+rainbowCritical/30                    3 28.28    21   30       19      1           0.52
+rainbowCritical/30                    4 27.70    21   30        8      0           0.66
+rainbowCriticalBlack/35               2 29.24    22   35        3      1           0.66
+rainbowCriticalBlack/35               3 32.82    27   35       14      1           0.42
+rainbowCriticalBlack/35               4 31.20    10   35        7      4           0.74
+rainbowCriticalBlackReverse/35        2 28.98    20   34        0      0           0.64
+rainbowCriticalBlackReverse/35        3 32.20    25   35        6      0           0.62
+rainbowCriticalBlackReverse/35        4 31.62     7   35       10      2           0.76
+```

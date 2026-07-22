@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.9';
+export const BOT_VERSION = '2.10';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -844,7 +844,7 @@ function expectedDiscardCost(view, combos) {
 //   3. discard PAST the chop;
 //   4. sacrifice a touched provable critical that costs fewer pile points
 //      than what it saves (e.g. throw a 5 to keep a critical 2).
-function findAlarmMove(view, myHand, myCombos, savedCost) {
+function findAlarmMove(view, myHand, myCombos, savedCost, conventions = STANDARD_CONVENTIONS) {
   if (view.hintTokens >= 8) return null; // discarding is illegal right now
   const touched = (c) => c.colorClued || c.numberClued;
   for (let i = 0; i < myHand.length; i++) {
@@ -866,7 +866,15 @@ function findAlarmMove(view, myHand, myCombos, savedCost) {
   const chop = chopIndex(myHand);
   const late = view.deckSize <= 10;
   const worthIt = (i) => savedCost >= 2 || (late && savedCost > expectedDiscardCost(view, myCombos[i]));
-  if (chop >= 0 && myCombos.some((cs) => knownPlayable(view, cs)) && worthIt(chop)) {
+  // Exactly the condition alarmGuards uses to *read* this signal, so emission
+  // and detection can never disagree about what counts as a forgone play. A
+  // colour hint is an obligation to play, so declining one to discard the chop
+  // speaks just as loudly as declining a known-playable card — and it costs no
+  // more: the chop is untouched, so throwing it consumes no hint markers and
+  // the target stays in hand (memory keeps it across a discard) to be played
+  // next turn. hasPendingPlay reads live markers only — never our private
+  // memory — which is precisely what the partner can reconstruct.
+  if (chop >= 0 && hasPendingPlay(view, view.viewerIndex, conventions) && worthIt(chop)) {
     return { action: { type: 'discard', cardIndex: chop }, reason: 'ALARM: discarding instead of an obvious play' };
   }
   if (chop >= 0) {
@@ -1242,7 +1250,7 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
         // their endangered cards after an out-of-the-ordinary discard.
         if (!urgentSave && conventions.alarmDiscards && idx === nextIndex && (!save || exposed > 0)) {
           const chopCost = Math.max(1, discardCost(view, hand[chop].color, hand[chop].number));
-          const alarm = findAlarmMove(view, myHand, myCombos, Math.max(chopCost, exposed));
+          const alarm = findAlarmMove(view, myHand, myCombos, Math.max(chopCost, exposed), conventions);
           if (alarm) {
             urgentSave = alarm;
             // Guards aren't shared: remember what this alarm makes the receiver
