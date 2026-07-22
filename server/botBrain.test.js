@@ -135,6 +135,37 @@ test('bot: in a reverse variant a "1" is played once the black 1 is ruled out', 
   assert.deepEqual(action, { type: 'play', cardIndex: 0 }, reason);
 });
 
+test('bot: yields a duplicate rather than racing a partner obliged to play it', () => {
+  // Ann is obliged (by a "1" hint) to play her red_1 but cannot tell it is red —
+  // to her it is just "a 1". The bot's own red colour target must be the red_1
+  // (the only playable red), so both would play a red_1 and one must misfire.
+  // The bot can see the collision and Ann cannot, so the copy is the bot's to shed.
+  const s = craftedState(
+    ['red_1', 'white_4', 'green_4', 'yellow_4', 'blue_4'],
+    ['red_1', 'white_3', 'green_3', 'yellow_2', 'blue_2'],
+  );
+  hintAction(s, 0, 1, 'color', 'red');  // marks the bot's red_1 (slot 0) for play
+  hintAction(s, 1, 0, 'number', 1);     // obligates Ann's red_1 — blind to its colour
+  hintAction(s, 0, 1, 'number', 3);     // harmless, hands the turn back to the bot
+  const { action, reason } = decide(viewState(s, 1));
+  assert.deepEqual(action, { type: 'discard', cardIndex: 0 }, reason);
+  assert.match(reason, /^yield/);
+});
+
+test('bot: reads a partner\'s yield as a yield, not as an alarm', () => {
+  // The same discard from the other side: Ann sheds a red_1 the bot is obliged
+  // to play. It looks exactly like a touched-discard alarm, but the bot holds an
+  // obligation the discarded identity could satisfy, so there is nothing to guard.
+  const s = craftedState(
+    ['red_1', 'white_4', 'green_4', 'yellow_4', 'blue_4'],
+    ['red_1', 'white_3', 'green_3', 'yellow_2', 'blue_2'],
+  );
+  hintAction(s, 0, 1, 'number', 1);    // obligates the bot's red_1
+  hintAction(s, 1, 0, 'color', 'red'); // marks Ann's red_1 for play
+  discardAction(s, 0, 0);              // Ann yields it instead of playing it
+  assert.deepEqual(alarmGuards(viewState(s, 1)), [], 'a yield must not read as an alarm');
+});
+
 test('bot: warns a partner whose obligated 1 has since been played by someone else', () => {
   // Bot (player 0) hints "1"; the partner's red_1 and blue_1 are both obligated.
   // Then the bot plays its OWN red_1, killing the partner's copy — which the

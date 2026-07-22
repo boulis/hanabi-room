@@ -1046,3 +1046,61 @@ rainbowCriticalBlackReverse/35        2 28.58    22   34        0      0        
 rainbowCriticalBlackReverse/35        3 31.72    22   35        4      0           0.32
 rainbowCriticalBlackReverse/35        4 31.56    25   35        3      0           0.60
 ```
+
+## 2.13 — don't race a partner for the same card (the yield)
+
+The last of the play-all-1s duplication damage, and the whole of seed 39. There,
+the "1" hint obligates the partner's red 1 and blue 1; the partner then hints red
+(and later blue) to get the bot's copies played, and both players play the same
+card — two misfires, two fuses, in the first ten turns. The hint-giver is blind
+by construction: it hinted blue *while holding an obligated blue 1*, because a
+"1" hint tells it the number and never the colour. Only the receiver can see the
+collision, so yielding has to be the receiver's job.
+
+`yieldSlots`: when a convention has marked one of our cards for play and pins
+what it must be — among everything it could still be, exactly one identity is
+playable, so a blue target on an empty blue pile can only be the blue 1 — and a
+teammate is already obliged to play that exact identity, the copy is ours to shed
+rather than race for. We discard it instead of the chop, and they play theirs.
+
+Two details carry the weight. The implied identity is only read off slots some
+convention actually marked; applied to any card it is nonsense (an unrelated red
+card on an empty pile would "imply" red 1 merely because that is the only
+playable red — a first cut did exactly this and discarded a red 2 and a blue 5).
+And we yield only to a teammate who *cannot* pin the identity themselves,
+otherwise both sides yield and both copies get discarded; the blindness test is
+what makes it deadlock-free.
+
+**A yield is externally indistinguishable from a touched-discard alarm** — both
+shed a useful clued card — so `alarmGuards` disambiguates from the one vantage
+point that can: a yield only ever happens for a card the *reader* is obliged to
+play, so when the discarded identity is one our own outstanding obligation could
+satisfy, it reads as stepping aside, not as a warning. Worth +0.015/row on its
+own (simple 2p perfect games 27→29); without it the misread is survivable but
+costly, since the guards clog the hand.
+
+**+0.06 avg per row over 2.12**, positive on 9 rows, flat on 4. Misplays fall
+almost everywhere, total fuse-outs drop 7→5, and a catastrophic outlier
+disappears (rainbow 3p min 8→27, fused 1→0). In `simple` 2p the three games this
+whole investigation started from are now **all perfect**: seed 25 (13 originally),
+seed 39 (15, the category's worst for four versions) and seed 31 (18 and fused)
+all finish 25/25. The row's median reaches **25** with no fuse-outs.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.84    18   25       29      0           0.32
+simple/25                             3 24.30    22   25       28      0           0.36
+simple/25                             4 24.04    21   25       30      0           0.56
+rainbow/30                            2 27.92    21   30       16      0           0.34
+rainbow/30                            3 29.36    27   30       31      0           0.24
+rainbow/30                            4 28.88    26   30       17      0           0.52
+rainbowCritical/30                    2 27.48    22   30       12      0           0.44
+rainbowCritical/30                    3 28.36    21   30       18      0           0.44
+rainbowCritical/30                    4 27.72    21   30        8      0           0.60
+rainbowCriticalBlack/35               2 29.24    22   35        3      1           0.64
+rainbowCriticalBlack/35               3 32.86    27   35       14      1           0.38
+rainbowCriticalBlack/35               4 31.24    10   35        8      3           0.68
+rainbowCriticalBlackReverse/35        2 28.58    22   34        0      0           0.36
+rainbowCriticalBlackReverse/35        3 31.70    22   35        4      0           0.30
+rainbowCriticalBlackReverse/35        4 31.76    27   35        3      0           0.52
+```

@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.12';
+export const BOT_VERSION = '2.13';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -44,6 +44,11 @@ export const STANDARD_CONVENTIONS = {
   // empty hints (view.allowEmptyHints); a hint that touches none of the
   // receiver's cards tells them to play their oldest untouched card.
   zeroHintPlaysChop: true,
+  // Don't race a teammate for the same card. When a convention has pinned what
+  // our own card must be, and a teammate is already obliged to play that exact
+  // identity but cannot tell (their own card is just "a 1" to them), the copy
+  // is ours to shed, not to play — see yieldSlots.
+  yieldDuplicatePlays: true,
 };
 
 export const CONVENTION_SETS = { standard: STANDARD_CONVENTIONS };
@@ -398,6 +403,54 @@ function reversedOneColors(view) {
   const out = new Set();
   for (const suit of getVariant(view.variantId).suits) {
     if (suit.direction === 'down' && suit.distribution.includes(1)) out.add(suit.color);
+  }
+  return out;
+}
+
+// What a play candidate must BE if the convention that marked it is to make
+// sense: among everything it could still be, exactly one identity is playable.
+// A blue target on an empty blue pile can only be the blue 1. Null when the
+// convention doesn't pin it — with blue 1 and rainbow 1 both open a blue hint
+// leaves two playable candidates, so nothing can be concluded.
+function impliedPlayIdentity(view, combos) {
+  const playable = combos.filter(([c, n]) => isPlayable(view, c, n));
+  return playable.length === 1 ? playable[0] : null;
+}
+
+// Slots holding a card a teammate is ALREADY obliged to play, where they can't
+// tell and we can. Two obligations on one identity guarantee that one of the
+// two plays misfires; we can see their hand, so the duplicate is ours to shed.
+//
+// The blindness test is what keeps this from deadlocking. If they could pin the
+// card themselves they would yield to us instead, and both copies would be
+// discarded; so we yield only to a teammate whose own convention leaves the
+// identity ambiguous (a "1" hint tells them the number, never the colour).
+// `candidates` are the slots some convention has actually marked for play —
+// only there does "the one playable identity it could be" say what the card IS.
+// Applied to any card it would be nonsense: an unrelated red card whose pile is
+// empty would "imply" red 1 merely because that is the only playable red.
+function yieldSlots(view, myCombos, conventions, candidates) {
+  const out = new Set();
+  if (!conventions.yieldDuplicatePlays) return out;
+  const mine = myCombos.map((cs, i) => (candidates.has(i) ? impliedPlayIdentity(view, cs) : null));
+  if (!mine.some(Boolean)) return out;
+  for (let seat = 0; seat < view.players.length; seat++) {
+    if (seat === view.viewerIndex) continue;
+    const hand = view.players[seat].hand;
+    const combos = handCombos(view, seat);
+    const obliged = new Set();
+    if (conventions.playAllOnes) {
+      for (const i of onesPlayObligations(view, hand, combos)) obliged.add(i);
+    }
+    if (conventions.colorHintPlaysNewest) {
+      for (const t of colorPlayTargets(hand, (s) => possiblyPlayable(view, combos[s]))) obliged.add(t);
+    }
+    for (const i of obliged) {
+      if (impliedPlayIdentity(view, combos[i])) continue; // they can see it too
+      mine.forEach((id, slot) => {
+        if (id && id[0] === hand[i].color && id[1] === hand[i].number) out.add(slot);
+      });
+    }
   }
   return out;
 }
@@ -990,6 +1043,25 @@ export function alarmGuards(view, conventions = STANDARD_CONVENTIONS) {
   const e = lastRealAction(view);
   if (!e || e.type !== 'discard') return [];
   if (e.playerIndex !== (me + n - 1) % n) return [];
+  // A yield reads exactly like a touched-discard alarm from the outside: both
+  // shed a useful clued card. What separates them is us — a yield only happens
+  // for a card WE are obliged to play, so if the discarded identity is one our
+  // own outstanding obligation could be, read it as them stepping aside rather
+  // than as a warning. Nothing to guard; we just play ours (see yieldSlots).
+  if (conventions.yieldDuplicatePlays && e.wasTouched) {
+    const myHand = view.players[me].hand;
+    const myCombos = handCombos(view, me);
+    const obliged = new Set();
+    if (conventions.playAllOnes) {
+      for (const i of onesPlayObligations(view, myHand, myCombos)) obliged.add(i);
+    }
+    if (conventions.colorHintPlaysNewest) {
+      for (const t of colorPlayTargets(myHand, (s) => possiblyPlayable(view, myCombos[s]))) obliged.add(t);
+    }
+    for (const i of obliged) {
+      if (myCombos[i].some(([c, n]) => c === e.card.color && n === e.card.number)) return [];
+    }
+  }
   let anomaly = false;
   if (e.wasTouched) {
     // A deliberate touched-discard alarm burns a USEFUL card — if the card
@@ -1262,6 +1334,19 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   // danger model below sees the receiver's real (hidden) chop, not a stale one.
   if (memory && !view.shareGuarded) applyInferredGuards(view, memory);
 
+  // Every slot a convention currently marks for play, and of those, the ones a
+  // teammate is already obliged to play and can't identify — ours to shed
+  // rather than race for (see yieldSlots).
+  const playCandidates = new Set();
+  myHand.forEach((_, i) => { if (knownPlayable(view, myCombos[i])) playCandidates.add(i); });
+  if (conventions.colorHintPlaysNewest) {
+    for (const t of mergedColorTargets(myHand, memory, canStillPlay)) playCandidates.add(t);
+  }
+  if (conventions.playAllOnes) {
+    for (const i of onesPlayObligations(view, myHand, myCombos)) playCandidates.add(i);
+  }
+  const yielded = yieldSlots(view, myCombos, conventions, playCandidates);
+
   // The danger we can see coming: a player who, with nothing to play, will
   // discard a chop we can't afford to lose. The next player is ours to save;
   // players further along only when everyone between us and them has a
@@ -1398,7 +1483,7 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   // 1. Play a card we can prove is playable (hint constraints narrowed by
   //    copy-counting over everything we can see).
   for (let i = 0; i < myHand.length; i++) {
-    if (knownPlayable(view, myCombos[i])) {
+    if (knownPlayable(view, myCombos[i]) && !yielded.has(i)) {
       return { action: { type: 'play', cardIndex: i }, reason: 'known playable' };
     }
   }
@@ -1413,7 +1498,7 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   // the slide in colorPlayTargets, so what reaches here is what they asked for.
   if (conventions.colorHintPlaysNewest) {
     for (const t of mergedColorTargets(myHand, memory, canStillPlay)) {
-      if (possiblyPlayable(view, myCombos[t])) {
+      if (possiblyPlayable(view, myCombos[t]) && !yielded.has(t)) {
         return { action: { type: 'play', cardIndex: t }, reason: 'colour hint marks touched card' };
       }
     }
@@ -1430,6 +1515,7 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
     const ones = onesPlayObligations(view, myHand, myCombos);
     if (!ones.some((i) => myCombos[i].length === 1)) {
       for (const i of ones) {
+        if (yielded.has(i)) continue;
         const safeEnough = lastFuse ? knownPlayable(view, myCombos[i]) : possiblyPlayable(view, myCombos[i]);
         if (safeEnough) {
           return { action: { type: 'play', cardIndex: i }, reason: 'play all 1s' };
@@ -1491,6 +1577,11 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
       if (knownUseless(view, myCombos[i])) {
         return { action: { type: 'discard', cardIndex: i }, reason: 'provably useless' };
       }
+    }
+    // A copy a teammate is already obliged to play is dead weight to us: shed it
+    // rather than the chop, so the redundant card leaves and they play theirs.
+    for (const i of yielded) {
+      return { action: { type: 'discard', cardIndex: i }, reason: 'yield: partner is obliged to play this card' };
     }
     if (conventions.discardOldestUntouched) {
       const chop = chopIndex(myHand);
