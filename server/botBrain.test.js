@@ -107,6 +107,37 @@ test('bot: colour hint received → plays the newest touched card', () => {
   assert.deepEqual(action, { type: 'play', cardIndex: 2 }, reason);
 });
 
+test('bot: colour-hint target slides past a touched card that is provably unplayable', () => {
+  // Piles empty. Bot holds [green 5, green 1, red 2, green 2, black 5] and already
+  // knows its two 2s. A "green" hint touches slots 0, 1 and 3 — but slot 3 is a
+  // known green 2, provably unplayable on an empty green pile, so the play
+  // promise slides to slot 1 (the green 1) rather than the newest touched card.
+  const s = craftedStateV(
+    'rainbowCriticalBlack',
+    ['white_4', 'white_3', 'blue_4', 'blue_3', 'yellow_4'],
+    ['green_5', 'green_1', 'red_2', 'green_2', 'black_5'],
+  );
+  hintAction(s, 0, 1, 'number', 2);      // bot learns slots 2 and 3 are 2s
+  hintAction(s, 1, 0, 'number', 4);      // stall back so player 0 acts again
+  hintAction(s, 0, 1, 'color', 'green'); // touches slots 0, 1 and 3
+  const { action, reason } = decide(viewState(s, 1));
+  assert.deepEqual(action, { type: 'play', cardIndex: 1 }, reason);
+});
+
+test('bot: trusts a colour hint on the last fuse instead of demanding proof', () => {
+  // The sender chose the target and can see the card; requiring it to be
+  // *provably* playable left it unplayed forever while the sender counted it
+  // as a pending play and withheld help (the 2-player stall deadlock).
+  const s = craftedState(
+    ['white_4', 'white_3', 'blue_4', 'green_4', 'yellow_4'],
+    ['red_3', 'blue_2', 'red_1', 'green_3', 'yellow_2'],
+  );
+  hintAction(s, 0, 1, 'color', 'red'); // target slot 2 (red_1) — only possibly playable
+  s.fuseTokens = 1;
+  const { action, reason } = decide(viewState(s, 1));
+  assert.deepEqual(action, { type: 'play', cardIndex: 2 }, reason);
+});
+
 test('bot: colour-hint play target survives discarding an older card of the same hint', () => {
   // Bot's reds are at slots 0 (red_4, older) and 2 (red_2, newest → play target).
   // Discarding slot 0 consumes the hint's display markers across the whole hand,

@@ -777,3 +777,64 @@ rainbowCriticalBlackReverse/35        2 28.18    18   34        0      1        
 rainbowCriticalBlackReverse/35        3 31.40    19   35        5      0           0.68
 rainbowCriticalBlackReverse/35        4 30.84    16   35        9      0           0.76
 ```
+
+## 2.8 — trust the colour hint (sliding target, no last-fuse tightening)
+
+Found by forensics on the worst 2-player `simple` games (seed 25 scored 13/25;
+its save is in the library). Two halves of one bug, both about a colour hint's
+play target.
+
+**(1) The receiver stopped trusting the sender on the last fuse.** Step 2 read
+`lastFuse ? knownPlayable : possiblyPlayable`, so at `fuseTokens === 1` the bot
+refused any colour-hinted card it couldn't *prove* playable. Meanwhile the
+sender's `hasPendingPlay` still counted that same card as a pending play
+(`possiblyPlayable`, no fuse gate). The asymmetry created **zombie pending
+plays**: the receiver would never play the card, and the sender — believing the
+receiver was already busy — withheld every further play hint. Both sides then
+stalled with harmless hints until the deck ran out. In seed 25 a hinted,
+genuinely playable red 2 sat unplayed while a playable green 1 next door went
+un-hinted for the rest of the game.
+
+The fix is trust, not proof: the sender chose the target and can see the card,
+so the receiver plays it. The last-fuse tightening is gone from the colour-hint
+path, and `hasPendingPlay` now uses the receiver's exact reading, so sender and
+receiver can no longer disagree about what will be played. (The play-all-1s
+path keeps its last-fuse caution — a "1" hint obligates several cards whose
+colours the receiver can't see, which is a genuinely weaker signal; blind dead-1
+gambles are a separate defect.)
+
+**(2) The target now slides past provably-dead touches.** It was strictly the
+newest touched card; a touched card the receiver can already prove unplayable
+was never what the hint asked for, so the promise now passes to the next-newest
+candidate. With empty piles and a hand of `[green 5, green 1, red 2, green 2,
+black 5]` whose two 2s are already number-clued, a "green" hint touches slots 0,
+1 and 3 — slot 3 is a known green 2, so the target is slot 1 (the green 1).
+`colorPlayTargets` takes a `possible(slot)` predicate; the giver's
+`playHintCandidates` mirrors it exactly, so it only offers a colour hint when
+the card the receiver will actually pick is the one that's playable.
+
+**+0.40 avg per row over 2.7**, positive on 14 of 15 rows (only
+rainbowCriticalBlack 4p dips, −0.22). Biggest at 2 players, where the deadlock
+was worst: simple 22.78→23.60, rainbowCriticalBlack 28.72→29.42, reverse
+28.18→28.84, rainbowCritical 26.80→27.30. `simple` 2p also loses its floor
+entirely — min 13→17, fused 1→0, perfect 23→25 — and **seed 25 itself goes
+13/25 → 25/25, a perfect game**.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.60    17   25       25      0           0.46
+simple/25                             3 24.26    22   25       28      0           0.40
+simple/25                             4 23.88    20   25       27      0           0.56
+rainbow/30                            2 27.84    21   30       16      0           0.34
+rainbow/30                            3 28.98     8   30       32      1           0.30
+rainbow/30                            4 28.78    27   30       15      0           0.60
+rainbowCritical/30                    2 27.30    22   30       12      0           0.46
+rainbowCritical/30                    3 28.22    21   30       20      1           0.52
+rainbowCritical/30                    4 27.52    14   30        8      1           0.68
+rainbowCriticalBlack/35               2 29.42    21   35        3      1           0.60
+rainbowCriticalBlack/35               3 32.82    25   35       13      1           0.46
+rainbowCriticalBlack/35               4 30.88    10   35        6      3           0.74
+rainbowCriticalBlackReverse/35        2 28.84    20   34        0      0           0.62
+rainbowCriticalBlackReverse/35        3 32.14    25   35        6      0           0.60
+rainbowCriticalBlackReverse/35        4 31.30     7   35        9      2           0.78
+```

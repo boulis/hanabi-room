@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.7';
+export const BOT_VERSION = '2.8';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -267,18 +267,29 @@ function findEmptyHint(view, seat) {
 }
 
 // Every colour hint still marked on the hand contributes one pending play
-// target: the newest card it touched. The server consumes a hint's markers
-// when any card of that hint leaves the hand, so a marked hint is one that
-// hasn't been acted on yet — all of them stay live, oldest hint first (its
-// card was playable first). A hint that fully pins another touched card
-// needs no special case here: a pinned *playable* card is played first via
-// known-playable (which consumes the hint's markers and retires the target),
-// and a pinned unplayable card doesn't change what the hint asks — the
-// newest touched card is still the one to play. (An earlier version
-// cancelled the target whenever any touched card was pinned; in rainbow
-// variants that made every colour hint cancel itself, because colour hints
-// unavoidably touch the known rainbow cards in hand.)
-export function colorPlayTargets(hand) {
+// target: the newest touched card the receiver cannot already prove unplayable.
+// The server consumes a hint's markers when any card of that hint leaves the
+// hand, so a marked hint is one that hasn't been acted on yet — all of them
+// stay live, oldest hint first (its card was playable first).
+//
+// The target *slides*: a touched card whose own constraints prove it can't be
+// playable was never what the hint asked for, so the promise passes to the
+// next-newest touched candidate. E.g. with empty piles and a hand of
+// [green 5, green 1, red 2, green 2, black 5] where the two 2s are already
+// number-clued, a "green" hint touches slots 0, 1 and 3 — slot 3 is a known
+// green 2 and provably unplayable, so the target is slot 1 (the green 1),
+// not the newest touched card. `possible(slot)` is the caller's
+// possibly-playable test; omitted (tests, rollouts) it degrades to the plain
+// newest-touched reading.
+//
+// A hint that fully pins another touched card needs no special case here: a
+// pinned *playable* card is played first via known-playable (which consumes
+// the hint's markers and retires the target), and a pinned unplayable card is
+// simply skipped by the slide. (An earlier version cancelled the target
+// whenever any touched card was pinned; in rainbow variants that made every
+// colour hint cancel itself, because colour hints unavoidably touch the known
+// rainbow cards in hand.)
+export function colorPlayTargets(hand, possible = null) {
   const byHint = new Map();
   hand.forEach((card, slot) => {
     for (const h of card.lastHints) {
@@ -289,8 +300,12 @@ export function colorPlayTargets(hand) {
   });
   const targets = [];
   for (const hintIndex of [...byHint.keys()].sort((a, b) => a - b)) {
-    const newest = Math.max(...byHint.get(hintIndex));
-    if (!targets.includes(newest)) targets.push(newest);
+    const slots = byHint.get(hintIndex).slice().sort((a, b) => a - b);
+    let pick = -1;
+    for (let k = slots.length - 1; k >= 0; k--) {
+      if (!possible || possible(slots[k])) { pick = slots[k]; break; }
+    }
+    if (pick >= 0 && !targets.includes(pick)) targets.push(pick);
   }
   return targets;
 }
@@ -323,11 +338,11 @@ export function myLastHandExit(view, seat) {
 // markers) and keep it across a discard, but not across a play. `lastExit` is
 // our own last play/discard (see myLastHandExit) — the only action that could
 // have removed the marker since our previous turn.
-export function rememberColorTargets(hand, memory, lastExit = null) {
+export function rememberColorTargets(hand, memory, lastExit = null, possible = null) {
   if (!memory) return;
   if (!memory.colorPlays) memory.colorPlays = [];
   const present = new Set(hand.map((c) => c.id));
-  const live = new Set(colorPlayTargets(hand).map((slot) => hand[slot].id));
+  const live = new Set(colorPlayTargets(hand, possible).map((slot) => hand[slot].id));
   const retired = lastExit === 'play';
   memory.colorPlays = memory.colorPlays.filter((id) => {
     if (!present.has(id)) return false; // the target itself left the hand
@@ -336,7 +351,7 @@ export function rememberColorTargets(hand, memory, lastExit = null) {
   });
   // Add this turn's live targets last, so a just-retired id (no longer live)
   // isn't immediately re-recorded.
-  for (const slot of colorPlayTargets(hand)) {
+  for (const slot of colorPlayTargets(hand, possible)) {
     const { id } = hand[slot];
     if (!memory.colorPlays.includes(id)) memory.colorPlays.push(id);
   }
@@ -347,8 +362,8 @@ export function rememberColorTargets(hand, memory, lastExit = null) {
 // obligation whose marker has since been wiped by an unrelated departure
 // (appended, oldest slot first). Without memory this is exactly
 // colorPlayTargets, so rollouts and the CLI bot behave as before.
-export function mergedColorTargets(hand, memory) {
-  const live = colorPlayTargets(hand);
+export function mergedColorTargets(hand, memory, possible = null) {
+  const live = colorPlayTargets(hand, possible);
   if (!memory?.colorPlays?.length) return live;
   const seen = new Set(live);
   const rescued = [];
@@ -451,7 +466,11 @@ function hasPendingPlay(view, seat, conventions = STANDARD_CONVENTIONS) {
     if (!ones.some((i) => combos[i].length === 1)
       && ones.some((i) => possiblyPlayable(view, combos[i]))) return true;
   }
-  return colorPlayTargets(hand).some((t) => possiblyPlayable(view, combos[t]));
+  // Same reading the receiver uses (target slides past provably-unplayable
+  // touched cards), so we never count a "pending play" they won't actually
+  // make — that mismatch used to leave a colour-clued card nobody would touch
+  // while we withheld further help, deadlocking both sides into stalls.
+  return colorPlayTargets(hand, (slot) => possiblyPlayable(view, combos[slot])).length > 0;
 }
 
 // Score a valid play hint so competing options can be compared. Immediate
@@ -511,17 +530,23 @@ function playHintCandidates(view, seat, conventions) {
   const out = [];
   const hand = view.players[seat].hand;
   const before = handCombos(view, seat);
-  const pending = colorPlayTargets(hand);
+  const pending = colorPlayTargets(hand, (slot) => possiblyPlayable(view, before[slot]));
   for (const color of view.hintableColors) {
     const touched = colorHintTouches(view, hand, color);
     if (touched.length === 0) continue;
     const after = combosFor(view, afterColorHint(view, hand, color), [seat, view.viewerIndex]);
     let playIdxs = touched.filter(({ i }) => knownPlayable(view, after[i])).map(({ i }) => i);
     if (playIdxs.length === 0) {
-      const newest = touched[touched.length - 1];
-      if (!isPlayable(view, newest.card.color, newest.card.number)) continue;
-      if (pending.includes(newest.i)) continue; // already their live target
-      playIdxs = [newest.i];
+      // The card the receiver will actually pick: newest touched that their
+      // post-hint constraints don't already rule out (see colorPlayTargets).
+      let target = null;
+      for (let k = touched.length - 1; k >= 0; k--) {
+        if (possiblyPlayable(view, after[touched[k].i])) { target = touched[k]; break; }
+      }
+      if (!target) continue;
+      if (!isPlayable(view, target.card.color, target.card.number)) continue;
+      if (pending.includes(target.i)) continue; // already their live target
+      playIdxs = [target.i];
     }
     out.push(scoreHint(view, seat, hand, touched, before, after, playIdxs, { hintType: 'color', value: color }));
   }
@@ -1128,11 +1153,13 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   const myCombos = handCombos(view, me);
   const nextIndex = (me + 1) % view.players.length;
   const lastFuse = view.fuseTokens === 1;
+  // Our reading of which touched cards a colour hint could still be pointing at.
+  const canStillPlay = (slot) => possiblyPlayable(view, myCombos[slot]);
 
   // Capture our live colour-hint play targets by card id before any branch
   // below can return an action that consumes their markers — so the obligation
   // survives an unrelated touched card being discarded (see rememberColorTargets).
-  rememberColorTargets(myHand, memory, myLastHandExit(view, me));
+  rememberColorTargets(myHand, memory, myLastHandExit(view, me), canStillPlay);
 
   // When guards aren't shared, re-apply the ones our past alarms prompted so the
   // danger model below sees the receiver's real (hidden) chop, not a stale one.
@@ -1259,10 +1286,15 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
 
   // 2. Play a pending colour-hint target, oldest hint first — skipping any
   //    target deduction says can't be playable.
+  // We trust the sender and the convention: the target is theirs to choose, and
+  // they can see the card. Requiring it to be *provably* playable (as the last
+  // fuse used to) breaks that trust — the card sits unplayed while the sender,
+  // who counts it as a pending play, withholds further help, and both sides
+  // stall the game out. A target we can prove unplayable is already skipped by
+  // the slide in colorPlayTargets, so what reaches here is what they asked for.
   if (conventions.colorHintPlaysNewest) {
-    for (const t of mergedColorTargets(myHand, memory)) {
-      const safeEnough = lastFuse ? knownPlayable(view, myCombos[t]) : possiblyPlayable(view, myCombos[t]);
-      if (safeEnough) {
+    for (const t of mergedColorTargets(myHand, memory, canStillPlay)) {
+      if (possiblyPlayable(view, myCombos[t])) {
         return { action: { type: 'play', cardIndex: t }, reason: 'colour hint marks touched card' };
       }
     }
