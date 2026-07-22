@@ -838,3 +838,51 @@ rainbowCriticalBlackReverse/35        2 28.84    20   34        0      0        
 rainbowCriticalBlackReverse/35        3 32.14    25   35        6      0           0.60
 rainbowCriticalBlackReverse/35        4 31.30     7   35        9      2           0.78
 ```
+
+## 2.9 — a forgone colour target is an alarm too
+
+The alarm convention's type-2 signal is "discard the chop while holding an
+obvious play". The receiver-side detector defined *obvious* as `knownPlayable`
+— provably playable from the discarder's own constraints. But the commonest
+play obligation in this brain isn't provable at all: a colour-hint target is
+only ever *possibly* playable (the receiver knows the colour, not the number).
+So the one case the convention most wants to catch — the partner was handed a
+play target, didn't play it, and discarded their chop instead — was invisible,
+and no alarm was raised.
+
+The detector now shares `hasPendingPlay` with the giver, so "did they have a
+play?" has exactly one definition across the whole brain: known-playable, a live
+colour target (sliding, possibly playable), or a play-all-1s obligation.
+`hasPendingPlay` also picked up `decideCore`'s last-fuse gate on the "1" branch
+in the process — at `fuseTokens === 1` a "1" obligation is only acted on when
+provably playable, so before then it isn't a play anyone will actually make, and
+neither the giver nor the alarm detector should assume it is.
+
+Emission is deliberately left alone: `findAlarmMove` still only *sends* this
+alarm while holding a known-playable card. Reading a signal more broadly than
+you send it is the safe direction — it costs a guard when a partner deviates,
+and never invents a signal of our own.
+
+**+0.08 avg per row over 2.8**, positive on 10 of 15 rows, flat on 3, and two
+−0.02 dips inside noise. Best at the seat counts where a forgone target used to
+go unpunished: reverse 4p 31.30→31.54, rainbowCriticalBlack 4p 30.88→31.10,
+rainbowCritical 4p 27.52→27.66, simple 2p 23.60→23.74 (min 17→18).
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.74    18   25       25      0           0.46
+simple/25                             3 24.32    22   25       29      0           0.40
+simple/25                             4 24.00    21   25       27      0           0.56
+rainbow/30                            2 27.90    21   30       16      0           0.34
+rainbow/30                            3 28.98     8   30       32      1           0.30
+rainbow/30                            4 28.78    27   30       15      0           0.60
+rainbowCritical/30                    2 27.36    22   30       12      0           0.46
+rainbowCritical/30                    3 28.26    21   30       20      1           0.52
+rainbowCritical/30                    4 27.66    21   30        8      0           0.64
+rainbowCriticalBlack/35               2 29.40    21   35        3      1           0.60
+rainbowCriticalBlack/35               3 32.80    27   35       13      1           0.44
+rainbowCriticalBlack/35               4 31.10    10   35        7      4           0.74
+rainbowCriticalBlackReverse/35        2 28.84    20   34        0      0           0.62
+rainbowCriticalBlackReverse/35        3 32.22    25   35        6      0           0.62
+rainbowCriticalBlackReverse/35        4 31.54     7   35       10      2           0.78
+```

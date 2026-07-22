@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.8';
+export const BOT_VERSION = '2.9';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -463,8 +463,13 @@ function hasPendingPlay(view, seat, conventions = STANDARD_CONVENTIONS) {
   if (combos.some((cs) => knownPlayable(view, cs))) return true;
   if (conventions.playAllOnes) {
     const ones = onesObligations(hand);
-    if (!ones.some((i) => combos[i].length === 1)
-      && ones.some((i) => possiblyPlayable(view, combos[i]))) return true;
+    // Mirror decideCore's own gate: on the last fuse a "1" obligation is acted
+    // on only when provably playable (the receiver can't see the colours it
+    // would be gambling), so before then it isn't a play they'll actually make.
+    const willPlay = view.fuseTokens === 1
+      ? (i) => knownPlayable(view, combos[i])
+      : (i) => possiblyPlayable(view, combos[i]);
+    if (!ones.some((i) => combos[i].length === 1) && ones.some(willPlay)) return true;
   }
   // Same reading the receiver uses (target slides past provably-unplayable
   // touched cards), so we never count a "pending play" they won't actually
@@ -981,8 +986,14 @@ export function alarmGuards(view, conventions = STANDARD_CONVENTIONS) {
   } else if (e.chopIndex != null && e.chopIndex >= 0 && e.cardIndex !== e.chopIndex) {
     anomaly = true; // discarded past the chop
   } else {
-    // A normal-looking chop discard while holding an obvious play.
-    anomaly = handCombos(view, e.playerIndex).some((cs) => knownPlayable(view, cs));
+    // A normal-looking chop discard while holding a play the conventions say
+    // they should have made. "A play" is the receiver's own reading, not just a
+    // provable one: a live colour-hint target is a firm obligation even though
+    // it is only *possibly* playable, so leaving it unplayed to discard the chop
+    // is every bit as deliberate as forgoing a known-playable card. Sharing
+    // hasPendingPlay keeps this identical to what the discarder would have
+    // computed for themselves.
+    anomaly = hasPendingPlay(view, e.playerIndex, conventions);
   }
   if (!anomaly) return [];
   // The discard restored a token, so the alarmer decided with one fewer.

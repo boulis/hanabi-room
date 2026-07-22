@@ -4,7 +4,7 @@ import { createInitialState } from './game.js';
 import { getVariant } from './variants.js';
 import { annotateAction, discardAction, hintAction, playAction } from './rules.js';
 import { viewState } from './view.js';
-import { alarmGuards, colorPlayTargets, decide, endgameHelpfulness, handCombos, mergedColorTargets, protectiveStall, rememberColorTargets } from './botBrain.js';
+import { alarmGuards, colorPlayTargets, decide, endgameHelpfulness, handCombos, knownPlayable, mergedColorTargets, protectiveStall, rememberColorTargets } from './botBrain.js';
 
 const COLORS = ['red', 'yellow', 'green', 'blue', 'white'];
 const DIST = [1, 1, 1, 2, 2, 3, 3, 4, 4, 5];
@@ -136,6 +136,24 @@ test('bot: trusts a colour hint on the last fuse instead of demanding proof', ()
   s.fuseTokens = 1;
   const { action, reason } = decide(viewState(s, 1));
   assert.deepEqual(action, { type: 'play', cardIndex: 2 }, reason);
+});
+
+test('bot: leaving a colour target unplayed to discard the chop raises the alarm', () => {
+  // The colour target (red_1, slot 2) is only *possibly* playable from the
+  // receiver's side — it is never knownPlayable, so the old "obvious play"
+  // test missed this entirely. Under the trust convention the target is a firm
+  // obligation, so discarding the chop instead is a deliberate signal.
+  const s = craftedState(
+    ['white_4', 'white_3', 'blue_4', 'green_4', 'yellow_4'],
+    ['red_3', 'blue_2', 'red_1', 'green_3', 'yellow_2'],
+  );
+  hintAction(s, 0, 1, 'color', 'red'); // touches slots 0 and 2; target is slot 2
+  const combos = handCombos(viewState(s, 1), 1);
+  assert.ok(!combos.some((cs) => knownPlayable(viewState(s, 1), cs)),
+    'no provably playable card — the old knownPlayable test would see nothing');
+  discardAction(s, 1, 1); // discard the chop (blue_2) instead of playing the target
+  const guards = alarmGuards(viewState(s, 0));
+  assert.ok(guards.length > 0, 'partner reads the forgone colour target as an alarm');
 });
 
 test('bot: colour-hint play target survives discarding an older card of the same hint', () => {
