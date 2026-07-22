@@ -991,3 +991,58 @@ rainbowCriticalBlackReverse/35        2 29.04    20   34        0      0        
 rainbowCriticalBlackReverse/35        3 32.20    25   35        6      0           0.62
 rainbowCriticalBlackReverse/35        4 31.62     7   35       10      2           0.76
 ```
+
+## 2.12 — a "1" hint means KEEP in a reverse-suit variant
+
+A convention hole, not a tuning change. `rainbowCriticalBlackReverse` plays black
+5→1 with the reversed distribution `[5,5,5,4,4,3,3,2,2,1]` — so **black 1 is the
+pile's LAST card and its only copy**, a critical card and the exact opposite of a
+play cue. Play-all-1s obligated it anyway: the receiver knows only that a card is
+a 1, and while any up-suit's 1 is still open the card stays `possiblyPlayable`,
+so the bot gambled. Reproduced directly — with an empty black pile the bot played
+its `black_1` "play all 1s", which both misfires and caps black at 4 permanently.
+
+Number hints mean *keep* by default, so the rule is simply that the "1" exception
+does not apply to a card that could still be a reversed suit's 1
+(`onesPlayObligations`). Being touched by any colour hint proves it isn't one —
+a `hintMatches: 'none'` suit like black is never in a colour hint's touched set —
+as does copy-counting the single black 1 elsewhere. Receiver (`decideCore`),
+giver model (`hasPendingPlay`), the dead-1 warning, and hint scoring
+(`playHintCandidates` no longer credits a "1" hint with plays the receiver won't
+make) all share the one predicate, so no two sides disagree. Variants without a
+down suit are untouched, and every non-reverse row below is **bit-identical to
+2.11**.
+
+The reverse rows trade a little average for markedly better safety, which is the
+right side of that trade for a card whose loss is permanent:
+
+| row | avg | misplays/game | min | fused |
+| --- | --- | --- | --- | --- |
+| reverse 2p | 29.04 → 28.58 | 0.62 → **0.36** | 20 → 22 | 0 → 0 |
+| reverse 3p | 32.20 → 31.72 | 0.62 → **0.32** | 25 → 22 | 0 → 0 |
+| reverse 4p | 31.62 → 31.56 | 0.76 → **0.60** | 7 → **25** | 2 → **0** |
+
+Misplays fall by ~40% on every reverse row, 4-player fuse-outs disappear, and the
+catastrophic 4p tail is gone (min 7 → 25). The average dips because the bot gives
+up the multi-1 tempo play there; with the "1" hint no longer starting plays,
+`playHintCandidates` naturally falls back to colour hints to get 1s moving, which
+prove the card isn't black.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.68    18   25       26      0           0.38
+simple/25                             3 24.34    22   25       30      0           0.40
+simple/25                             4 23.98    21   25       29      0           0.56
+rainbow/30                            2 27.92    21   30       16      0           0.34
+rainbow/30                            3 28.98     8   30       32      1           0.28
+rainbow/30                            4 28.88    26   30       17      0           0.58
+rainbowCritical/30                    2 27.42    22   30       12      0           0.46
+rainbowCritical/30                    3 28.38    21   30       19      0           0.48
+rainbowCritical/30                    4 27.72    21   30        8      0           0.62
+rainbowCriticalBlack/35               2 29.24    22   35        3      1           0.64
+rainbowCriticalBlack/35               3 32.82    27   35       14      1           0.40
+rainbowCriticalBlack/35               4 31.20    10   35        7      4           0.74
+rainbowCriticalBlackReverse/35        2 28.58    22   34        0      0           0.36
+rainbowCriticalBlackReverse/35        3 31.72    22   35        4      0           0.32
+rainbowCriticalBlackReverse/35        4 31.56    25   35        3      0           0.60
+```

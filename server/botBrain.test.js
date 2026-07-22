@@ -107,6 +107,34 @@ test('bot: colour hint received → plays the newest touched card', () => {
   assert.deepEqual(action, { type: 'play', cardIndex: 2 }, reason);
 });
 
+test('bot: in a reverse variant a "1" hint means keep — the 1 could be the critical black 1', () => {
+  // Black plays 5->1 with the reversed distribution, so black_1 is the pile's
+  // LAST card and its only copy. Playing it early both misfires and caps black
+  // at 4 forever. The receiver can't rule black out (black is never touched by
+  // a colour hint), so a "1" hint must read as keep.
+  const s = craftedStateV(
+    'rainbowCriticalBlackReverse',
+    ['white_4', 'white_3', 'green_4', 'yellow_4', 'blue_4'],
+    ['black_1', 'red_1', 'white_2', 'green_3', 'yellow_2'],
+  );
+  hintAction(s, 0, 1, 'number', 1); // touches black_1 (slot 0) and red_1 (slot 1)
+  const { action, reason } = decide(viewState(s, 1));
+  assert.notEqual(action.type, 'play', `must not gamble the only black 1: ${reason}`);
+});
+
+test('bot: in a reverse variant a "1" is played once the black 1 is ruled out', () => {
+  // Ann holds the only black_1, so copy-counting removes it from the bot's
+  // candidates — the obligation is back on.
+  const s = craftedStateV(
+    'rainbowCriticalBlackReverse',
+    ['black_1', 'white_3', 'green_4', 'yellow_4', 'blue_4'],
+    ['red_1', 'white_2', 'green_3', 'yellow_2', 'blue_3'],
+  );
+  hintAction(s, 0, 1, 'number', 1); // touches the bot's red_1 only
+  const { action, reason } = decide(viewState(s, 1));
+  assert.deepEqual(action, { type: 'play', cardIndex: 0 }, reason);
+});
+
 test('bot: warns a partner whose obligated 1 has since been played by someone else', () => {
   // Bot (player 0) hints "1"; the partner's red_1 and blue_1 are both obligated.
   // Then the bot plays its OWN red_1, killing the partner's copy — which the

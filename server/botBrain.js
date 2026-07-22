@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.11';
+export const BOT_VERSION = '2.12';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -387,6 +387,29 @@ function onesObligations(hand) {
   return out;
 }
 
+// Suits played 5→1 turn the "1" convention upside down: there, 1 is the LAST
+// card of the pile and — with the reversed distribution — its only copy, so it
+// is a critical card, the exact opposite of a play cue. A number hint means
+// *keep* by default, so in a variant carrying such a suit a "1" hint keeps
+// unless the receiver can prove the card is not that suit's 1. (Being touched
+// by any colour hint proves it: a 'none'-matching suit like black is never in a
+// colour hint's touched set, so a colour-clued card cannot be black.)
+function reversedOneColors(view) {
+  const out = new Set();
+  for (const suit of getVariant(view.variantId).suits) {
+    if (suit.direction === 'down' && suit.distribution.includes(1)) out.add(suit.color);
+  }
+  return out;
+}
+
+// The slots a "1" hint actually obligates for play (see reversedOneColors).
+function onesPlayObligations(view, hand, combos) {
+  const ones = onesObligations(hand);
+  const reversed = reversedOneColors(view);
+  if (reversed.size === 0) return ones;
+  return ones.filter((i) => !combos[i].some(([c, n]) => n === 1 && reversed.has(c)));
+}
+
 // An identity that must not be lost: still needed, and every other copy has
 // been discarded (played copies would make it useless, handled above).
 function identityCritical(view, color, number) {
@@ -462,7 +485,7 @@ function hasPendingPlay(view, seat, conventions = STANDARD_CONVENTIONS) {
   const combos = handCombos(view, seat);
   if (combos.some((cs) => knownPlayable(view, cs))) return true;
   if (conventions.playAllOnes) {
-    const ones = onesObligations(hand);
+    const ones = onesPlayObligations(view, hand, combos);
     // Mirror decideCore's own gate: on the last fuse a "1" obligation is acted
     // on only when provably playable (the receiver can't see the colours it
     // would be gambling), so before then it isn't a play they'll actually make.
@@ -559,7 +582,11 @@ function playHintCandidates(view, seat, conventions) {
     const after = combosFor(view, afterNumberHint(hand, n), [seat, view.viewerIndex]);
     const touched = hand.map((c, i) => ({ card: c, i })).filter(({ card }) => card.number === n);
     if (n === 1 && conventions.playAllOnes) {
-      const wouldPlay = touched.filter(({ i }) => possiblyPlayable(view, after[i]));
+      // A 1 the receiver can't yet rule out as the reversed suit's own 1 reads
+      // as a keep, not a play, so this hint can't be credited with playing it.
+      const reversed = reversedOneColors(view);
+      const wouldPlay = touched.filter(({ i }) => possiblyPlayable(view, after[i])
+        && !after[i].some(([c, num]) => num === 1 && reversed.has(c)));
       // 1s already obligated in other visible hands — a second obligation on
       // the same colour's 1 guarantees that one of the two plays misfires.
       const obligatedElsewhere = new Set();
@@ -1032,9 +1059,9 @@ export function alarmGuards(view, conventions = STANDARD_CONVENTIONS) {
 function findDeadOneWarning(view, seat, conventions) {
   if (!conventions.playAllOnes || view.hintTokens <= 0) return null;
   const hand = view.players[seat].hand;
-  const ones = onesObligations(hand);
-  if (ones.length === 0) return null;
   const combos = handCombos(view, seat);
+  const ones = onesPlayObligations(view, hand, combos);
+  if (ones.length === 0) return null;
   // Already reads as information: a pinned 1 disables the play order entirely.
   if (ones.some((i) => combos[i].length === 1)) return null;
   // The 1 they would actually play next, under the same gate decideCore uses.
@@ -1398,7 +1425,9 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   //     identity, the 1s read as information (e.g. "that's the dead
   //     duplicate"), not as a play order.
   if (conventions.playAllOnes) {
-    const ones = onesObligations(myHand);
+    // In a reverse-suit variant a "1" that could still be the reversed suit's
+    // own 1 is a keep, not a play — see onesPlayObligations.
+    const ones = onesPlayObligations(view, myHand, myCombos);
     if (!ones.some((i) => myCombos[i].length === 1)) {
       for (const i of ones) {
         const safeEnough = lastFuse ? knownPlayable(view, myCombos[i]) : possiblyPlayable(view, myCombos[i]);
