@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.13';
+export const BOT_VERSION = '2.14';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -455,6 +455,46 @@ function yieldSlots(view, myCombos, conventions, candidates) {
   return out;
 }
 
+// Is the "1" order `seat` is holding still fresh — no 1 played by anyone since?
+// When the hinter gave the order they had checked that every 1 the receiver
+// would play really was playable, so at that instant the oldest was safe. Any
+// 1 played since can have taken its colour, and the receiver cannot tell (their
+// card is just "a 1" to them), so the guarantee lapses.
+//
+// Deliberately counts the receiver's OWN 1-plays too. Only the order's own 1s
+// are guaranteed to be different colours; a 1 the receiver played off a colour
+// hint can collide with the rest. Counting every play also means we only ever
+// extend this trust to the FIRST 1 of an order — exactly "at least the oldest".
+//
+// Scans back to the most recent "1" hint aimed at `seat`. Not finding one (it
+// has aged out of the 50-entry log window) reads as stale, which is the safe
+// direction — the caller then falls back to demanding proof.
+function onesOrderIsFresh(view, seat) {
+  for (let i = view.log.length - 1; i >= 0; i--) {
+    const e = view.log[i];
+    if (e.undone) continue;
+    if (e.type === 'hint' && e.toIndex === seat && e.hintType === 'number' && e.value === 1) return true;
+    if (e.type === 'play' && e.card?.number === 1) return false;
+  }
+  return false;
+}
+
+// Will `seat` actually act on the "1" obligation in slot i? Shared by the
+// receiver (decideCore), the giver's model (hasPendingPlay) and the dead-1
+// warning so that no two sides disagree about what the order means.
+//
+// Below the last fuse the order is simply followed. On the last fuse a misfire
+// ends the game, so proof is normally required — but a *fresh* order is still
+// trusted for its OLDEST 1, the one the hinter most directly vouched for.
+// Trusting the whole set unconditionally was measured and is much worse.
+function onesPlayGate(view, seat, ones, combos) {
+  if (view.fuseTokens !== 1) return (i) => possiblyPlayable(view, combos[i]);
+  const fresh = onesOrderIsFresh(view, seat);
+  return (i) => (fresh && i === ones[0]
+    ? possiblyPlayable(view, combos[i])
+    : knownPlayable(view, combos[i]));
+}
+
 // The slots a "1" hint actually obligates for play (see reversedOneColors).
 function onesPlayObligations(view, hand, combos) {
   const ones = onesObligations(hand);
@@ -539,12 +579,7 @@ function hasPendingPlay(view, seat, conventions = STANDARD_CONVENTIONS) {
   if (combos.some((cs) => knownPlayable(view, cs))) return true;
   if (conventions.playAllOnes) {
     const ones = onesPlayObligations(view, hand, combos);
-    // Mirror decideCore's own gate: on the last fuse a "1" obligation is acted
-    // on only when provably playable (the receiver can't see the colours it
-    // would be gambling), so before then it isn't a play they'll actually make.
-    const willPlay = view.fuseTokens === 1
-      ? (i) => knownPlayable(view, combos[i])
-      : (i) => possiblyPlayable(view, combos[i]);
+    const willPlay = onesPlayGate(view, seat, ones, combos);
     if (!ones.some((i) => combos[i].length === 1) && ones.some(willPlay)) return true;
   }
   // Same reading the receiver uses (target slides past provably-unplayable
@@ -1137,10 +1172,7 @@ function findDeadOneWarning(view, seat, conventions) {
   // Already reads as information: a pinned 1 disables the play order entirely.
   if (ones.some((i) => combos[i].length === 1)) return null;
   // The 1 they would actually play next, under the same gate decideCore uses.
-  const gate = view.fuseTokens === 1
-    ? (i) => knownPlayable(view, combos[i])
-    : (i) => possiblyPlayable(view, combos[i]);
-  const next = ones.find(gate);
+  const next = ones.find(onesPlayGate(view, seat, ones, combos));
   if (next === undefined) return null;
   const victim = hand[next];
   if (!isUseless(view, victim.color, victim.number)) return null; // genuinely playable
@@ -1249,18 +1281,21 @@ function findSweepSave(view, seat, endangered) {
 
 // Any legal hint that changes as little as possible: prefer re-hinting a
 // number the player already has clued (pure "keep" reinforcement).
-function findStallHint(view, hand) {
-  const clued = hand.filter((c) => c.numberClued);
+function findStallHint(view, hand, conventions = STANDARD_CONVENTIONS) {
+  // A "1" is never a harmless value to stall with while play-all-1s is on: it
+  // is a play ORDER, and a receiver who trusts it can misfire — fatally so on
+  // the last fuse. Skip the value rather than accidentally command a play.
+  const harmless = (c) => !(conventions.playAllOnes && c.number === 1);
   const pick = (cards) => (cards.length ? { hintType: 'number', value: cards[cards.length - 1].number } : null);
-  return pick(clued) || pick(hand);
+  return pick(hand.filter((c) => c.numberClued && harmless(c))) || pick(hand.filter(harmless));
 }
 
 // A harmless stall hint to whoever accepts one (closest player first).
-function stallAction(view) {
+function stallAction(view, conventions = STANDARD_CONVENTIONS) {
   const me = view.viewerIndex;
   for (let step = 1; step < view.players.length; step++) {
     const idx = (me + step) % view.players.length;
-    const stall = findStallHint(view, view.players[idx].hand);
+    const stall = findStallHint(view, view.players[idx].hand, conventions);
     if (stall) return { type: 'hint', toPlayerIndex: idx, ...stall };
   }
   return null;
@@ -1290,7 +1325,7 @@ export function protectiveStall(view, conventions = STANDARD_CONVENTIONS) {
       }
     }
   }
-  const stall = stallAction(view);
+  const stall = stallAction(view, conventions);
   return stall ? { action: stall } : null;
 }
 
@@ -1321,7 +1356,6 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   const myHand = view.players[me].hand;
   const myCombos = handCombos(view, me);
   const nextIndex = (me + 1) % view.players.length;
-  const lastFuse = view.fuseTokens === 1;
   // Our reading of which touched cards a colour hint could still be pointing at.
   const canStillPlay = (slot) => possiblyPlayable(view, myCombos[slot]);
 
@@ -1514,10 +1548,10 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
     // own 1 is a keep, not a play — see onesPlayObligations.
     const ones = onesPlayObligations(view, myHand, myCombos);
     if (!ones.some((i) => myCombos[i].length === 1)) {
+      const willPlay = onesPlayGate(view, me, ones, myCombos);
       for (const i of ones) {
         if (yielded.has(i)) continue;
-        const safeEnough = lastFuse ? knownPlayable(view, myCombos[i]) : possiblyPlayable(view, myCombos[i]);
-        if (safeEnough) {
+        if (willPlay(i)) {
           return { action: { type: 'play', cardIndex: i }, reason: 'play all 1s' };
         }
       }

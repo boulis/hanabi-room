@@ -1104,3 +1104,59 @@ rainbowCriticalBlackReverse/35        2 28.58    22   34        0      0        
 rainbowCriticalBlackReverse/35        3 31.70    22   35        4      0           0.30
 rainbowCriticalBlackReverse/35        4 31.76    27   35        3      0           0.52
 ```
+
+## 2.14 — trust a FRESH "1" order on the last fuse (and never stall with a "1")
+
+The last-fuse gate on the "1" path demanded proof, which 2.11 recorded as
+untouchable: removing it outright was −0.05/row with fuse-outs up. That
+experiment was too blunt. The right condition is **staleness**, not the fuse.
+
+When the hinter gives a "1" order they have already checked that every 1 the
+receiver would play really is playable, all of them different colours — so at
+that instant the oldest was safe. The only way it can have died since is if a 1
+has been played in the meantime, taking its colour, which the receiver cannot
+see. So on the last fuse the bot now trusts a *fresh* order — no 1 played by
+anyone since the hint — for its **oldest** 1, and demands proof otherwise
+(`onesOrderIsFresh` / `onesPlayGate`, shared by the receiver, the giver's model
+and the dead-1 warning so no two sides disagree). Counting every 1-play,
+including the receiver's own, is deliberate: only the order's 1s are guaranteed
+distinct colours, and it also means the trust extends to the first 1 of an order
+and no further — exactly "at least the oldest".
+
+**And the bug this uncovered.** `findStallHint` picked the number of any clued
+card, so it could stall with **"1"** — which under play-all-1s is not a stall at
+all but a play ORDER. Harmless while the receiver demanded proof; lethal the
+moment it trusts. rainbowCritical 4p seed 30 was exactly this: a
+`stall (nothing safe to discard)` hint of `number=1`, the receiver plays, third
+fuse, game over at **6/30**. Stall hints now skip the value 1 entirely while
+play-all-1s is on. Seed 30 finishes **26/30**.
+
+Measured separately, since the two are easy to conflate: the stall fix carries
+most of it — **misplays fall on nearly every row** (simple 2p 0.32→0.18,
+rainbowCriticalBlack 2p 0.64→0.46, 3p 0.38→0.28, reverse 3p 0.30→0.24). The
+trust rule adds **+0.02/row** on top (rainbowCriticalBlack 4p 31.24→31.56 with
+fuse-outs 3→2, simple 4p +0.04), and nothing else moves. Total fuse-outs 5→4.
+
+Average is flat-to-slightly-down vs 2.13 (−0.02/row) while misplays drop ~30%
+and the worst outlier is repaired; in `lax` a burnt fuse costs no score until it
+is the third, so the misplay column is where this shows up. `simple` 2p keeps its
+median of **25**.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.82    18   25       28      0           0.18
+simple/25                             3 24.30    22   25       28      0           0.34
+simple/25                             4 24.08    21   25       31      0           0.54
+rainbow/30                            2 27.76    21   30       16      0           0.26
+rainbow/30                            3 29.36    27   30       31      0           0.22
+rainbow/30                            4 28.88    26   30       17      0           0.48
+rainbowCritical/30                    2 27.24    19   30       12      0           0.38
+rainbowCritical/30                    3 28.28    21   30       18      0           0.40
+rainbowCritical/30                    4 27.76    21   30        8      0           0.58
+rainbowCriticalBlack/35               2 29.12    22   35        2      1           0.46
+rainbowCriticalBlack/35               3 32.78    26   35       14      1           0.28
+rainbowCriticalBlack/35               4 31.56    10   35        8      2           0.62
+rainbowCriticalBlackReverse/35        2 28.52    22   34        0      0           0.36
+rainbowCriticalBlackReverse/35        3 31.68    22   35        4      0           0.24
+rainbowCriticalBlackReverse/35        4 31.82    27   35        3      0           0.52
+```

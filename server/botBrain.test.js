@@ -135,6 +135,39 @@ test('bot: in a reverse variant a "1" is played once the black 1 is ruled out', 
   assert.deepEqual(action, { type: 'play', cardIndex: 0 }, reason);
 });
 
+test('bot: on the last fuse it trusts a FRESH "1" order and plays the oldest', () => {
+  // A red 1 is already down, so the bot's 1s are only possibly playable — never
+  // provable. The hinter checked they were playable when giving the order and no
+  // 1 has been played since, so the guarantee still holds: trust it.
+  const s = craftedState(
+    ['red_1', 'white_3', 'green_4', 'yellow_4', 'blue_4'],
+    ['yellow_1', 'green_1', 'white_2', 'green_3', 'blue_2'],
+  );
+  playAction(s, 0, 0);              // red 1 down — before the order
+  hintAction(s, 1, 0, 'number', 3); // hand the turn back
+  hintAction(s, 0, 1, 'number', 1); // the order: touches yellow_1 and green_1
+  s.fuseTokens = 1;
+  const { action, reason } = decide(viewState(s, 1));
+  assert.deepEqual(action, { type: 'play', cardIndex: 0 }, reason);
+});
+
+test('bot: on the last fuse it does NOT trust a "1" order gone stale', () => {
+  // Same position, but a 1 has been played since the order was given — it could
+  // have taken the colour of what we hold, and we cannot tell. Demand proof.
+  const s = craftedState(
+    ['red_1', 'white_3', 'green_4', 'yellow_4', 'blue_4'],
+    ['yellow_1', 'green_1', 'white_2', 'green_3', 'blue_2'],
+  );
+  playAction(s, 0, 0);
+  hintAction(s, 1, 0, 'number', 3);
+  hintAction(s, 0, 1, 'number', 1); // the order
+  playAction(s, 1, 0);              // a 1 played AFTER it — order is now stale
+  hintAction(s, 0, 1, 'number', 2); // hand the turn back
+  s.fuseTokens = 1;
+  const { action, reason } = decide(viewState(s, 1));
+  assert.notEqual(action.type, 'play', `stale order must not be gambled: ${reason}`);
+});
+
 test('bot: yields a duplicate rather than racing a partner obliged to play it', () => {
   // Ann is obliged (by a "1" hint) to play her red_1 but cannot tell it is red —
   // to her it is just "a 1". The bot's own red colour target must be the red_1
