@@ -931,3 +931,63 @@ rainbowCriticalBlackReverse/35        2 28.98    20   34        0      0        
 rainbowCriticalBlackReverse/35        3 32.20    25   35        6      0           0.62
 rainbowCriticalBlackReverse/35        4 31.62     7   35       10      2           0.76
 ```
+
+## 2.11 — the sender warns a partner whose obligated 1 has died
+
+Fixes the misplay engine behind the worst 2-player games (seed 25's opening
+double-misfire; seed 39, still the category's worst, is the same bug).
+
+**Nothing changed on the receiver side, because nothing needed to.** Every play
+path is already gated by `knownPlayable`/`possiblyPlayable`, and
+`possiblyPlayable` is false exactly when a card is provably dead — so the bot
+never plays a card it can prove is dead. The trouble is that it *cannot* prove
+it: a "1" hint tells the receiver the card is a 1, not its colour, so while any
+colour's 1 remains open the card stays possibly playable. Only a player who can
+SEE the card knows it died. Warning is therefore the sender's job, not a
+receiver rule.
+
+`findDeadOneWarning` gives that warning: when the next 1 a teammate would play
+(computed under the same gate `decideCore` uses) is one we can see is already on
+the pile, we hint its colour. That pins it to colour + the 1 they already know,
+which makes it provably unplayable — so their existing gate now fires — and, per
+the reveal exception, turns the whole "1" order back into information ("that's
+the dead duplicate"). Candidate hints that would leave a colour play target
+behind that misfires are rejected. Its value scales with the fuses, so it is
+offered at three priorities: above even a save at 1 fuse, above ordinary play
+hints at 2, and only after we have found nothing better to say at 3.
+
+**Score-flat (+0.01 avg per row over 2.10) but misplays fall** — simple 2p
+0.46→0.38, rainbowCritical 4p 0.66→0.62, rainbowCriticalBlack 3p 0.42→0.40 —
+and rainbowCritical 3p loses its fuse-out (1→0). The score is flat because in
+`lax` a burnt fuse costs nothing directly unless it is the third; the value is
+fewer wasted turns and, above all, not misfiring in front of a human partner.
+
+**A measured negative result worth recording.** The warning never fires at 1
+fuse (0 of 12 firings across 750 games), because the last-fuse gate on the "1"
+path already stops the receiver gambling there. Removing that gate — so the
+receiver always trusts the "1" hint and the warning becomes its safety net, the
+tidier-sounding convention — was tried and is **worse: −0.05 avg per row, with
+fuse-outs rising and catastrophic outliers appearing** (rainbowCritical 4p min
+21→4 and fused 0→1; reverse 4p fused 2→4). A warning hint often cannot be
+constructed — no colour pins the card without creating a misfiring target — so
+trusting unconditionally has no backstop. The gate stays; the warning covers
+2 fuses, where it is affordable and effective.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.68    18   25       26      0           0.38
+simple/25                             3 24.34    22   25       30      0           0.40
+simple/25                             4 23.98    21   25       29      0           0.56
+rainbow/30                            2 27.92    21   30       16      0           0.34
+rainbow/30                            3 28.98     8   30       32      1           0.28
+rainbow/30                            4 28.88    26   30       17      0           0.58
+rainbowCritical/30                    2 27.42    22   30       12      0           0.46
+rainbowCritical/30                    3 28.38    21   30       19      0           0.48
+rainbowCritical/30                    4 27.72    21   30        8      0           0.62
+rainbowCriticalBlack/35               2 29.24    22   35        3      1           0.64
+rainbowCriticalBlack/35               3 32.82    27   35       14      1           0.40
+rainbowCriticalBlack/35               4 31.20    10   35        7      4           0.74
+rainbowCriticalBlackReverse/35        2 29.04    20   34        0      0           0.62
+rainbowCriticalBlackReverse/35        3 32.20    25   35        6      0           0.62
+rainbowCriticalBlackReverse/35        4 31.62     7   35       10      2           0.76
+```

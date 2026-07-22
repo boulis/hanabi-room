@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.10';
+export const BOT_VERSION = '2.11';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -1015,6 +1015,57 @@ export function alarmGuards(view, conventions = STANDARD_CONVENTIONS) {
   return ids;
 }
 
+// A "1" hint obligates every touched 1, but the receiver knows only that they
+// ARE 1s — not their colours — so it cannot tell a live 1 from one whose colour
+// has since been played (by us, or by anyone). Its own "don't play a provably
+// dead card" gate can't fire, because from its side the card could still be one
+// of the colours that remain open. Only a player who can SEE the card can tell,
+// so warning is the sender's responsibility.
+//
+// The warning is a colour hint on the dead 1's own colour: it pins the card
+// (colour + the 1 they already know), which both makes it provably unplayable —
+// so the receiver's existing gate now fires — and, per the reveal exception,
+// turns the whole "1" order back into information ("that's the dead duplicate").
+// A hint that would leave a harmful colour play target behind is rejected.
+//
+// Returns null when nothing is endangered or no hint proves it.
+function findDeadOneWarning(view, seat, conventions) {
+  if (!conventions.playAllOnes || view.hintTokens <= 0) return null;
+  const hand = view.players[seat].hand;
+  const ones = onesObligations(hand);
+  if (ones.length === 0) return null;
+  const combos = handCombos(view, seat);
+  // Already reads as information: a pinned 1 disables the play order entirely.
+  if (ones.some((i) => combos[i].length === 1)) return null;
+  // The 1 they would actually play next, under the same gate decideCore uses.
+  const gate = view.fuseTokens === 1
+    ? (i) => knownPlayable(view, combos[i])
+    : (i) => possiblyPlayable(view, combos[i]);
+  const next = ones.find(gate);
+  if (next === undefined) return null;
+  const victim = hand[next];
+  if (!isUseless(view, victim.color, victim.number)) return null; // genuinely playable
+  for (const color of view.hintableColors) {
+    const touched = colorHintTouches(view, hand, color);
+    if (touched.length === 0) continue;
+    const after = combosFor(view, afterColorHint(view, hand, color), [seat, view.viewerIndex]);
+    // It must actually prove the dead 1 unplayable from their side.
+    if (possiblyPlayable(view, after[next])) continue;
+    // And must not hand them a colour target that would misfire (the slide in
+    // colorPlayTargets picks the newest touched card they can't rule out).
+    const afterHand = afterColorHint(view, hand, color);
+    const [target] = colorPlayTargets(
+      afterHand.map((c, i) => (touched.some((t) => t.i === i)
+        ? { ...c, lastHints: [...c.lastHints, { hintIndex: Infinity, hintType: 'color', value: color }] }
+        : c)),
+      (slot) => possiblyPlayable(view, after[slot]),
+    ).slice(-1);
+    if (target !== undefined && !isPlayable(view, hand[target].color, hand[target].number)) continue;
+    return { hintType: 'color', value: color };
+  }
+  return null;
+}
+
 // One-move look-ahead on saves. A keep-style save parks the chop behind a
 // clue — which slides the receiver's next discard onto their next unclued
 // card. If that card is save-worthy too, one hint can't protect both: save
@@ -1285,6 +1336,28 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
     }
   }
 
+  // Dead-1 warning: a teammate is obligated to play a 1 whose colour is already
+  // on the pile, and only we can see it (see findDeadOneWarning). Its worth
+  // scales with the fuses, so it is offered at three different priorities below:
+  // at 1 fuse the misplay ends the game, so it outranks even a save; at 2 it
+  // beats ordinary play hints; at 3 a burnt fuse is affordable and it only fills
+  // in after we have found nothing better to say.
+  let deadOneWarning = null;
+  if (view.hintTokens > 0) {
+    for (let step = 1; step < view.players.length; step++) {
+      const idx = (me + step) % view.players.length;
+      const warn = findDeadOneWarning(view, idx, conventions);
+      if (warn) {
+        deadOneWarning = {
+          action: { type: 'hint', toPlayerIndex: idx, ...warn },
+          reason: `warn ${view.players[idx].name}: that 1 is already played`,
+        };
+        break;
+      }
+    }
+  }
+  if (deadOneWarning && view.fuseTokens === 1) return deadOneWarning;
+
   // 0. The save outranks even our own play: the play keeps for next turn,
   //    the endangered card doesn't. Exception: in the final round a deferred
   //    play may never happen, so plays come first there.
@@ -1341,6 +1414,10 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   if (urgentSave) return urgentSave;
 
   if (view.hintTokens > 0) {
+    // 3b. With one fuse already gone, sparing the next costs less than the tempo
+    //     an ordinary play hint would buy.
+    if (deadOneWarning && view.fuseTokens <= 2) return deadOneWarning;
+
     // 4. Give a play hint (closest player first; colour hints preferred).
     for (let step = 1; step < view.players.length; step++) {
       const idx = (me + step) % view.players.length;
@@ -1353,6 +1430,9 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
         };
       }
     }
+    // 4a. All three fuses intact: the warning is worth a token only now that we
+    //     have found nothing more productive to say.
+    if (deadOneWarning) return deadOneWarning;
     // 4b. Zero-card-hint fallback: no ordinary play hint exists, but a player's
     //     chop is playable — signal it with an empty hint (touches nothing) so
     //     they play their chop. Closest player first, like the normal loop.

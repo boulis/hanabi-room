@@ -107,6 +107,31 @@ test('bot: colour hint received → plays the newest touched card', () => {
   assert.deepEqual(action, { type: 'play', cardIndex: 2 }, reason);
 });
 
+test('bot: warns a partner whose obligated 1 has since been played by someone else', () => {
+  // Bot (player 0) hints "1"; the partner's red_1 and blue_1 are both obligated.
+  // Then the bot plays its OWN red_1, killing the partner's copy — which the
+  // partner cannot detect (it knows only that the card is "a 1", and green/
+  // yellow/white 1s are still open, so its own dead-card gate can't fire).
+  // Only the bot can see it, so the bot must say so with a red colour hint,
+  // which pins the card to red_1 and turns the "1" order back into information.
+  const s = craftedState(
+    ['red_1', 'white_4', 'blue_4', 'green_4', 'yellow_4'],
+    ['red_1', 'blue_1', 'white_3', 'green_3', 'yellow_2'],
+  );
+  hintAction(s, 0, 1, 'number', 1);   // obligates partner's red_1 and blue_1
+  hintAction(s, 1, 0, 'number', 1);   // partner stalls back, pinning our red_1
+  playAction(s, 0, 0);                // we play our red_1 — theirs is now dead
+  hintAction(s, 1, 0, 'number', 4);   // partner's turn passes back to us
+  s.fuseTokens = 2;                   // a burnt fuse now matters (see priority)
+  const { action, reason } = decide(viewState(s, 0));
+  assert.deepEqual(
+    action,
+    { type: 'hint', toPlayerIndex: 1, hintType: 'color', value: 'red' },
+    reason,
+  );
+  assert.match(reason, /^warn /);
+});
+
 test('bot: colour-hint target slides past a touched card that is provably unplayable', () => {
   // Piles empty. Bot holds [green 5, green 1, red 2, green 2, black 5] and already
   // knows its two 2s. A "green" hint touches slots 0, 1 and 3 — but slot 3 is a
