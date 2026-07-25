@@ -248,7 +248,7 @@ let replay = null;        // { file, upto, total }
 let preReplayView = null; // the server-lobby view to restore on close
 
 function openReplay(file) {
-  replay = { file, upto: 0, total: 0 };
+  replay = { file, upto: 0, total: 0, pending: 0 };
   preReplayView = view;
   lastAnimatedActionSeq = null; // fresh baseline; steps animate like live play
   send({ type: 'replaySave', file, upto: 0 });
@@ -256,6 +256,10 @@ function openReplay(file) {
 
 function onReplayView(msg) {
   if (!replay || replay.file !== msg.file) return; // stale response
+  // Arrow-key repeat can put several requests in flight; only the newest one's
+  // view is current, so drop any response for a superseded position.
+  if (replay.pending != null && msg.upto !== replay.pending) return;
+  replay.pending = null;
   replay.upto = msg.upto;
   replay.total = msg.total;
   view = msg.view;
@@ -276,15 +280,41 @@ function closeReplay(restore = true) {
   }
 }
 
+// Where the next step counts from: the position we last asked for while a
+// request is still in flight (key repeat outruns the round trip), else the
+// position on screen.
+function replayCursor() {
+  return replay ? (replay.pending ?? replay.upto) : 0;
+}
+
 function replayStep(upto) {
   if (!replay) return;
   const clamped = Math.max(0, Math.min(upto, replay.total));
+  replay.pending = clamped;
   send({ type: 'replaySave', file: replay.file, upto: clamped });
 }
 
+// ←/→ step through the replay, Home/End jump to the ends. Ignored while the
+// user is typing (a name field, the tag box) or holding a modifier, so browser
+// and text-editing shortcuts keep working.
+document.addEventListener('keydown', (e) => {
+  if (!replay || e.altKey || e.ctrlKey || e.metaKey) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  const step = {
+    ArrowLeft: () => replayCursor() - 1,
+    ArrowRight: () => replayCursor() + 1,
+    Home: () => 0,
+    End: () => replay.total,
+  }[e.key];
+  if (!step) return;
+  e.preventDefault();
+  replayStep(step());
+});
+
 document.getElementById('replay-first').addEventListener('click', () => replayStep(0));
-document.getElementById('replay-prev').addEventListener('click', () => replayStep(replay ? replay.upto - 1 : 0));
-document.getElementById('replay-next').addEventListener('click', () => replayStep(replay ? replay.upto + 1 : 0));
+document.getElementById('replay-prev').addEventListener('click', () => replayStep(replayCursor() - 1));
+document.getElementById('replay-next').addEventListener('click', () => replayStep(replayCursor() + 1));
 document.getElementById('replay-last').addEventListener('click', () => replayStep(replay ? replay.total : 0));
 document.getElementById('replay-close').addEventListener('click', () => closeReplay());
 document.getElementById('replay-branch').addEventListener('click', () => {
