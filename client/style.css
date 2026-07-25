@@ -659,6 +659,11 @@ input, select {
 #stats-filters label { display: flex; align-items: center; gap: 0.35rem; }
 #stats-scope { font-size: 0.85rem; opacity: 0.7; }
 
+#stats-tags { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
+#stats-tags-list { display: flex; gap: 0.35rem; flex-wrap: wrap; align-items: center; }
+.stats-tag-mode { font: inherit; font-size: 0.85rem; background: none; }
+.stats-tag-count { opacity: 0.55; font-size: 0.75rem; }
+
 #stats-people { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
 .stats-people-label { font-size: 0.85rem; opacity: 0.7; }
 #stats-people-list { display: flex; gap: 0.35rem; flex-wrap: wrap; }

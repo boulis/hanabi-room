@@ -915,6 +915,11 @@ const statsToInput = document.getElementById('stats-to');
 // Names that must all appear in a game for it to count ("3-player games with
 // Ann, Bob and Cid" = this plus the player-count filter).
 let statsWithPlayers = new Set();
+const statsTagsList = document.getElementById('stats-tags-list');
+// 'any' (no tag filter), 'none' (untagged games only), or a set of tags a game
+// must carry at least one of.
+let statsTagMode = 'any';
+let statsTags = new Set();
 
 function requestStats() {
   send({
@@ -924,6 +929,8 @@ function requestStats() {
     withPlayers: [...statsWithPlayers],
     from: statsFromInput.value || null,
     to: statsToInput.value || null,
+    tags: statsTagMode === 'some' ? [...statsTags] : [],
+    untaggedOnly: statsTagMode === 'none',
   });
 }
 
@@ -979,10 +986,62 @@ function renderPeopleFilter(names) {
   }
 }
 
+// "Any tag" (the default) and "No tags" are exclusive with picking tags; a
+// game matches a picked set if it carries any one of them.
+function renderTagFilter(tags) {
+  const known = new Set(tags.map((t) => t.tag));
+  for (const t of [...statsTags]) if (!known.has(t)) statsTags.delete(t);
+  if (statsTagMode === 'some' && statsTags.size === 0) statsTagMode = 'any';
+  statsTagsList.innerHTML = '';
+
+  const addMode = (mode, label) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'stats-person stats-tag-mode' + (statsTagMode === mode ? ' on' : '');
+    btn.textContent = label;
+    btn.addEventListener('click', () => {
+      if (statsTagMode === mode) return;
+      statsTagMode = mode;
+      statsTags.clear();
+      requestStats();
+    });
+    statsTagsList.append(btn);
+  };
+  addMode('any', 'Any tag');
+  addMode('none', 'No tags');
+
+  for (const { tag, count } of tags) {
+    const label = document.createElement('label');
+    const on = statsTagMode === 'some' && statsTags.has(tag);
+    label.className = 'stats-person' + (on ? ' on' : '');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = on;
+    box.addEventListener('change', () => {
+      if (box.checked) statsTags.add(tag);
+      else statsTags.delete(tag);
+      statsTagMode = statsTags.size ? 'some' : 'any';
+      requestStats();
+    });
+    const count_ = document.createElement('span');
+    count_.className = 'stats-tag-count';
+    count_.textContent = count;
+    label.append(box, tag, count_);
+    statsTagsList.append(label);
+  }
+  if (tags.length === 0) {
+    const none = document.createElement('span');
+    none.className = 'lobby-empty';
+    none.textContent = 'no tagged games yet';
+    statsTagsList.append(none);
+  }
+}
+
 function renderStatsView(msg) {
   syncFilterOptions(statsPlayersSelect, msg.available.playerCounts, (v) => `${v} players`);
   syncFilterOptions(statsVariantSelect, msg.available.variantIds, (v) => v);
   renderPeopleFilter(msg.available.playerNames || []);
+  renderTagFilter(msg.available.tags || []);
   // Bound the pickers to the span the library actually covers.
   for (const input of [statsFromInput, statsToInput]) {
     input.min = msg.available.firstDay || '';

@@ -421,10 +421,12 @@ export async function listLibrary() {
 // Every readable save's per-player stats, with just enough metadata to filter
 // on (game size, variant, status). Shares the library's mtime cache.
 export async function listGameStats() {
+  const tags = await readAllTags();
   return (await cachedLibraryEntries())
     .filter((e) => e.stats)
     .map((e) => ({
       basename: e.basename,
+      tags: tags[e.basename] || [],
       startedAt: e.startedAt,
       variantId: e.variantId,
       playerCount: e.playerCount,

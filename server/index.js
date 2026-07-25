@@ -100,6 +100,10 @@ const connections = new Map();
 const REACTION_EMOJI = ['👏', '🤔', '❓', '😱', '🎉'];
 const REACTION_THROTTLE_MS = 500;
 
+// How many tags the stats page offers (most-used first) — enough to cover the
+// tags in real use without turning the filter into a wall of chips.
+const STATS_TAG_LIMIT = 20;
+
 function prompt(question) {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -515,6 +519,15 @@ wss.on('connection', async (ws) => {
           const variantIds = [...new Set(games.map((g) => g.variantId))].sort();
           const playerNames = [...new Set(games.flatMap(namesOf))].sort((a, b) => a.localeCompare(b));
           const startTimes = games.map((g) => Date.parse(g.startedAt)).filter((t) => !Number.isNaN(t));
+          // Tags, most-used first — the page only offers the top handful.
+          const tagCounts = new Map();
+          for (const g of games) {
+            for (const t of g.tags) tagCounts.set(t, (tagCounts.get(t) || 0) + 1);
+          }
+          const tags = [...tagCounts.entries()]
+            .map(([tag, count]) => ({ tag, count }))
+            .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
+            .slice(0, STATS_TAG_LIMIT);
           const wantPlayers = Number(msg.players) || null;
           const wantVariant = typeof msg.variantId === 'string' && msg.variantId ? msg.variantId : null;
           // Named players must ALL be in the game; combined with a player count
@@ -527,12 +540,21 @@ wss.on('connection', async (ws) => {
           // inclusive at both ends.
           const from = parseFilterDay(msg.from, 'start');
           const to = parseFilterDay(msg.to, 'end');
+          // Tag filter: untagged games only, or games carrying ANY of the
+          // named tags (tags are categories — a game rarely has two of them,
+          // so requiring all would mostly match nothing). Neither = any tag.
+          const untaggedOnly = msg.untaggedOnly === true;
+          const wantTags = !untaggedOnly && Array.isArray(msg.tags)
+            ? msg.tags.filter((t) => typeof t === 'string' && t).slice(0, STATS_TAG_LIMIT)
+            : [];
           const matching = games.filter((g) => {
             if (wantPlayers && g.playerCount !== wantPlayers) return false;
             if (wantVariant && g.variantId !== wantVariant) return false;
             const startedAt = Date.parse(g.startedAt);
             if (from != null && !(startedAt >= from)) return false;
             if (to != null && !(startedAt <= to)) return false;
+            if (untaggedOnly && g.tags.length) return false;
+            if (wantTags.length && !wantTags.some((t) => g.tags.includes(t))) return false;
             if (wantNames.length) {
               const names = new Set(namesOf(g));
               if (!wantNames.every((n) => names.has(n))) return false;
@@ -547,11 +569,14 @@ wss.on('connection', async (ws) => {
               withPlayers: wantNames,
               from: from != null ? msg.from : null,
               to: to != null ? msg.to : null,
+              tags: wantTags,
+              untaggedOnly,
             },
             available: {
               playerCounts,
               variantIds,
               playerNames,
+              tags,
               // Bounds for the date inputs, so they can't be set outside the
               // range any save covers.
               firstDay: startTimes.length ? localDay(Math.min(...startTimes)) : null,
