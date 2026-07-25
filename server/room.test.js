@@ -689,6 +689,23 @@ test('library: loadSave maxEvents truncates; totalEvents counts everything', asy
   });
 });
 
+test('replay: lastAppliedAt tracks the newest applied event, for elapsed-time display', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    const bobN = room.state.players[1].hand[0].number;
+    await applyAction(room, alice.id, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: bobN });
+    await applyAction(room, bob.id, { type: 'discard', cardIndex: 0 });
+    const atStart = await loadSave(room.savePath, { maxEvents: 0 });
+    assert.equal(atStart.lastAppliedAt, null, 'no event applied — replay falls back to startedAt');
+    const partial = await loadSave(room.savePath, { maxEvents: 1 });
+    const full = await loadSave(room.savePath);
+    const eventTime = (i) => Date.parse(full.events[i].t);
+    assert.equal(partial.lastAppliedAt, eventTime(0));
+    assert.equal(full.lastAppliedAt, eventTime(1));
+    assert.ok(full.lastAppliedAt >= full.state.startedAt);
+  });
+});
+
 test('library: listLibrary summarizes score, status, players; hides live seeds', async () => {
   await withTmpSaveDir(async () => {
     const { room, alice, bob } = await setupRoom();

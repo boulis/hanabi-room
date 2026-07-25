@@ -451,6 +451,10 @@ wss.on('connection', async (ws) => {
           }
           const v = viewState(loaded.state, -1);
           v.kind = 'replay';
+          // Freeze the clock at the replayed position: elapsed time is the gap
+          // between the original start and the last applied event, not "now"
+          // (which would count every day since the game was played).
+          v.endedAt = loaded.lastAppliedAt ?? v.startedAt;
           send(ws, {
             type: 'replayView',
             file: basename,

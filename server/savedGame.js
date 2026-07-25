@@ -113,6 +113,9 @@ export async function loadSave(filePath, { maxEvents = Infinity } = {}) {
   let endReason = null;
   const events = [];
   let totalEvents = 0;
+  // Wall-clock time of the newest event actually applied — replay uses it to
+  // show elapsed game time rather than time since the original start until now.
+  let lastAppliedAt = null;
 
   for (let i = 1; i < lines.length; i++) {
     const ev = parseLineSafe(lines[i]);
@@ -125,6 +128,10 @@ export async function loadSave(filePath, { maxEvents = Infinity } = {}) {
     if (events.length >= maxEvents) continue; // still counting, no longer applying
     events.push(ev);
     applyEvent(state, ev, { undoStack, abandonVotes, players: header.players });
+    if (ev.t) {
+      const parsedAt = Date.parse(ev.t);
+      if (!Number.isNaN(parsedAt)) lastAppliedAt = parsedAt;
+    }
     if (ev.kind === 'end') {
       endReason = ev.endReason ?? null;
       // Don't stop — a continuation (e.g. undo of the game-ending move) may
@@ -132,7 +139,7 @@ export async function loadSave(filePath, { maxEvents = Infinity } = {}) {
     }
   }
 
-  return { header, state, undoStack, abandonVotes, events, endReason, totalEvents };
+  return { header, state, undoStack, abandonVotes, events, endReason, totalEvents, lastAppliedAt };
 }
 
 function applyEvent(state, ev, ctx) {
