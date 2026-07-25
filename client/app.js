@@ -1271,7 +1271,10 @@ function renderGame() {
 
   const log = document.getElementById('game-log');
   log.innerHTML = '';
-  for (const e of v.log.slice().reverse()) {
+  // Draws are implied by the play/discard above them — and when no card comes
+  // (empty deck) the shrinking hand shows it — so they'd only pad the log.
+  // The entries stay in the state; this is purely what we render.
+  for (const e of v.log.slice().reverse().filter((e) => e.type !== 'draw')) {
     const div = document.createElement('div');
     div.className = 'log-entry';
     if (e.undone) {
