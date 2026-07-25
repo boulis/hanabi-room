@@ -943,6 +943,46 @@ function bareCard(id, color, number) {
   };
 }
 
+test('bot: gambles a dead-or-playable card rather than throw a possible last copy', () => {
+  // The red pile is on 4 and the bot holds a red-clued card whose every
+  // candidate is either already played or the red 5 — worthless kept, since a
+  // dead candidate never becomes playable. Its only other card is a pinned
+  // white 5. Nothing is safe to discard, so playing the red is the better bet:
+  // it costs at most a fuse, while discarding it can cost the red 5 outright.
+  let id = 0;
+  const playedPiles = { yellow: [], green: [], blue: [], white: [] };
+  playedPiles.red = [1, 2, 3, 4].map((n) => bareCard(id++, 'red', n));
+  // Spare red 1s/2s/3s in the bin, so the red-clued card is down to a dead
+  // red 4 or the live red 5 — exactly even odds, the threshold for gambling.
+  const discard = [1, 1, 2, 3].map((n) => bareCard(id++, 'red', n));
+  const clued = (color, number, colors, numbers) => ({
+    ...bareCard(id++, color, number),
+    possibleColors: colors, possibleNumbers: numbers,
+    colorClued: colors.length === 1, numberClued: numbers.length === 1,
+  });
+  const s = {
+    status: 'playing', variantId: 'simple', endRule: 'lax',
+    shareGuarded: false, allowEmptyHints: false, seed: 1,
+    players: [
+      { id: 'a', name: 'Ann', hand: [bareCard(id++, 'green', 1), bareCard(id++, 'green', 3)] },
+      { id: 'b', name: 'Bot', hand: [clued('red', 5, ['red'], [1, 2, 3, 4, 5]), clued('white', 5, ['white'], [5])] },
+    ],
+    deck: [1, 2, 3, 4, 5].map((n) => bareCard(id++, 'blue', n)),
+    discard, playedPiles,
+    hintTokens: 0, fuseTokens: 3, currentPlayer: 1, turn: 20, finalTurn: null,
+    log: [], endReason: null, nextHintIndex: 0, nextLogSeq: 0,
+    startedAt: 0, endedAt: null, initialDeckCards: [],
+  };
+  const d = decide(viewState(s, 1), undefined, {});
+  assert.deepEqual(d.action, { type: 'play', cardIndex: 0 }, d.reason);
+  assert.ok(d.reason.startsWith('gamble:'), d.reason);
+
+  // On the last fuse the bet is off — a misfire would end the game.
+  s.fuseTokens = 1;
+  const safe = decide(viewState(s, 1), undefined, {});
+  assert.equal(safe.action.type, 'discard', safe.reason);
+});
+
 test('bot: endgame search plays into 50/50 odds instead of a losing discard', () => {
   // Deck empty. Four piles complete; red pile empty. The bot holds the last
   // red_1 and the last red_2 in unknown order — every other card is visible.

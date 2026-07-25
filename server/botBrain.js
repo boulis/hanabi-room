@@ -10,7 +10,14 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.15';
+export const BOT_VERSION = '2.16';
+
+// Thresholds for the free gamble (see gambleChance): better-than-even odds,
+// and never on the last fuse. Both were swept — the score plateau runs from
+// ~0.25 to ~0.5 with the mean flat, so the tighter bound is taken because it
+// halves the extra fuse-outs and keeps the bot legible to a human partner.
+const GAMBLE_MIN_CHANCE = 0.5;
+const GAMBLE_MIN_FUSES = 2;
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -555,6 +562,39 @@ function discardRisk(view, combos) {
     sum += copies * discardCost(view, c, n);
   }
   return copiesTotal > 0 ? sum / copiesTotal : 0;
+}
+
+// --- Free gamble. ---
+// A card every one of whose candidate identities is either already played
+// (dead) or playable RIGHT NOW. Such a card is worth nothing in hand: the
+// candidates that aren't playable are dead, so it will never become playable
+// later. Playing it therefore risks no pile points at all — it either scores or
+// burns a fuse — while discarding it forfeits the point. `chance` is the
+// probability it scores, by unseen copy counts.
+function gambleChance(view, combos) {
+  if (combos.length === 0) return 0;
+  if (!combos.every(([c, n]) => isUseless(view, c, n) || isPlayable(view, c, n))) return 0;
+  const totals = deckCounts(view);
+  const visible = visibleCounts(view, [view.viewerIndex]);
+  let all = 0;
+  let good = 0;
+  for (const [c, n] of combos) {
+    const k = `${c}_${n}`;
+    const copies = Math.max(0, (totals.get(k) || 0) - (visible.get(k) || 0));
+    all += copies;
+    if (isPlayable(view, c, n)) good += copies;
+  }
+  return all > 0 ? good / all : 0;
+}
+
+function bestGamble(view, myCombos, yielded) {
+  let best = null;
+  for (let i = 0; i < myCombos.length; i++) {
+    if (yielded.has(i)) continue;
+    const chance = gambleChance(view, myCombos[i]);
+    if (chance > 0 && (!best || chance > best.chance)) best = { index: i, chance };
+  }
+  return best;
 }
 
 // --- Hint simulation against a teammate's visible hand. ---
@@ -1629,6 +1669,13 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   // 5. Discard: a provably useless card beats the chop; the chop beats
   //    guessing; guessing takes the oldest card.
   if (view.hintTokens < 8) {
+    // The best free gamble we hold, used only by the forced branch below.
+    // Taking it ahead of an ordinary discard was measured and is clearly worse
+    // (fuse-outs roughly quintuple for no score): while a safe discard exists,
+    // the card can wait — the odds only improve as the piles grow.
+    const gamble = bestGamble(view, myCombos, yielded);
+    const gambleOk = gamble && gamble.chance >= GAMBLE_MIN_CHANCE
+      && view.fuseTokens >= GAMBLE_MIN_FUSES;
     for (let i = 0; i < myHand.length; i++) {
       if (knownUseless(view, myCombos[i])) {
         return { action: { type: 'discard', cardIndex: i }, reason: 'provably useless' };
@@ -1663,6 +1710,17 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
         forced = i;
         forcedRisk = risk;
       }
+    }
+    // Nothing here is safe to throw. A free gamble is the better bet: the card
+    // it plays can only be dead or playable, so the bet costs at most a fuse,
+    // whereas the discard below can cost pile points outright. It also outranks
+    // the stall — a stall only defers this same choice to a turn when the piles
+    // have not moved, so the odds will be no better and a token will be gone.
+    if (gambleOk && forcedRisk > 0) {
+      return {
+        action: { type: 'play', cardIndex: gamble.index },
+        reason: `gamble: dead-or-playable at ${Math.round(gamble.chance * 100)}% (nothing safe to discard)`,
+      };
     }
     const mightBeCritical = forcedRisk > 0;
     if (mightBeCritical && view.hintTokens > 0) {

@@ -1203,3 +1203,61 @@ rainbowCriticalBlackReverse/35        2 28.74    16   34        0      0        
 rainbowCriticalBlackReverse/35        3 32.48    25   35        3      0           0.28
 rainbowCriticalBlackReverse/35        4 31.78    25   35        3      0           0.52
 ```
+
+## 2.16 — free gamble: play a dead-or-playable card rather than throw a possible last copy
+
+Some cards are worth nothing kept. When every candidate identity of a card is
+either already played or playable *right now* — a red-clued card with the red
+pile on 4, whose candidates are the dead red 1-4 or the live red 5 — the dead
+candidates can never become playable later, so the card will never be worth more
+than it is this turn. Playing it risks no pile points at all: it either scores or
+burns a fuse. Discarding it forfeits the point and can lose the last copy.
+
+`gambleChance` measures the odds by unseen copy counts. The bot takes the bet
+only in the forced branch, and only when the discard it would otherwise make is
+itself risky (`discardRisk > 0`), at better-than-even odds and never on the last
+fuse. It outranks the stall hint too: a stall defers the same choice to a turn
+when the piles have not moved, so the odds are no better and a token is gone.
+
+Where to rank the gamble was swept at 50 seeds/row (750 games), odds ≥ 0.5,
+fuses ≥ 2:
+
+| placement | mean/row | fuse-outs |
+| --------- | -------- | --------- |
+| 2.15 (no gamble) | 28.657 | 3 |
+| ahead of any discard | 28.684 | 16 |
+| ahead of any discard, deck ≤ 10 | 28.660 | 12 |
+| whenever every card is clued | 28.716 | 3 |
+| **only when nothing is safe to throw** | **28.727** | 3 |
+
+Taking it ahead of an ordinary discard scores no better and quintuples fuse-outs
+— while a safe discard exists the card can wait, and the odds only improve as the
+piles grow. Confirmed at 300 seeds/row (4500 games), where ranking the gamble
+*below* the stall hint also loses most of the gain (28.629 vs 28.664, baseline
+28.578). The odds threshold has a flat plateau from ~0.25 to ~0.5 there (28.675
+vs 28.664); 0.5 is taken because it nearly halves the extra fuse-outs (27 vs 34)
+and keeps the bot legible to a human partner.
+
+Up on 13 of 15 rows and flat on the other 2 at 300 seeds — **+0.09/row**, with
+nothing regressing. Concentrated where criticals are dense: `rainbowCriticalBlack`
+2p +0.32, 4p +0.21, `rainbowCriticalBlackReverse` 2p +0.17. Fuse-outs rise 21→27
+per 4500 games, the price of the bet.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.94    18   25       28      0           0.24
+simple/25                             3 24.32    22   25       28      0           0.34
+simple/25                             4 24.22    21   25       32      0           0.56
+rainbow/30                            2 28.06    20   30       18      0           0.28
+rainbow/30                            3 29.42    27   30       32      0           0.26
+rainbow/30                            4 28.94    26   30       19      0           0.44
+rainbowCritical/30                    2 27.48    22   30       11      0           0.50
+rainbowCritical/30                    3 28.28    21   30       17      0           0.40
+rainbowCritical/30                    4 27.98    24   30        8      0           0.58
+rainbowCriticalBlack/35               2 29.90    23   35        1      0           0.44
+rainbowCriticalBlack/35               3 33.18    23   35       15      1           0.36
+rainbowCriticalBlack/35               4 31.88    10   35        9      2           0.58
+rainbowCriticalBlackReverse/35        2 28.94    16   34        0      0           0.42
+rainbowCriticalBlackReverse/35        3 32.52    26   35        3      0           0.34
+rainbowCriticalBlackReverse/35        4 31.84    25   35        4      0           0.56
+```
