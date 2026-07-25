@@ -1,5 +1,6 @@
 import { getVariant, VARIANTS } from './variants.js';
 import { hintableColors, maxAchievableScore, maxPossibleScore, pileCap, pileTop, score } from './game.js';
+import { gameStats } from './stats.js';
 
 function viewCard(card, { revealIdentity, isOwner, shareGuarded }) {
   const out = {
@@ -54,6 +55,10 @@ export function viewState(state, viewerIndex) {
     seed: state.status === 'finished' ? state.seed : null,
     startedAt: state.startedAt,
     endedAt: state.endedAt,
+    // Per-player counts and move times, for the post-game summary. Only once
+    // the game is over: mid-game it's a distraction, and it isn't secret but
+    // it isn't worth re-sending on every action either.
+    stats: state.status === 'finished' ? gameStats(state) : null,
     playedPiles: Object.fromEntries(
       Object.entries(state.playedPiles).map(([color, pile]) => [
         color,

@@ -45,6 +45,25 @@
           <summary>Game library</summary>
           <div id="library-list"></div>
         </details>
+        <details id="stats-section">
+          <summary>Player stats</summary>
+          <div id="stats-filters">
+            <label>
+              Players
+              <select id="stats-players"><option value="">All</option></select>
+            </label>
+            <label>
+              Game type
+              <select id="stats-variant"><option value="">All</option></select>
+            </label>
+            <span id="stats-scope"></span>
+          </div>
+          <div id="stats-people">
+            <span class="stats-people-label">Featuring</span>
+            <span id="stats-people-list"></span>
+          </div>
+          <div id="stats-table"></div>
+        </details>
       </section>
 
       <section id="lobby-screen" class="screen" hidden>

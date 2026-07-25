@@ -41,12 +41,14 @@ import {
 import {
   branchSave,
   deleteSave,
+  listGameStats,
   listIncompleteSaves,
   listLibrary,
   loadSave,
   savedDir,
   setSaveTags,
 } from './savedGame.js';
+import { aggregateStats } from './stats.js';
 import { viewState } from './view.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -487,6 +489,41 @@ wss.on('connection', async (ws) => {
             throw new GameError(`Cannot branch ${basename}: ${err.message}`, 'bad_branch');
           }
           await broadcastServerLobby();
+          break;
+        }
+        case 'statsSummary': {
+          // Aggregate per-player stats over the saves matching the filter.
+          // Requested explicitly (not part of the lobby broadcast) because it
+          // means reading every save, and only the stats page wants it.
+          const games = await listGameStats();
+          const namesOf = (g) => g.stats.players.map((p) => p.name);
+          const playerCounts = [...new Set(games.map((g) => g.playerCount))].sort((a, b) => a - b);
+          const variantIds = [...new Set(games.map((g) => g.variantId))].sort();
+          const playerNames = [...new Set(games.flatMap(namesOf))].sort((a, b) => a.localeCompare(b));
+          const wantPlayers = Number(msg.players) || null;
+          const wantVariant = typeof msg.variantId === 'string' && msg.variantId ? msg.variantId : null;
+          // Named players must ALL be in the game; combined with a player count
+          // that pins an exact table ("3-player games with Ann, Bob and Cid").
+          const wantNames = Array.isArray(msg.withPlayers)
+            ? msg.withPlayers.filter((n) => typeof n === 'string' && n).slice(0, 8)
+            : [];
+          const matching = games.filter((g) => {
+            if (wantPlayers && g.playerCount !== wantPlayers) return false;
+            if (wantVariant && g.variantId !== wantVariant) return false;
+            if (wantNames.length) {
+              const names = new Set(namesOf(g));
+              if (!wantNames.every((n) => names.has(n))) return false;
+            }
+            return true;
+          });
+          send(ws, {
+            type: 'statsView',
+            filter: { players: wantPlayers, variantId: wantVariant, withPlayers: wantNames },
+            available: { playerCounts, variantIds, playerNames },
+            gamesMatched: matching.length,
+            gamesTotal: games.length,
+            summary: aggregateStats(matching.map((g) => g.stats)),
+          });
           break;
         }
         case 'tagSave': {

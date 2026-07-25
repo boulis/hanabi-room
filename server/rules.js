@@ -94,7 +94,10 @@ function pushLog(state, event) {
   // the replacement action re-uses the same turn number as the action it
   // replaces, so clients need seq (not turn) to tell "a genuinely new action
   // landed" from "the log just got its struck entries re-appended".
-  state.log.push({ turn: state.turn, seq: state.nextLogSeq++, ...event });
+  // `at` is wall-clock time, used only for post-game stats (per-player move
+  // time). Replay stamps it from the save event's timestamp instead, so a
+  // reconstructed game reports the times it was really played at.
+  state.log.push({ turn: state.turn, seq: state.nextLogSeq++, at: Date.now(), ...event });
 }
 
 // The log entries an undone action contributed: everything past the snapshot's

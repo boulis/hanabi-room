@@ -144,6 +144,9 @@ function handleMessage(msg) {
     case 'replayView':
       onReplayView(msg);
       break;
+    case 'statsView':
+      renderStatsView(msg);
+      break;
     case 'error':
       console.warn('server error:', msg.code, msg.error);
       flashError(msg.error);
@@ -835,6 +838,145 @@ function renderLibrary(entries) {
   }
 }
 
+// --- Player stats: one table per game (on the game-over banner) and an
+// aggregate over a chosen set of saved games (server lobby). The server does
+// the counting; the client only asks and renders.
+
+function formatMinsSecs(ms) {
+  const total = Math.max(0, Math.round((ms || 0) / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function statsTable(rows, totalMoveMs, extraColumns = []) {
+  const table = document.createElement('table');
+  table.className = 'stats-table';
+  const columns = [
+    { key: 'name', label: 'Player' },
+    ...extraColumns,
+    { key: 'plays', label: 'Played' },
+    { key: 'discards', label: 'Discarded' },
+    { key: 'hints', label: 'Hints' },
+    { key: 'undos', label: 'Undos' },
+    { key: 'time', label: 'Time' },
+    { key: 'share', label: '% of time' },
+  ];
+  const head = document.createElement('tr');
+  for (const c of columns) {
+    const th = document.createElement('th');
+    th.textContent = c.label;
+    head.append(th);
+  }
+  table.append(head);
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    const cells = {
+      name: r.isBot ? `🤖 ${r.name}` : r.name,
+      time: formatMinsSecs(r.moveMs),
+      share: totalMoveMs > 0 ? `${Math.round((r.moveMs / totalMoveMs) * 100)}%` : '—',
+    };
+    for (const c of columns) {
+      const td = document.createElement('td');
+      td.textContent = cells[c.key] ?? String(r[c.key] ?? 0);
+      tr.append(td);
+    }
+    table.append(tr);
+  }
+  return table;
+}
+
+function renderGameStats(stats) {
+  const box = document.createElement('div');
+  box.className = 'stats-block';
+  const title = document.createElement('div');
+  title.className = 'stats-title';
+  title.textContent = stats.durationMs != null
+    ? `Player stats — game length ${formatMinsSecs(stats.durationMs)}`
+    : 'Player stats';
+  box.append(title, statsTable(stats.players, stats.totalMoveMs));
+  return box;
+}
+
+const statsSection = document.getElementById('stats-section');
+const statsPlayersSelect = document.getElementById('stats-players');
+const statsVariantSelect = document.getElementById('stats-variant');
+const statsPeopleList = document.getElementById('stats-people-list');
+// Names that must all appear in a game for it to count ("3-player games with
+// Ann, Bob and Cid" = this plus the player-count filter).
+let statsWithPlayers = new Set();
+
+function requestStats() {
+  send({
+    type: 'statsSummary',
+    players: Number(statsPlayersSelect.value) || null,
+    variantId: statsVariantSelect.value || null,
+    withPlayers: [...statsWithPlayers],
+  });
+}
+
+statsSection.addEventListener('toggle', () => {
+  if (statsSection.open) requestStats();
+});
+statsPlayersSelect.addEventListener('change', requestStats);
+statsVariantSelect.addEventListener('change', requestStats);
+
+// Keep a select's options in sync with what the saves actually offer, without
+// losing the current choice (the user may have picked before the reply).
+function syncFilterOptions(select, values, label) {
+  const wanted = ['', ...values.map(String)];
+  const have = [...select.options].map((o) => o.value);
+  if (wanted.length === have.length && wanted.every((v, i) => v === have[i])) return;
+  const current = select.value;
+  select.innerHTML = '';
+  for (const v of wanted) {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = v === '' ? 'All' : label(v);
+    select.append(opt);
+  }
+  select.value = wanted.includes(current) ? current : '';
+}
+
+// One toggle per name that has ever played. Re-rendered on every reply, so a
+// name is never offered that no save contains.
+function renderPeopleFilter(names) {
+  const stale = [...statsWithPlayers].filter((n) => !names.includes(n));
+  for (const n of stale) statsWithPlayers.delete(n);
+  statsPeopleList.innerHTML = '';
+  for (const name of names) {
+    const label = document.createElement('label');
+    label.className = 'stats-person' + (statsWithPlayers.has(name) ? ' on' : '');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = statsWithPlayers.has(name);
+    box.addEventListener('change', () => {
+      if (box.checked) statsWithPlayers.add(name);
+      else statsWithPlayers.delete(name);
+      requestStats();
+    });
+    label.append(box, name);
+    statsPeopleList.append(label);
+  }
+}
+
+function renderStatsView(msg) {
+  syncFilterOptions(statsPlayersSelect, msg.available.playerCounts, (v) => `${v} players`);
+  syncFilterOptions(statsVariantSelect, msg.available.variantIds, (v) => v);
+  renderPeopleFilter(msg.available.playerNames || []);
+  document.getElementById('stats-scope').textContent =
+    `${msg.gamesMatched} of ${msg.gamesTotal} saved games`;
+  const box = document.getElementById('stats-table');
+  box.innerHTML = '';
+  const summary = msg.summary;
+  if (!summary.players.length) {
+    const empty = document.createElement('div');
+    empty.className = 'lobby-empty';
+    empty.textContent = 'No games match this filter.';
+    box.append(empty);
+    return;
+  }
+  box.append(statsTable(summary.players, summary.totalMoveMs, [{ key: 'games', label: 'Games' }]));
+}
+
 // Shared by both the player and spectator header branches: leaving clears
 // every bit of persisted room identity, including whether we were spectating
 // (otherwise the next reconnect would try to spectateRoom into thin air).
@@ -1191,6 +1333,7 @@ function renderGame() {
     actions.append(exportBtn);
 
     banner.append(actions);
+    if (v.stats) banner.append(renderGameStats(v.stats));
     meta.append(banner);
   }
 

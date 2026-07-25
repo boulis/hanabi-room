@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInitialState, maxPossibleScore, score } from './game.js';
+import { gameStats } from './stats.js';
 import {
   annotateAction,
   discardAction,
@@ -182,6 +183,14 @@ function applyEvent(state, ev, ctx) {
       if (typeof ev.reasoning === 'string' && state.log.length > logLenBefore) {
         state.log[logLenBefore].reasoning = ev.reasoning;
       }
+      // pushLog stamped `at` with the replay's own clock; replace it with when
+      // the move was actually made, so stats are about the original game.
+      if (ev.t) {
+        const parsedAt = Date.parse(ev.t);
+        if (!Number.isNaN(parsedAt)) {
+          for (let j = logLenBefore; j < state.log.length; j++) state.log[j].at = parsedAt;
+        }
+      }
       break;
     }
     case 'undo': {
@@ -361,6 +370,7 @@ async function summarizeForLibrary(filePath) {
       variantId: header.variantId,
       playerNames: header.players.map((p) => p.name),
       playerBots: header.players.map((p) => !!p.isBot),
+      playerCount: header.players.length,
       moves: events.filter((e) => e.kind === 'action').length,
       totalEvents,
       status: finished ? (state.endReason || 'finished') : 'in-progress',
@@ -368,15 +378,17 @@ async function summarizeForLibrary(filePath) {
       maxScore: maxPossibleScore(state),
       // The seed reveals the deck order, so only expose it once finished.
       seed: finished ? state.seed : null,
+      // Per-player counts and timings. Stripped from the lobby listing (which
+      // is broadcast after every action) and served only to the stats page.
+      stats: gameStats(state, { botFlags: header.players.map((p) => !!p.isBot) }),
     };
   } catch (err) {
     return { basename, status: 'unreadable', error: err.message };
   }
 }
 
-export async function listLibrary() {
+async function cachedLibraryEntries() {
   const names = await listSaves(); // already newest-first (timestamp prefix)
-  const tags = await readAllTags();
   const out = [];
   for (const name of names) {
     const filePath = path.join(savedDir(), name);
@@ -391,9 +403,36 @@ export async function listLibrary() {
       cached = { mtimeMs: stat.mtimeMs, entry: await summarizeForLibrary(filePath) };
       libraryCache.set(filePath, cached);
     }
-    out.push({ ...cached.entry, tags: tags[name] || [] });
+    out.push(cached.entry);
   }
   return out;
+}
+
+export async function listLibrary() {
+  const tags = await readAllTags();
+  // The lobby view rides on every broadcast, so the per-player stats block
+  // stays out of it — the stats page asks for it separately.
+  return (await cachedLibraryEntries()).map(({ stats, ...rest }) => ({
+    ...rest,
+    tags: tags[rest.basename] || [],
+  }));
+}
+
+// Every readable save's per-player stats, with just enough metadata to filter
+// on (game size, variant, status). Shares the library's mtime cache.
+export async function listGameStats() {
+  return (await cachedLibraryEntries())
+    .filter((e) => e.stats)
+    .map((e) => ({
+      basename: e.basename,
+      startedAt: e.startedAt,
+      variantId: e.variantId,
+      playerCount: e.playerCount,
+      status: e.status,
+      score: e.score,
+      maxScore: e.maxScore,
+      stats: e.stats,
+    }));
 }
 
 export async function listIncompleteSaves(limit = Infinity) {

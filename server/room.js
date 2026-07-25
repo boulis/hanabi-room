@@ -400,6 +400,8 @@ export function viewFor(room, playerId) {
   // Game-state players don't carry the bot flag; the room roster does.
   const botIds = new Set(room.players.filter((p) => p.isBot).map((p) => p.id));
   for (const p of v.players) p.isBot = botIds.has(p.id);
+  // Same for the post-game stats rows (seat order matches v.players).
+  for (const row of v.stats?.players ?? []) row.isBot = !!v.players[row.index]?.isBot;
   v.hostId = room.hostId;
   v.options = room.options;
   v.spectators = spectatorList(room);
