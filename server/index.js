@@ -178,6 +178,20 @@ function requireSaveBasename(file) {
   return basename;
 }
 
+// 'YYYY-MM-DD' -> local-time ms at the first (or last) instant of that day.
+// Anything else (empty, malformed) means "no bound".
+function parseFilterDay(day, edge) {
+  if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const t = Date.parse(edge === 'end' ? `${day}T23:59:59.999` : `${day}T00:00:00`);
+  return Number.isNaN(t) ? null : t;
+}
+
+function localDay(ms) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -500,6 +514,7 @@ wss.on('connection', async (ws) => {
           const playerCounts = [...new Set(games.map((g) => g.playerCount))].sort((a, b) => a - b);
           const variantIds = [...new Set(games.map((g) => g.variantId))].sort();
           const playerNames = [...new Set(games.flatMap(namesOf))].sort((a, b) => a.localeCompare(b));
+          const startTimes = games.map((g) => Date.parse(g.startedAt)).filter((t) => !Number.isNaN(t));
           const wantPlayers = Number(msg.players) || null;
           const wantVariant = typeof msg.variantId === 'string' && msg.variantId ? msg.variantId : null;
           // Named players must ALL be in the game; combined with a player count
@@ -507,9 +522,17 @@ wss.on('connection', async (ws) => {
           const wantNames = Array.isArray(msg.withPlayers)
             ? msg.withPlayers.filter((n) => typeof n === 'string' && n).slice(0, 8)
             : [];
+          // Dates come from <input type="date"> as YYYY-MM-DD and are read in
+          // the host's local time (that's the day the players remember),
+          // inclusive at both ends.
+          const from = parseFilterDay(msg.from, 'start');
+          const to = parseFilterDay(msg.to, 'end');
           const matching = games.filter((g) => {
             if (wantPlayers && g.playerCount !== wantPlayers) return false;
             if (wantVariant && g.variantId !== wantVariant) return false;
+            const startedAt = Date.parse(g.startedAt);
+            if (from != null && !(startedAt >= from)) return false;
+            if (to != null && !(startedAt <= to)) return false;
             if (wantNames.length) {
               const names = new Set(namesOf(g));
               if (!wantNames.every((n) => names.has(n))) return false;
@@ -518,8 +541,22 @@ wss.on('connection', async (ws) => {
           });
           send(ws, {
             type: 'statsView',
-            filter: { players: wantPlayers, variantId: wantVariant, withPlayers: wantNames },
-            available: { playerCounts, variantIds, playerNames },
+            filter: {
+              players: wantPlayers,
+              variantId: wantVariant,
+              withPlayers: wantNames,
+              from: from != null ? msg.from : null,
+              to: to != null ? msg.to : null,
+            },
+            available: {
+              playerCounts,
+              variantIds,
+              playerNames,
+              // Bounds for the date inputs, so they can't be set outside the
+              // range any save covers.
+              firstDay: startTimes.length ? localDay(Math.min(...startTimes)) : null,
+              lastDay: startTimes.length ? localDay(Math.max(...startTimes)) : null,
+            },
             gamesMatched: matching.length,
             gamesTotal: games.length,
             summary: aggregateStats(matching.map((g) => g.stats)),

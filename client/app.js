@@ -900,6 +900,8 @@ const statsSection = document.getElementById('stats-section');
 const statsPlayersSelect = document.getElementById('stats-players');
 const statsVariantSelect = document.getElementById('stats-variant');
 const statsPeopleList = document.getElementById('stats-people-list');
+const statsFromInput = document.getElementById('stats-from');
+const statsToInput = document.getElementById('stats-to');
 // Names that must all appear in a game for it to count ("3-player games with
 // Ann, Bob and Cid" = this plus the player-count filter).
 let statsWithPlayers = new Set();
@@ -910,6 +912,8 @@ function requestStats() {
     players: Number(statsPlayersSelect.value) || null,
     variantId: statsVariantSelect.value || null,
     withPlayers: [...statsWithPlayers],
+    from: statsFromInput.value || null,
+    to: statsToInput.value || null,
   });
 }
 
@@ -918,6 +922,13 @@ statsSection.addEventListener('toggle', () => {
 });
 statsPlayersSelect.addEventListener('change', requestStats);
 statsVariantSelect.addEventListener('change', requestStats);
+statsFromInput.addEventListener('change', requestStats);
+statsToInput.addEventListener('change', requestStats);
+document.getElementById('stats-dates-clear').addEventListener('click', () => {
+  statsFromInput.value = '';
+  statsToInput.value = '';
+  requestStats();
+});
 
 // Keep a select's options in sync with what the saves actually offer, without
 // losing the current choice (the user may have picked before the reply).
@@ -962,6 +973,11 @@ function renderStatsView(msg) {
   syncFilterOptions(statsPlayersSelect, msg.available.playerCounts, (v) => `${v} players`);
   syncFilterOptions(statsVariantSelect, msg.available.variantIds, (v) => v);
   renderPeopleFilter(msg.available.playerNames || []);
+  // Bound the pickers to the span the library actually covers.
+  for (const input of [statsFromInput, statsToInput]) {
+    input.min = msg.available.firstDay || '';
+    input.max = msg.available.lastDay || '';
+  }
   document.getElementById('stats-scope').textContent =
     `${msg.gamesMatched} of ${msg.gamesTotal} saved games`;
   const box = document.getElementById('stats-table');
