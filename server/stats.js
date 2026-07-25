@@ -32,6 +32,7 @@ export function gameStats(state, { botFlags = [] } = {}) {
     plays: 0,
     discards: 0,
     hints: 0,
+    hintsReceived: 0,
     undos: 0,
     moves: 0,
     moveMs: 0,
@@ -60,10 +61,17 @@ export function gameStats(state, { botFlags = [] } = {}) {
     }
     if (e.type === 'play') row.plays += 1;
     else if (e.type === 'discard') row.discards += 1;
-    else row.hints += 1;
+    else {
+      row.hints += 1;
+      const receiver = rows[e.toIndex];
+      if (receiver) receiver.hintsReceived += 1;
+    }
   }
 
   const totalMoveMs = rows.reduce((sum, r) => sum + r.moveMs, 0);
+  // Each row's share of this game's move time. Kept per game because the
+  // all-time average is an average OF these shares — see aggregateStats.
+  for (const r of rows) r.timeShare = totalMoveMs > 0 ? r.moveMs / totalMoveMs : null;
   return {
     // Wall-clock length of the game, including any time after the last move.
     durationMs:
@@ -79,13 +87,33 @@ export function gameStats(state, { botFlags = [] } = {}) {
 // Sum per-game stats into one row per player name. Names are the only identity
 // that survives across games (playerIds are per-room), so two people sharing a
 // name share a row — the tailnet is a handful of friends, which is fine.
+//
+// Counts add up, but the time share does NOT: `timeShareAvg` is the plain mean
+// of the player's per-game shares, so every game weighs the same. Dividing
+// summed time by summed time instead would let one long game dominate, and
+// would compare a player against people they never sat with — a share is only
+// meaningful within the game that produced it.
 export function aggregateStats(games) {
   const byName = new Map();
   for (const g of games) {
     for (const p of g.players ?? []) {
       let row = byName.get(p.name);
       if (!row) {
-        row = { name: p.name, isBot: p.isBot, games: 0, plays: 0, discards: 0, hints: 0, undos: 0, moves: 0, moveMs: 0 };
+        row = {
+          name: p.name,
+          isBot: p.isBot,
+          games: 0,
+          plays: 0,
+          discards: 0,
+          hints: 0,
+          hintsReceived: 0,
+          undos: 0,
+          moves: 0,
+          moveMs: 0,
+          timeShareAvg: null,
+          shareSum: 0,
+          shareGames: 0,
+        };
         byName.set(p.name, row);
       }
       // A name is a bot only if every game it appears in was played by a bot.
@@ -94,10 +122,22 @@ export function aggregateStats(games) {
       row.plays += p.plays;
       row.discards += p.discards;
       row.hints += p.hints;
+      row.hintsReceived += p.hintsReceived ?? 0;
       row.undos += p.undos;
       row.moves += p.moves;
       row.moveMs += p.moveMs;
+      // Games with no recorded time (nothing to divide by) sit the average out
+      // rather than counting as a 0% game.
+      if (p.timeShare != null) {
+        row.shareSum += p.timeShare;
+        row.shareGames += 1;
+      }
     }
+  }
+  for (const row of byName.values()) {
+    row.timeShareAvg = row.shareGames > 0 ? row.shareSum / row.shareGames : null;
+    delete row.shareSum;
+    delete row.shareGames;
   }
   const players = [...byName.values()].sort((a, b) => b.games - a.games || a.name.localeCompare(b.name));
   return {

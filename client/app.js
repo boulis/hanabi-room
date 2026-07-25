@@ -847,18 +847,19 @@ function formatMinsSecs(ms) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
-function statsTable(rows, totalMoveMs, extraColumns = []) {
+function statsTable(rows, { extraColumns = [], shareLabel, shareOf }) {
   const table = document.createElement('table');
   table.className = 'stats-table';
   const columns = [
     { key: 'name', label: 'Player' },
     ...extraColumns,
-    { key: 'plays', label: 'Played' },
-    { key: 'discards', label: 'Discarded' },
-    { key: 'hints', label: 'Hints' },
+    { key: 'plays', label: 'Cards played' },
+    { key: 'discards', label: 'Cards discarded' },
+    { key: 'hints', label: 'Hints given' },
+    { key: 'hintsReceived', label: 'Hints received' },
     { key: 'undos', label: 'Undos' },
-    { key: 'time', label: 'Time' },
-    { key: 'share', label: '% of time' },
+    { key: 'moveMs', label: 'Time' },
+    { key: 'share', label: shareLabel },
   ];
   const head = document.createElement('tr');
   for (const c of columns) {
@@ -869,10 +870,11 @@ function statsTable(rows, totalMoveMs, extraColumns = []) {
   table.append(head);
   for (const r of rows) {
     const tr = document.createElement('tr');
+    const share = shareOf(r);
     const cells = {
       name: r.isBot ? `🤖 ${r.name}` : r.name,
-      time: formatMinsSecs(r.moveMs),
-      share: totalMoveMs > 0 ? `${Math.round((r.moveMs / totalMoveMs) * 100)}%` : '—',
+      moveMs: formatMinsSecs(r.moveMs),
+      share: share == null ? '—' : `${Math.round(share * 100)}%`,
     };
     for (const c of columns) {
       const td = document.createElement('td');
@@ -892,7 +894,10 @@ function renderGameStats(stats) {
   title.textContent = stats.durationMs != null
     ? `Player stats — game length ${formatMinsSecs(stats.durationMs)}`
     : 'Player stats';
-  box.append(title, statsTable(stats.players, stats.totalMoveMs));
+  box.append(title, statsTable(stats.players, {
+    shareLabel: '% of game time',
+    shareOf: (r) => r.timeShare,
+  }));
   return box;
 }
 
@@ -990,7 +995,13 @@ function renderStatsView(msg) {
     box.append(empty);
     return;
   }
-  box.append(statsTable(summary.players, summary.totalMoveMs, [{ key: 'games', label: 'Games' }]));
+  // Not a share of the summed time: each game contributes its own share and
+  // they're averaged, so a long game doesn't outweigh a short one.
+  box.append(statsTable(summary.players, {
+    extraColumns: [{ key: 'games', label: 'Games' }],
+    shareLabel: 'Per game % time (avg)',
+    shareOf: (r) => r.timeShareAvg,
+  }));
 }
 
 // Shared by both the player and spectator header branches: leaving clears

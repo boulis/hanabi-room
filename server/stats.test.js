@@ -65,6 +65,27 @@ test('stats: time order comes from `at`, not log order (undo re-appends entries)
   assert.equal(bob.moveMs, 4000);
 });
 
+test('stats: a hint counts as given for the sender and received for the target', () => {
+  const s = stateWith([
+    { type: 'hint', fromIndex: 0, toIndex: 1, at: 2000 },
+    { type: 'hint', fromIndex: 1, toIndex: 0, at: 3000 },
+    { type: 'hint', fromIndex: 0, toIndex: 1, at: 4000, undone: true },
+  ]);
+  const [ann, bob] = gameStats(s).players;
+  assert.deepEqual([ann.hints, ann.hintsReceived], [1, 1]);
+  assert.deepEqual([bob.hints, bob.hintsReceived], [1, 1], 'the undone hint counts for neither');
+});
+
+test('stats: each row carries its share of the game\'s move time', () => {
+  const s = stateWith([
+    { type: 'play', playerIndex: 0, at: 2000 },   // 1s
+    { type: 'play', playerIndex: 1, at: 5000 },   // 3s
+  ]);
+  const [ann, bob] = gameStats(s).players;
+  assert.equal(ann.timeShare, 0.25);
+  assert.equal(bob.timeShare, 0.75);
+});
+
 test('stats: aggregate sums per player name across games and counts appearances', () => {
   const g1 = gameStats(stateWith([
     { type: 'play', playerIndex: 0, at: 2000 },
@@ -87,6 +108,35 @@ test('stats: aggregate sums per player name across games and counts appearances'
   assert.equal(bob.hints, 1);
   assert.equal(bob.isBot, true, 'Bob only ever played as a bot');
   assert.equal(agg.totalMoveMs, g1.totalMoveMs + g2.totalMoveMs);
+});
+
+test('stats: the all-time share averages per-game shares — every game weighs the same', () => {
+  // A short game Ann dominates, then a long one where she barely moves. The
+  // average of the two shares (100% and 20%) is 60%; weighting by time would
+  // say 24% and let the long game speak for both.
+  const short = gameStats(stateWith([{ type: 'play', playerIndex: 0, at: 2000 }]));
+  const long = gameStats(stateWith([
+    { type: 'play', playerIndex: 0, at: 3000 },     // Ann: 2s
+    { type: 'play', playerIndex: 1, at: 11000 },    // Bob: 8s
+  ]));
+  const ann = aggregateStats([short, long]).players.find((p) => p.name === 'Ann');
+  assert.equal(ann.games, 2);
+  assert.equal(ann.timeShareAvg, 0.6);
+  assert.equal(ann.moveMs, 1000 + 2000, 'the raw time column still sums');
+});
+
+test('stats: a game with no recorded time sits out the share average', () => {
+  const timed = gameStats(stateWith([
+    { type: 'play', playerIndex: 0, at: 3000 },
+    { type: 'play', playerIndex: 1, at: 4000 },
+  ]));
+  const untimed = gameStats(stateWith([{ type: 'play', playerIndex: 0 }]));
+  const rows = aggregateStats([timed, untimed]).players;
+  const ann = rows.find((p) => p.name === 'Ann');
+  assert.equal(ann.games, 2, 'it still counts as a game played');
+  assert.equal(ann.timeShareAvg, 2 / 3, 'but only the timed game feeds the average');
+  const soloUntimed = aggregateStats([untimed]).players[0];
+  assert.equal(soloUntimed.timeShareAvg, null, 'no timed games at all → no average');
 });
 
 test('stats: no timestamps (or no start) degrades to counts without times', () => {
