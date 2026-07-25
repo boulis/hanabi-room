@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.14';
+export const BOT_VERSION = '2.15';
 
 // The convention set the bot plays by. Kept as data so alternative convention
 // sets can be added without touching the decision code's shape.
@@ -533,6 +533,28 @@ function discardCost(view, color, number) {
   const cap = view.playedPiles[color].cap;
   const reachableWithout = suitOf(view, color).direction === 'up' ? number - 1 : 5 - number;
   return cap - Math.min(cap, reachableWithout);
+}
+
+// Pile points we risk by discarding one of OUR OWN cards, given its candidate
+// identities: each candidate weighted by how many copies of it are still
+// unseen (our hand + the deck), which is exactly how likely the card is to be
+// that identity. A card with no critical candidate scores 0 — losing it cannot
+// cost the team a point. Unlike provablyCritical (all-or-nothing) this ranks
+// partial danger, so "least dangerous" can mean the least dangerous card
+// rather than merely the oldest one that isn't a proven last copy.
+function discardRisk(view, combos) {
+  if (combos.length === 0) return 0;
+  const totals = deckCounts(view);
+  const visible = visibleCounts(view, [view.viewerIndex]);
+  let copiesTotal = 0;
+  let sum = 0;
+  for (const [c, n] of combos) {
+    const k = `${c}_${n}`;
+    const copies = Math.max(0, (totals.get(k) || 0) - (visible.get(k) || 0));
+    copiesTotal += copies;
+    sum += copies * discardCost(view, c, n);
+  }
+  return copiesTotal > 0 ? sum / copiesTotal : 0;
 }
 
 // --- Hint simulation against a teammate's visible hand. ---
@@ -1624,19 +1646,25 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
       }
     }
     // Every card is clued: teammates spent hints marking them all as worth
-    // keeping. Pick the least dangerous card — the oldest one that isn't
-    // provably a last copy. If even that card COULD be critical, and tokens
-    // remain, a harmless stall hint is cheaper than gambling a card the team
-    // paid hints to protect; a provably safe card is simply discarded (the
-    // draw keeps the game moving).
+    // keeping. Pick the genuinely least dangerous card — the one risking the
+    // fewest pile points (ties go to the oldest). Screening only for
+    // *provably* critical and then taking the oldest survivor was much too
+    // coarse: a card that is critical on ONE of three candidate identities
+    // passed that screen, so the bot would throw a possible red 5 while
+    // holding a card it knew to be a spare yellow 3. If even the safest card
+    // could be critical, and tokens remain, a harmless stall hint is cheaper
+    // than gambling a card the team paid hints to protect; a provably safe
+    // card is simply discarded (the draw keeps the game moving).
     let forced = 0;
+    let forcedRisk = Infinity;
     for (let i = 0; i < myHand.length; i++) {
-      if (!provablyCritical(view, myCombos[i])) {
+      const risk = discardRisk(view, myCombos[i]);
+      if (risk < forcedRisk) {
         forced = i;
-        break;
+        forcedRisk = risk;
       }
     }
-    const mightBeCritical = myCombos[forced].some(([c, n]) => identityCritical(view, c, n));
+    const mightBeCritical = forcedRisk > 0;
     if (mightBeCritical && view.hintTokens > 0) {
       const stall = protectiveStall(view, conventions);
       if (stall) {

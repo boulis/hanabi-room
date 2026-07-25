@@ -842,9 +842,38 @@ test('bot: a card pinned to one identity claims a copy other cards cannot be', (
   assert.ok(combos[4].every(([color]) => color !== 'red'), 'red_4 fully claimed');
 });
 
+test('bot: a forced discard picks the safest card, not the oldest non-critical one', () => {
+  // Every card clued, no tokens: the bot must throw something. Slot 0 is a
+  // clued 2 that could be the last white_2 (the other is in the bin); slots
+  // 1-4 are clued 3s with no 3 discarded, so none of them can be a last copy.
+  // Screening only for *provably* critical passed slot 0 (four of its five
+  // candidates are spare) and threw a possible last copy while holding four
+  // provably safe cards.
+  const s = craftedState(
+    ['white_2', 'red_1', 'red_1', 'green_1', 'blue_1'],
+    ['white_2', 'yellow_3', 'green_3', 'blue_3', 'red_3'],
+  );
+  hintAction(s, 0, 1, 'number', 2);          // touches p1's white_2
+  hintAction(s, 1, 0, 'number', 1);          // touches p0's 1s (a pending play)
+  discardAction(s, 0, 0);                    // p0's white_2 out — p1's is the last
+  hintAction(s, 1, 0, 'number', 1);
+  hintAction(s, 0, 1, 'number', 3);          // p1's four 3s — hand fully clued
+  hintAction(s, 1, 0, 'number', 1);
+  hintAction(s, 0, 1, 'number', 3);
+  hintAction(s, 1, 0, 'number', 1);
+  hintAction(s, 0, 1, 'number', 3);
+  hintAction(s, 1, 0, 'number', 1);          // tokens exhausted
+  playAction(s, 0, 1);                       // p0 plays a red_1; p1 is up
+  assert.equal(s.hintTokens, 0);
+
+  const d = decide(viewState(s, 1), undefined, {});
+  assert.equal(d.action.type, 'discard', d.reason);
+  assert.ok(d.action.cardIndex >= 1, `threw a possible last copy: ${JSON.stringify(d)}`);
+});
+
 test('bot: forced-play signal — pointer discards, signal play, commanded play', () => {
   const s = craftedState(
-    ['yellow_1', 'red_2', 'yellow_2', 'green_2', 'white_3'],
+    ['yellow_1', 'red_2', 'yellow_2', 'green_2', 'blue_2'],
     ['green_1', 'white_2', 'red_4', 'blue_4', 'yellow_5'],
     { next: ['white_4'] },
   );
@@ -854,18 +883,22 @@ test('bot: forced-play signal — pointer discards, signal play, commanded play'
 
   // Build the deadlock: p0 plays a 1 (so 2s become possibly playable), then
   // NUMBER hints lock p0's whole hand (keep-convention — no play
-  // obligations) while p1's green_1 gets fully pinned. p1's chop discard of
-  // white_2 makes p0's 2s possibly critical, so p0 stalls instead of
-  // discarding a clued card.
+  // obligations) while p1's green_1 gets fully pinned. p1's two discards put
+  // the second white_2 and a red_4 in the bin, so EVERY card p0 holds has a
+  // last-copy candidate — p0 is truly locked and stalls rather than discard
+  // (a card with no critical candidate would simply be thrown, see the
+  // "forced: least dangerous" branch).
   playAction(s, 0, 0);                       // yellow pile 1; p0 draws white_4
-  hintAction(s, 1, 0, 'number', 2);          // touches p0's three 2s
+  hintAction(s, 1, 0, 'number', 2);          // touches p0's four 2s
   hintAction(s, 0, 1, 'number', 1);          // touches green_1
   discardAction(s, 1, 1);                    // chop discard: white_2 out
   hintAction(s, 0, 1, 'color', 'green');     // green_1 now fully pinned
-  hintAction(s, 1, 0, 'number', 3);          // touches white_3
+  discardAction(s, 1, 1);                    // chop discard: red_4 out
   hintAction(s, 0, 1, 'number', 5);          // touches yellow_5
   hintAction(s, 1, 0, 'number', 4);          // touches white_4 — p0 locked
   hintAction(s, 0, 1, 'number', 5);          // harmless re-touch: burn a token
+  hintAction(s, 1, 0, 'number', 4);          // harmless re-touch
+  hintAction(s, 0, 1, 'number', 5);          // harmless re-touch
   hintAction(s, 1, 0, 'number', 4);          // down to 1 token — true deadlock
 
   // p0 (locked receiver): armed, nothing commanded yet — stalls.

@@ -1160,3 +1160,46 @@ rainbowCriticalBlackReverse/35        2 28.52    22   34        0      0        
 rainbowCriticalBlackReverse/35        3 31.68    22   35        4      0           0.24
 rainbowCriticalBlackReverse/35        4 31.82    27   35        3      0           0.52
 ```
+
+## 2.15 — a forced discard throws the *safest* card, not the oldest survivor
+
+When every card in hand is clued, the bot has to throw one of them. The picker
+walked the hand oldest-first and took the first card that was not *provably*
+critical — an all-or-nothing screen. A card whose candidate identities are, say,
+`{red 1, red 2, red 5}` with the red pile on 4 passes that screen (two of the
+three candidates are already played, so they are not last copies), and the bot
+would throw it while holding a card it knew to be a spare yellow 3. In an actual
+game it discarded the last red 5 that way.
+
+Replaced the screen with `discardRisk`: the pile-point cost of each candidate
+identity, weighted by how many copies of it are still unseen — the conditional
+expected loss from throwing this particular card. The forced branch now takes
+the minimum-risk card (ties to the oldest), and the "could still be critical, so
+stall instead" guard keys off that minimum rather than off the oldest survivor.
+A provably safe card is thrown rather than stalled for, which is what the branch
+always intended.
+
+Up on 13 of 15 rows, flat on one, −0.02 on one; **+0.19/row** overall. Biggest
+gains in the black variants (`rainbowCriticalBlack` 2p +0.50, 3p +0.42;
+`rainbowCriticalBlackReverse` 3p +0.80) where criticals are dense. Total
+fuse-outs 4→3, and `rainbowCritical` mins climb sharply (2p 19→22, 4p 21→24) —
+the losses this fixes were exactly the games where a last copy went in the bin.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.88    18   25       28      0           0.22
+simple/25                             3 24.32    22   25       28      0           0.34
+simple/25                             4 24.22    21   25       32      0           0.56
+rainbow/30                            2 28.10    20   30       17      0           0.26
+rainbow/30                            3 29.40    27   30       32      0           0.22
+rainbow/30                            4 28.92    26   30       18      0           0.44
+rainbowCritical/30                    2 27.44    22   30       11      0           0.42
+rainbowCritical/30                    3 28.28    21   30       17      0           0.38
+rainbowCritical/30                    4 27.94    24   30        8      0           0.58
+rainbowCriticalBlack/35               2 29.62    23   35        2      0           0.34
+rainbowCriticalBlack/35               3 33.20    23   35       15      1           0.34
+rainbowCriticalBlack/35               4 31.54    10   35        8      2           0.64
+rainbowCriticalBlackReverse/35        2 28.74    16   34        0      0           0.34
+rainbowCriticalBlackReverse/35        3 32.48    25   35        3      0           0.28
+rainbowCriticalBlackReverse/35        4 31.78    25   35        3      0           0.52
+```
