@@ -859,6 +859,7 @@ function statsTable(rows, { extraColumns = [], shareLabel, shareOf }) {
     { key: 'hintsReceived', label: 'Hints received' },
     { key: 'undos', label: 'Undos' },
     { key: 'moveMs', label: 'Time' },
+    { key: 'perMove', label: 'Avg s/move' },
     { key: 'share', label: shareLabel },
   ];
   const head = document.createElement('tr');
@@ -874,6 +875,10 @@ function statsTable(rows, { extraColumns = [], shareLabel, shareOf }) {
     const cells = {
       name: r.isBot ? `🤖 ${r.name}` : r.name,
       moveMs: formatMinsSecs(r.moveMs),
+      // Pooled over every move, unlike the share column: seconds-per-move is
+      // an absolute pace, so each move should count once regardless of which
+      // game it was in.
+      perMove: r.moves > 0 ? (r.moveMs / r.moves / 1000).toFixed(1) : '—',
       share: share == null ? '—' : `${Math.round(share * 100)}%`,
     };
     for (const c of columns) {
