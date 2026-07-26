@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.16';
+export const BOT_VERSION = '2.17';
 
 // Thresholds for the free gamble (see gambleChance): better-than-even odds,
 // and never on the last fuse. Both were swept — the score plateau runs from
@@ -1758,8 +1758,13 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
 // every legal action to the end of the game — teammates modelled as this
 // same bot — and take the action with the best average final score.
 
-const SEARCH_MAX_WORLDS = 16;
-const SEARCH_MAX_SIMS = 160;
+// The one cost knob: every candidate action is simulated in every world, so a
+// decision costs at most SEARCH_MAX_WORLDS × (hand size × 2 + hints) rollouts,
+// each only a few moves long with the deck empty. Sized to cover a hand of 4-5
+// wholly unclued cards (a human partner clues far less than the bot does, so
+// those hands are exactly where the search is most needed), which is 24-120
+// worlds — well past the 16 that fit when the enumeration double-counted.
+const SEARCH_MAX_WORLDS = Number(process.env.HANABI_SEARCH_MAX_WORLDS ?? 120);
 
 // All assignments of the unseen multiset to our hand slots that respect each
 // slot's deduced candidates; null when there are too many to search.
@@ -1788,7 +1793,7 @@ function enumerateWorlds(view, myCombos) {
       acc.push([color, number]);
       dfs(slot + 1);
       acc.pop();
-      remaining.set(k, left + 1);
+      remaining.set(k, left); // restore the count we borrowed — NOT left + 1
     }
   };
   dfs(0);
@@ -1948,8 +1953,11 @@ function endgameSearch(view, conventions) {
   const myCombos = handCombos(view, view.viewerIndex);
   const worlds = enumerateWorlds(view, myCombos);
   if (!worlds || worlds.length === 0) return null;
-  const budget = Math.max(1, Math.floor(SEARCH_MAX_SIMS / worlds.length));
-  const candidates = candidateActions(view).slice(0, budget);
+  // Every candidate is judged, never a prefix of them: a per-decision sim budget
+  // that trimmed the list dropped whole action classes (the hints sit last), so
+  // in a wide position the "search" could end up ranking play-slot-0 against
+  // nothing. The world cap alone bounds the work.
+  const candidates = candidateActions(view);
   let best = null;
   for (const action of candidates) {
     let total = 0;

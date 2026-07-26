@@ -1014,6 +1014,57 @@ test('bot: endgame search plays into 50/50 odds instead of a losing discard', ()
   assert.equal(action.type, 'play', reason);
 });
 
+test('bot: endgame search still runs with a wholly unclued hand (24 worlds)', () => {
+  // The shape a human partner produces: the bot's four cards were never clued,
+  // so every slot reads as any of the four unseen identities — 24 worlds, which
+  // an enumeration that mis-restored its copy counts inflated past the cap,
+  // silently switching the search off exactly where it is needed most.
+  // Piles: red/green/white complete, blue at 4 (blue_5 discarded), yellow at 2.
+  // Bot holds red_1, yellow_3, blue_1, blue_2 (only the yellow_3 is live);
+  // Ann holds the last yellow_4, so the conventions want to burn the last token
+  // saving a card she is going to keep anyway — with one point sitting in the
+  // bot's own hand.
+  let id = 0;
+  const playedPiles = {};
+  const discard = [];
+  const bin = (color, numbers) => { for (const n of numbers) discard.push(bareCard(id++, color, n)); };
+  for (const color of ['green', 'white']) {
+    playedPiles[color] = [1, 2, 3, 4, 5].map((n) => bareCard(id++, color, n));
+    bin(color, [1, 1, 2, 3, 4]);
+  }
+  playedPiles.red = [1, 2, 3, 4, 5].map((n) => bareCard(id++, 'red', n));
+  bin('red', [1, 2, 3, 4]); // one red_1 left over — it's in the bot's hand
+  playedPiles.blue = [1, 2, 3, 4].map((n) => bareCard(id++, 'blue', n));
+  bin('blue', [1, 3, 4, 5]);
+  playedPiles.yellow = [1, 2].map((n) => bareCard(id++, 'yellow', n));
+  bin('yellow', [1, 1, 2, 3, 4, 5]);
+  const s = {
+    status: 'playing', variantId: 'simple', endRule: 'lax',
+    shareGuarded: false, allowEmptyHints: false, seed: 1,
+    players: [
+      { id: 'a', name: 'Ann', hand: [bareCard(id++, 'yellow', 4)] },
+      {
+        id: 'b',
+        name: 'Bot',
+        hand: [bareCard(id++, 'red', 1), bareCard(id++, 'yellow', 3),
+          bareCard(id++, 'blue', 1), bareCard(id++, 'blue', 2)],
+      },
+    ],
+    deck: [], discard, playedPiles,
+    hintTokens: 1, fuseTokens: 3, currentPlayer: 1, turn: 40, finalTurn: null,
+    log: [], endReason: null, nextHintIndex: 0, nextLogSeq: 0,
+    startedAt: 0, endedAt: null, initialDeckCards: [],
+  };
+  const view = viewState(s, 1);
+  assert.equal(handCombos(view, 1)[0].length, 4, 'each slot reads as one of the four unseen cards');
+
+  const { action, reason } = decide(view, undefined, {});
+  assert.ok(reason.startsWith('endgame search (24 worlds'), `expected a searched decision (got: ${reason})`);
+  // Spending the last token on Ann leaves her unable to hint back, so the
+  // yellow_3 can never be found: the search takes the fuse risk instead.
+  assert.equal(action.type, 'play', reason);
+});
+
 test('bot: endgame tie-break ranks a play-enabling hint over a dead misfire or inert hint', () => {
   // Deck empty, near-perfect: white pile at 4, everything else complete.
   // Ann (p0) holds the last white_5 (unclued) plus a dead blue_2; the bot (p1)

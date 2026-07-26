@@ -1261,3 +1261,61 @@ rainbowCriticalBlackReverse/35        2 28.94    16   34        0      0        
 rainbowCriticalBlackReverse/35        3 32.52    26   35        3      0           0.34
 rainbowCriticalBlackReverse/35        4 31.84    25   35        4      0           0.56
 ```
+
+## 2.17 — the endgame search enumerates worlds it can actually reach
+
+A backtracking bug switched the endgame search off in the positions it exists
+for. `enumerateWorlds` borrows a copy of an identity for a slot and restores the
+count on the way back out — but restored it to `left + 1` instead of `left`, so
+every backtrack minted a card out of nothing. It enumerated impossible worlds
+(four blue 2s in a hand when one is left) and, worse, blew past
+`SEARCH_MAX_WORLDS` on positions that really have few worlds: a hand of four
+unclued cards drawn from four unseen identities is 24 permutations and was
+counted as 212, so the search bailed and the convention policy took over.
+
+That is the *human*-partner shape. Bots clue each other constantly, so their
+hands are narrow and the inflated count rarely crossed the cap — which is why
+self-play never caught it. Against a person the bot's hand often carries no clue
+at all, and the last few turns are exactly when a search would beat conventions.
+Seen live (seed 3585328964, `rainbowCritical`, deck empty, 1 token): the bot held
+the last yellow 3 among three dead cards and the human held the yellow 4. The
+conventions spent the last token "saving" that yellow 4 — a card its holder had
+no intention of throwing — leaving neither side able to hint, and both remaining
+points died. With the counts fixed the search runs (24 worlds) and plays,
+guaranteeing 27 and averaging 27.3 where the game actually scored 26.
+
+Two follow-ons:
+
+- `SEARCH_MAX_WORLDS` 16 → 120. Sixteen was tuned against inflated counts; the
+  honest count for a wholly unclued 4-5 card hand is 24-120.
+- The per-decision sim budget (`SEARCH_MAX_SIMS`, which truncated the candidate
+  list to `SIMS / worlds`) is gone. Candidates are generated plays-first,
+  discards, then hints, so the truncation dropped whole action classes — at 24
+  worlds it kept six candidates and cut every hint; at 120 it would have kept one
+  and "searched" a single action. The world cap alone bounds the work: worst case
+  120 worlds × ~14 candidates of short rollouts, ~0.2 s, against a 1.2 s bot
+  delay.
+
+Self-play barely moves, as expected for a bug that hid in narrow hands: at 200
+seeds/row (3000 games) 28.657 → 28.660 mean/row with fuse-outs 20 → 18, no row
+down more than 0.04. The value is with a human partner, which the benchmark
+cannot measure.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.96    18   25       29      0           0.26
+simple/25                             3 24.32    22   25       28      0           0.34
+simple/25                             4 24.22    21   25       32      0           0.56
+rainbow/30                            2 28.06    20   30       18      0           0.26
+rainbow/30                            3 29.42    27   30       32      0           0.26
+rainbow/30                            4 28.94    26   30       19      0           0.46
+rainbowCritical/30                    2 27.52    22   30       12      0           0.50
+rainbowCritical/30                    3 28.28    21   30       17      0           0.40
+rainbowCritical/30                    4 27.98    24   30        8      0           0.58
+rainbowCriticalBlack/35               2 30.08    23   35        3      0           0.54
+rainbowCriticalBlack/35               3 33.24    23   35       15      0           0.32
+rainbowCriticalBlack/35               4 31.90    10   35        9      2           0.60
+rainbowCriticalBlackReverse/35        2 28.94    16   34        0      0           0.46
+rainbowCriticalBlackReverse/35        3 32.52    26   35        3      0           0.36
+rainbowCriticalBlackReverse/35        4 31.82    25   35        4      0           0.56
+```
