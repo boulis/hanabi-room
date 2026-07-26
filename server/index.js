@@ -97,7 +97,7 @@ const connections = new Map();
 
 // Ephemeral reactions: validated and relayed to the room, never stored —
 // they are not game state and don't appear in saves.
-const REACTION_EMOJI = ['👏', '🤔', '❓', '😱', '🎉'];
+const REACTION_EMOJI = ['👏', '🤔', '❓', '😱', '❗'];
 const REACTION_THROTTLE_MS = 500;
 
 // How many tags the stats page offers (most-used first) — enough to cover the
