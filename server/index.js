@@ -387,6 +387,12 @@ wss.on('connection', async (ws) => {
         case 'resumeSave': {
           const fileArg = String(msg.file || '');
           const filePath = path.isAbsolute(fileArg) ? fileArg : path.join(savedDir(), fileArg);
+          // One room per save, like delete/replay/branch: two rooms resumed
+          // from one file would both append to it, interleaving two divergent
+          // games into a log that can never be replayed back apart.
+          if (saveInUse(path.basename(filePath))) {
+            throw new GameError('Save is already open in a room', 'save_in_use');
+          }
           const resumed = await resumeRoom(filePath);
           const r = addRoom(resumed, msg.roomName);
           adoptRoomBots(r);

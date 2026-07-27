@@ -18,10 +18,21 @@ const BOT_DELAY_MS = Number(process.env.HANABI_BOT_DELAY_MS ?? 1200);
 // widen the window around the moment it wants to exercise.
 const undoGraceMs = () => Number(process.env.HANABI_BOT_UNDO_GRACE_MS ?? 6000);
 
-// playerId -> { roomId, timer, pending: 'act' | 'undo' | null, graceUntil }
+// "<roomId>:<playerId>" -> { roomId, playerId, timer, pending: 'act' | 'undo' | null, graceUntil }
+//
+// Keyed by BOTH ids: a playerId is unique within a room but not across the
+// server. Resuming a save (or branching one) reuses the ids in its header, so
+// the same save open in two rooms — a resume plus a branch of it, say — gives
+// two rooms a bot seat with identical ids. Keyed by playerId alone the second
+// room's seat looked already-registered: adoption skipped it (leaving it
+// offline) and the entry's roomId still pointed at the first room, so the
+// post-move broadcast went to a room the move never happened in and the players
+// watching the real one saw their bot freeze mid-turn.
 const bots = new Map();
 // Set by the transport: async (roomId) => broadcast the room's new state.
 let notify = null;
+
+const seatKey = (roomId, playerId) => `${roomId}:${playerId}`;
 
 export function initBots(notifyFn) {
   notify = notifyFn;
@@ -31,8 +42,8 @@ export function totalBots() {
   return bots.size;
 }
 
-export function isBotSeat(playerId) {
-  return bots.has(playerId);
+export function isBotSeat(roomId, playerId) {
+  return bots.has(seatKey(roomId, playerId));
 }
 
 function pickName(room) {
@@ -54,7 +65,9 @@ export function addBot(room) {
   const player = joinRoom(room, { name: pickName(room) });
   player.isBot = true;
   player.botOptions = defaultBotOptions();
-  bots.set(player.id, { roomId: room.id, timer: null, pending: null, graceUntil: 0 });
+  bots.set(seatKey(room.id, player.id), {
+    roomId: room.id, playerId: player.id, timer: null, pending: null, graceUntil: 0,
+  });
   return player;
 }
 
@@ -76,7 +89,7 @@ export function removeBot(room, playerId) {
   if (room.phase !== 'lobby') {
     throw new GameError('Bots can only be removed in the room lobby', 'not_lobby');
   }
-  dropBot(playerId);
+  dropBot(seatKey(room.id, playerId));
   leaveRoom(room, playerId);
 }
 
@@ -88,7 +101,7 @@ export function adoptRoomBots(room) {
   const flagged = room.players.some((p) => p.isBot);
   for (const p of room.players) {
     if (!flagged && BOT_NAMES.includes(p.name)) p.isBot = true;
-    if (!p.isBot || bots.has(p.id)) continue;
+    if (!p.isBot || bots.has(seatKey(room.id, p.id))) continue;
     if (bots.size >= MAX_TOTAL_BOTS) {
       console.error(`bot limit reached; seat "${p.name}" in room ${room.id} stays offline`);
       p.isBot = false;
@@ -96,21 +109,23 @@ export function adoptRoomBots(room) {
     }
     p.online = true;
     p.botOptions ??= defaultBotOptions();
-    bots.set(p.id, { roomId: room.id, timer: null, pending: null, graceUntil: 0 });
+    bots.set(seatKey(room.id, p.id), {
+      roomId: room.id, playerId: p.id, timer: null, pending: null, graceUntil: 0,
+    });
   }
 }
 
 // Room got deleted/closed — free its bots against the global cap.
 export function removeRoomBots(roomId) {
-  for (const [id, b] of bots) {
-    if (b.roomId === roomId) dropBot(id);
+  for (const [key, b] of bots) {
+    if (b.roomId === roomId) dropBot(key);
   }
 }
 
-function dropBot(playerId) {
-  const b = bots.get(playerId);
+function dropBot(key) {
+  const b = bots.get(key);
   if (b?.timer) clearTimeout(b.timer);
-  bots.delete(playerId);
+  bots.delete(key);
 }
 
 // Test hook: forget every bot (clears pending timers; doesn't touch rooms).
@@ -128,8 +143,8 @@ export function pokeBots(room) {
   // obliges. (Without this, a bot's action on top of the stack would block
   // the previous human from ever undoing their own move.)
   const top = room.undoStack[room.undoStack.length - 1];
-  if (top && bots.has(top.playerId) && room.undoRequests.size > 0) {
-    const b = bots.get(top.playerId);
+  if (top && bots.has(seatKey(room.id, top.playerId)) && room.undoRequests.size > 0) {
+    const b = bots.get(seatKey(room.id, top.playerId));
     // A queued action must not swallow the request. Honouring an undo puts the
     // bot back on turn, so the very next poke queues its replacement move (after
     // the grace pause) — and a request to walk one move further back arrives
@@ -155,7 +170,7 @@ export function pokeBots(room) {
   }
 
   const current = room.state.players[room.state.currentPlayer];
-  const b = current ? bots.get(current.id) : undefined;
+  const b = current ? bots.get(seatKey(room.id, current.id)) : undefined;
   if (!b || b.timer) return;
   const delay = Math.max(BOT_DELAY_MS, b.graceUntil - Date.now());
   b.pending = 'act';
@@ -167,7 +182,7 @@ export function pokeBots(room) {
 }
 
 async function botUndo(room, playerId) {
-  const b = bots.get(playerId);
+  const b = bots.get(seatKey(room.id, playerId));
   if (!b) return;
   const top = room.undoStack[room.undoStack.length - 1];
   if (room.phase !== 'playing' || !top || top.playerId !== playerId || room.undoRequests.size === 0) {
@@ -181,7 +196,7 @@ async function botUndo(room, playerId) {
 }
 
 async function botAct(room, playerId) {
-  const b = bots.get(playerId);
+  const b = bots.get(seatKey(room.id, playerId));
   if (!b) return;
   if (room.phase !== 'playing' || room.state.status !== 'playing') return;
   const idx = room.state.players.findIndex((p) => p.id === playerId);

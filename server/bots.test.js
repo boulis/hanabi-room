@@ -14,6 +14,7 @@ const {
   adoptRoomBots,
   configureBot,
   initBots,
+  isBotSeat,
   pokeBots,
   removeBot,
   removeRoomBots,
@@ -332,6 +333,59 @@ test('a human can walk several moves back, alternating requests and own undos', 
     assert.equal(room.undoStack.length, 0, 'all four moves rolled back');
     assert.equal(room.state.turn, turn - 4, 'four turns earlier');
     assert.equal(room.state.currentPlayer, 0, 'back on the human');
+    resetBots();
+  });
+});
+
+test('adopt: a save and its branch open as two rooms with independent bot seats', async () => {
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    const room = createRoom('Original');
+    const human = joinRoom(room, { name: 'Ann' });
+    addBot(room);
+    initBots(async () => {});
+    await startGame(room, human.id, { seed: 5 });
+    const botHand = room.state.players[1].hand;
+    await applyAction(room, human.id, {
+      type: 'hint', toPlayerIndex: 1, hintType: 'number', value: botHand[0].number,
+    });
+    const basename = path.basename(room.savePath);
+    removeRoomBots(room.id);
+    deleteRoom(room.id);
+
+    // Both rooms come from the same header, so both bot seats carry the SAME
+    // playerId. Registered by playerId alone, the second room's seat looked
+    // already-staffed and its moves were broadcast to the first room.
+    const first = await resumeRoom(await branchSave(basename, 1));
+    first.id = 'first';
+    const second = await resumeRoom(path.join(process.env.HANABI_SAVED_DIR, basename));
+    second.id = 'second';
+    assert.equal(first.players[1].id, second.players[1].id, 'same bot playerId in both rooms');
+
+    const notified = [];
+    initBots(async (roomId) => {
+      notified.push(roomId);
+      pokeBots(roomId === first.id ? first : second);
+    });
+    adoptRoomBots(first);
+    adoptRoomBots(second);
+    assert.equal(totalBots(), 2, 'each room staffs its own bot seat');
+    assert.equal(second.players[1].online, true, 'the second room\'s bot is live, not skipped');
+
+    // A move in the second room must be announced to the second room.
+    assert.equal(second.state.currentPlayer, 1);
+    pokeBots(second);
+    await waitFor(() => second.state.turn === 2, 'second room\'s bot took its turn');
+    assert.deepEqual([...new Set(notified)], [second.id], 'broadcast went to the room that moved');
+    assert.equal(first.state.turn, 1, 'the other room did not move');
+
+    // Closing one room frees only its own seat.
+    removeRoomBots(first.id);
+    assert.equal(totalBots(), 1);
+    const botId = second.players[1].id;
+    assert.equal(isBotSeat(second.id, botId), true, 'the surviving room keeps its bot');
+    assert.equal(isBotSeat(first.id, botId), false, 'the closed room released its own');
     resetBots();
   });
 });
