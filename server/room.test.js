@@ -28,6 +28,7 @@ import { exportDeckOrder } from './game.js';
 import { viewState } from './view.js';
 import {
   branchSave,
+  deckExportFromSave,
   deleteSave,
   listIncompleteSaves,
   listLibrary,
@@ -960,5 +961,27 @@ test('spectate: resumeRoom defaults allowSpectators back off', async () => {
     const { room } = await setupRoom();
     const resumed = await resumeRoom(room.savePath);
     assert.equal(resumed.options.allowSpectators, false);
+  });
+});
+
+test('deckExportFromSave: only a finished save gives up its deck order', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    await applyAction(room, alice.id, { type: 'play', cardIndex: 0 });
+
+    // Mid-game the draw pile is still live — its order is exactly what the
+    // view hides, so the replay export has nothing to hand out.
+    assert.equal(await deckExportFromSave(room.savePath), null, 'unfinished save refused');
+
+    await voteAbandon(room, alice.id);
+    await voteAbandon(room, bob.id);
+    assert.equal(room.state.status, 'finished');
+
+    const payload = await deckExportFromSave(room.savePath);
+    assert.ok(payload, 'finished save exports');
+    assert.match(payload.filename, /^hanabi-deck-.*-simple\.json$/);
+    // Identical to what the live room would have handed the same player.
+    assert.deepEqual(payload.data, exportDeckOrder(room.state));
+    assert.equal(payload.data.count, room.state.initialDeckCards.length);
   });
 });

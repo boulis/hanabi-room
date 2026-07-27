@@ -199,6 +199,15 @@ export function exportDeckOrder(state) {
   };
 }
 
+// The download the client saves: deck order plus the filename to save it under.
+// Shared by both export paths — a finished game in a live room, and a finished
+// save being replayed — so the two produce byte-identical files.
+export function deckExportPayload(state) {
+  const data = exportDeckOrder(state);
+  const slug = data.date.replace(/[T:]/g, '-');
+  return { data, filename: `hanabi-deck-${slug}-${state.variantId}.json` };
+}
+
 export const HINT_MARK_LIMIT = 4;
 
 export function dropHintMarkFromHand(hand, hintIndex) {

@@ -1420,7 +1420,11 @@ function renderGame() {
     const exportBtn = document.createElement('button');
     exportBtn.type = 'button';
     exportBtn.textContent = 'Export deck order';
-    exportBtn.addEventListener('click', () => send({ type: 'exportDeck' }));
+    // In a replay we hold no seat, so the server can only find the game by
+    // file; in a live room the seat is what identifies it.
+    exportBtn.addEventListener('click', () => send(
+      replay ? { type: 'exportDeck', file: replay.file } : { type: 'exportDeck' },
+    ));
     actions.append(exportBtn);
 
     banner.append(actions);

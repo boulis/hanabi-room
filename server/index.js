@@ -5,7 +5,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { VARIANTS } from './variants.js';
-import { exportDeckOrder } from './game.js';
+import { deckExportPayload } from './game.js';
 import { GameError } from './rules.js';
 import {
   applyAction,
@@ -40,6 +40,7 @@ import {
 } from './bots.js';
 import {
   branchSave,
+  deckExportFromSave,
   deleteSave,
   listGameStats,
   listIncompleteSaves,
@@ -648,14 +649,21 @@ wss.on('connection', async (ws) => {
           break;
         }
         case 'exportDeck': {
+          // With a file: the export button on a replay's game-over banner. The
+          // replaying connection holds no seat (it isn't in a room at all), so
+          // the seat-scoped path below can never serve it.
+          if (msg.file) {
+            const basename = requireSaveBasename(msg.file);
+            const payload = await deckExportFromSave(path.join(savedDir(), basename));
+            if (!payload) throw new GameError('No finished game to export', 'no_finished_game');
+            send(ws, { type: 'deckExport', ...payload });
+            break;
+          }
           const room = requireSeat(conn);
           if (room.phase !== 'playing' || room.state?.status !== 'finished') {
             throw new GameError('No finished game to export', 'no_finished_game');
           }
-          const data = exportDeckOrder(room.state);
-          const slug = data.date.replace(/[T:]/g, '-');
-          const filename = `hanabi-deck-${slug}-${room.state.variantId}.json`;
-          send(ws, { type: 'deckExport', data, filename });
+          send(ws, { type: 'deckExport', ...deckExportPayload(room.state) });
           break;
         }
         case 'importDeck': {

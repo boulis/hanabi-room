@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createInitialState, maxPossibleScore, score } from './game.js';
+import { createInitialState, deckExportPayload, maxPossibleScore, score } from './game.js';
 import { gameStats } from './stats.js';
 import {
   annotateAction,
@@ -249,6 +249,18 @@ export async function listSaves() {
     if (err.code === 'ENOENT') return [];
     throw err;
   }
+}
+
+// Deck order of a saved game, for the export button on a replay's game-over
+// banner. Only for a save that ends finished: an unfinished one still has a
+// draw pile, and its order is exactly what the live view hides. A save that was
+// finished and then continued past its `end` line (an undo after game over)
+// reconstructs as playing, so it is refused too — same rule the live room
+// applies to itself.
+export async function deckExportFromSave(filePath) {
+  const { state } = await loadSave(filePath);
+  if (state.status !== 'finished') return null;
+  return deckExportPayload(state);
 }
 
 export async function summarizeSave(filePath) {
