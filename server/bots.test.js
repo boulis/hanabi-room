@@ -21,7 +21,7 @@ const {
   totalBots,
 } = await import('./bots.js');
 const { conventionsFromOptions } = await import('./botBrain.js');
-const { applyAction, joinRoom, requestUndo, resumeRoom, startGame } = await import('./room.js');
+const { applyAction, joinRoom, requestUndo, resumeRoom, startGame, undoLast } = await import('./room.js');
 const { branchSave } = await import('./savedGame.js');
 const { GameError } = await import('./rules.js');
 const { createRoom, deleteRoom, allRooms, isRoomIdle } = await import('./rooms.js');
@@ -285,6 +285,53 @@ test('a bot honors an undo request and gives the requester time to chain', async
     assert.equal(room.undoRequests.size, 0, 'request consumed');
     // Grace period: within it, the human can undo their own action.
     assert.equal(room.undoStack[0].playerId, human.id);
+    resetBots();
+  });
+});
+
+test('a human can walk several moves back, alternating requests and own undos', async () => {
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    const room = createRoom('Chain');
+    const human = joinRoom(room, { name: 'Ann' });
+    addBot(room);
+    initBots(async () => pokeBots(room));
+    await startGame(room, human.id, { seed: 5 });
+
+    // Four moves in: human, bot, human, bot.
+    for (let i = 0; i < 2; i++) {
+      const botHand = room.state.players[1].hand;
+      await applyAction(room, human.id, {
+        type: 'hint', toPlayerIndex: 1, hintType: 'number', value: botHand[0].number,
+      });
+      pokeBots(room);
+      await waitFor(() => room.state.currentPlayer === 0, `bot took move ${i + 1}`);
+    }
+    assert.equal(room.undoStack.length, 4);
+    const turn = room.state.turn;
+
+    // A wide grace window puts the bot's queued replacement move in flight for
+    // the whole walk back — the second request used to be dropped on the floor
+    // because that queued action already held the bot's timer slot.
+    const prevGrace = process.env.HANABI_BOT_UNDO_GRACE_MS;
+    process.env.HANABI_BOT_UNDO_GRACE_MS = '5000';
+    try {
+      for (let i = 0; i < 2; i++) {
+        requestUndo(room, human.id);
+        pokeBots(room);
+        await waitFor(() => room.undoStack[room.undoStack.length - 1]?.playerId === human.id,
+          `bot honored undo request ${i + 1}`);
+        await undoLast(room, human.id); // then the human's own move underneath it
+        pokeBots(room);
+      }
+    } finally {
+      if (prevGrace === undefined) delete process.env.HANABI_BOT_UNDO_GRACE_MS;
+      else process.env.HANABI_BOT_UNDO_GRACE_MS = prevGrace;
+    }
+    assert.equal(room.undoStack.length, 0, 'all four moves rolled back');
+    assert.equal(room.state.turn, turn - 4, 'four turns earlier');
+    assert.equal(room.state.currentPlayer, 0, 'back on the human');
     resetBots();
   });
 });

@@ -14,10 +14,11 @@ const BOT_NAMES = ['Robo', 'Hal', 'Data', 'Marvin', 'Gerty', 'Kitt', 'Eve', 'Chi
 // Overridable so tests don't wait out human-feeling pauses.
 const BOT_DELAY_MS = Number(process.env.HANABI_BOT_DELAY_MS ?? 1200);
 // After a bot honors an undo request, it waits before re-acting so the
-// requester has time to chain their own undo.
-const UNDO_GRACE_MS = Number(process.env.HANABI_BOT_UNDO_GRACE_MS ?? 6000);
+// requester has time to chain their own undo. Read per use, so a test can
+// widen the window around the moment it wants to exercise.
+const undoGraceMs = () => Number(process.env.HANABI_BOT_UNDO_GRACE_MS ?? 6000);
 
-// playerId -> { roomId, timer, graceUntil }
+// playerId -> { roomId, timer, pending: 'act' | 'undo' | null, graceUntil }
 const bots = new Map();
 // Set by the transport: async (roomId) => broadcast the room's new state.
 let notify = null;
@@ -53,7 +54,7 @@ export function addBot(room) {
   const player = joinRoom(room, { name: pickName(room) });
   player.isBot = true;
   player.botOptions = defaultBotOptions();
-  bots.set(player.id, { roomId: room.id, timer: null, graceUntil: 0 });
+  bots.set(player.id, { roomId: room.id, timer: null, pending: null, graceUntil: 0 });
   return player;
 }
 
@@ -95,7 +96,7 @@ export function adoptRoomBots(room) {
     }
     p.online = true;
     p.botOptions ??= defaultBotOptions();
-    bots.set(p.id, { roomId: room.id, timer: null, graceUntil: 0 });
+    bots.set(p.id, { roomId: room.id, timer: null, pending: null, graceUntil: 0 });
   }
 }
 
@@ -129,9 +130,24 @@ export function pokeBots(room) {
   const top = room.undoStack[room.undoStack.length - 1];
   if (top && bots.has(top.playerId) && room.undoRequests.size > 0) {
     const b = bots.get(top.playerId);
+    // A queued action must not swallow the request. Honouring an undo puts the
+    // bot back on turn, so the very next poke queues its replacement move (after
+    // the grace pause) — and a request to walk one move further back arrives
+    // while that timer is pending. Refusing to schedule then left the request
+    // hanging for good: when the queued action finally fired it found the turn
+    // rolled away, returned as a stale schedule, and nothing poked again. So an
+    // undo request preempts a queued action; going back is always what the
+    // player asked for most recently.
+    if (b.pending === 'act' && b.timer) {
+      clearTimeout(b.timer);
+      b.timer = null;
+      b.pending = null;
+    }
     if (!b.timer) {
+      b.pending = 'undo';
       b.timer = setTimeout(() => {
         b.timer = null;
+        b.pending = null;
         botUndo(room, top.playerId).catch((err) => console.error('bot undo failed:', err));
       }, BOT_DELAY_MS);
     }
@@ -142,8 +158,10 @@ export function pokeBots(room) {
   const b = current ? bots.get(current.id) : undefined;
   if (!b || b.timer) return;
   const delay = Math.max(BOT_DELAY_MS, b.graceUntil - Date.now());
+  b.pending = 'act';
   b.timer = setTimeout(() => {
     b.timer = null;
+    b.pending = null;
     botAct(room, current.id).catch((err) => console.error('bot action failed:', err));
   }, delay);
 }
@@ -158,7 +176,7 @@ async function botUndo(room, playerId) {
   await undoLast(room, playerId);
   // It's the bot's turn again now; give the requester room to chain their
   // own undo before the bot re-takes (likely the same) action.
-  b.graceUntil = Date.now() + UNDO_GRACE_MS;
+  b.graceUntil = Date.now() + undoGraceMs();
   if (notify) await notify(b.roomId);
 }
 
