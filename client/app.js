@@ -813,7 +813,8 @@ function renderLibrary(entries) {
     if (e.status !== 'unreadable') {
       const replayBtn = document.createElement('button');
       replayBtn.type = 'button';
-      replayBtn.textContent = 'Replay';
+      replayBtn.textContent = 'Review';
+      replayBtn.title = 'Step through this game move by move, with every hand visible';
       replayBtn.addEventListener('click', () => openReplay(e.basename));
       row.append(replayBtn);
 
@@ -1254,7 +1255,8 @@ function renderGameDetail(d) {
   detailActions.innerHTML = '';
   const replayBtn = document.createElement('button');
   replayBtn.type = 'button';
-  replayBtn.textContent = 'Replay';
+  replayBtn.textContent = 'Review';
+  replayBtn.title = 'Step through this game move by move, with every hand visible';
   replayBtn.addEventListener('click', () => {
     const file = d.basename;
     closeGameDetail();
