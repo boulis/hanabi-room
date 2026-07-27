@@ -1119,12 +1119,25 @@ button.save-label:hover .save-title { text-decoration: underline; }
 .modal-body h3 { margin: 0; }
 .modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
 
-/* --- Game info modal: wider than the annotate one (it carries a stats
-   table), and scrollable rather than pushing the page around. */
+/* --- Game info modal: wide enough for the whole per-player stats table
+   (nine columns) without sideways scrolling, and it's the middle section that
+   scrolls — the title bar with its ✕ and the action buttons stay put however
+   long the page gets. */
 .modal-body.modal-wide {
-  max-width: min(820px, 94vw);
+  /* Not the base 90%: the table wants every pixel the viewport can spare. */
+  width: min(1200px, 96vw);
+  max-width: min(1200px, 96vw);
   max-height: 88vh;
+  overflow: hidden;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+/* Slightly tighter than the same table on the game-over banner, which buys
+   the last column or two on a laptop screen. */
+.modal-wide .stats-table { font-size: 0.85rem; }
+.modal-wide .stats-table th, .modal-wide .stats-table td { padding: 0.2rem 0.45rem; }
+#game-detail-content {
   overflow-y: auto;
+  min-height: 0;
 }
 .detail-head {
   display: flex;
@@ -1134,12 +1147,14 @@ button.save-label:hover .save-title { text-decoration: underline; }
 .detail-head h3 { flex: 1; min-width: 0; font-size: 1rem; }
 .detail-back, .detail-close {
   background: none;
-  border: 0;
-  font-size: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 1.1rem;
   line-height: 1;
-  padding: 0.2rem 0.4rem;
+  padding: 0.25rem 0.55rem;
   cursor: pointer;
-  opacity: 0.7;
+  opacity: 0.8;
+  flex: none;
 }
 .detail-back:hover, .detail-close:hover { opacity: 1; }
 .detail-facts { display: grid; gap: 0.2rem; }
@@ -1150,7 +1165,7 @@ button.save-label:hover .save-title { text-decoration: underline; }
   font-size: 0.9rem;
 }
 .detail-fact-label { opacity: 0.65; }
-.detail-par-note { opacity: 0.65; font-size: 0.85em; }
+.detail-par-note { opacity: 0.8; font-size: 0.85em; }
 .detail-section { margin-top: 0.75rem; }
 .detail-deck-row {
   display: grid;
