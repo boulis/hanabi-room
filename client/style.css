@@ -1101,20 +1101,31 @@ button.save-label:hover .save-title { text-decoration: underline; }
 .modal {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.5);
+  background: rgba(0, 0, 0, 0.62);
   display: grid;
   place-items: center;
   z-index: 10;
 }
+/* A panel, not a hole in the page. Canvas *is* the page's own background, so
+   in the dark scheme a modal dissolved into what was behind it and you
+   couldn't tell which controls belonged to it. Both schemes now get a surface
+   tinted towards the app blue, plus a border and a shadow to draw the edge.
+   `color-scheme: light dark` on :root means the UA follows the same signal
+   this media query reads, so the two can't disagree. */
 .modal-body {
-  background: Canvas;
+  background: #e8eefb;
   color: CanvasText;
   padding: 1rem;
+  border: 1px solid rgba(43, 106, 209, 0.45);
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.55);
   border-radius: 8px;
   max-width: 360px;
   width: 90%;
   display: grid;
   gap: 0.75rem;
+}
+@media (prefers-color-scheme: dark) {
+  .modal-body { background: #212b3c; }
 }
 .modal-body h3 { margin: 0; }
 .modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
