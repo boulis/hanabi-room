@@ -68,6 +68,16 @@ On `npm start`, if any save's last event isn't an `end` (server crash, killed mi
 
 There's no step-through replay viewer yet; the JSONL is the source of truth for reconstruction, and re-running a finished game from scratch only needs the seed (paste it into the lobby).
 
+## Game library and bot par
+
+The server lobby's **Game library** lists every save. Click a row to open its info page: the result, the game options, the per-player stats table (the same one the game-over banner shows), the seed, the tags — and **the bot par for its deck**.
+
+Par is what a table of bots scores when dealt the very same cards. It's the context a bare score lacks: 22/25 means one thing on a deck the bots wring 25 out of and quite another on one they can only get 20 from. It's computed once per save (a game takes ~25ms to simulate), stored in `saved-games/bot-scores.json` along with the brain version that produced it, and recomputed when that version moves. New games get their par the moment they end — it shows on the game-over banner next to the final score.
+
+The info page also lists **other games dealt from the same deck**, each a link to its own info page, so you can line up several attempts at one deck (the point of pasting a seed back into the lobby). Deck identity is the draw order, not the seed: the same seed shuffles a different deck in a different variant, and an imported deck order reproduces a deck under a fresh seed.
+
+Seed, par and the same-deck list stay hidden while a game is unfinished — all three say something about a deck still being played.
+
 ## Development
 
 ```bash
@@ -75,6 +85,7 @@ npm test                                # full unit test suite (node:test)
 node --test server/rules.test.js        # one file
 PORT=3999 node server/index.js &        # boot for the smoke test
 PORT=3999 node smoke.mjs                # end-to-end WS protocol check
+npm run bot-scores                      # (re)compute bot par for every save
 ```
 
 See [CLAUDE.md](./CLAUDE.md) for the architecture overview — module layout, hint mechanics, end-of-deck rules, WebSocket protocol, etc.

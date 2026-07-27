@@ -632,6 +632,21 @@ input, select {
 }
 #library-list { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.6rem; }
 .library-row button { white-space: nowrap; }
+/* The row's label is itself a button (it opens the game info modal), so it
+   has to shed every button look. */
+button.save-label {
+  display: block;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+button.save-label:hover { background: none; }
+button.save-label:hover .save-title { text-decoration: underline; }
 .save-tags { margin-top: 0.2rem; display: flex; gap: 0.3rem; flex-wrap: wrap; }
 .tag-chip {
   font-size: 0.75rem;
@@ -1103,6 +1118,64 @@ input, select {
 }
 .modal-body h3 { margin: 0; }
 .modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+
+/* --- Game info modal: wider than the annotate one (it carries a stats
+   table), and scrollable rather than pushing the page around. */
+.modal-body.modal-wide {
+  max-width: min(820px, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
+}
+.detail-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.detail-head h3 { flex: 1; min-width: 0; font-size: 1rem; }
+.detail-back, .detail-close {
+  background: none;
+  border: 0;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.2rem 0.4rem;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.detail-back:hover, .detail-close:hover { opacity: 1; }
+.detail-facts { display: grid; gap: 0.2rem; }
+.detail-fact {
+  display: grid;
+  grid-template-columns: 10rem 1fr;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+.detail-fact-label { opacity: 0.65; }
+.detail-par-note { opacity: 0.65; font-size: 0.85em; }
+.detail-section { margin-top: 0.75rem; }
+.detail-deck-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) 6rem minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 0.85rem;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  margin-top: 0.25rem;
+  cursor: pointer;
+}
+.detail-deck-row:hover { background: rgba(43, 106, 209, 0.1); border-color: rgba(43, 106, 209, 0.55); }
+.detail-deck-score { font-weight: bold; }
+.detail-deck-who { opacity: 0.75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 560px) {
+  .detail-fact { grid-template-columns: 1fr; gap: 0; }
+  .detail-fact-label { font-size: 0.8rem; }
+  .detail-deck-row { grid-template-columns: 1fr; }
+}
 .chip-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .chip-row .toggle {
   padding: 4px 10px;
@@ -1128,6 +1201,8 @@ input, select {
 .banner.win { background: #2f9648; }
 .banner.loss { background: #d23a3a; }
 .banner .banner-text { flex: 1; min-width: 0; }
+/* Own line under the score + buttons row. */
+.banner-par { flex-basis: 100%; opacity: 0.9; }
 .banner-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .banner-actions button {
   background: rgba(255, 255, 255, 0.18);

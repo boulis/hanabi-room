@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createInitialState, deckExportPayload, maxPossibleScore, score } from './game.js';
+import { BOT_SCORE_VERSION, botScoreForSaveHeader } from './botScore.js';
 import { gameStats } from './stats.js';
 import {
   annotateAction,
@@ -315,6 +317,7 @@ export async function deleteSave(basename) {
   const dest = path.join(trashDir, basename);
   await fs.rename(path.join(savedDir(), basename), dest);
   await setSaveTags(basename, []); // drop its tags entry
+  await setBotScore(basename, null); // …and its bot par
   return dest;
 }
 
@@ -347,6 +350,97 @@ export async function setSaveTags(basename, tags) {
   return clean;
 }
 
+// --- Bot par scores: sidecar JSON, same reasoning as tags — the .jsonl stays
+// pure replay data, and a derived number that a brain version bump invalidates
+// has no business inside it.
+//
+// Keyed by basename, value is simulateBotGame's result plus `computedAt`. The
+// deck a game was dealt from never changes, so an entry only goes stale when
+// BOT_SCORE_VERSION moves.
+
+function botScoresPath() {
+  return path.join(savedDir(), 'bot-scores.json');
+}
+
+export async function readAllBotScores() {
+  try {
+    return JSON.parse(await fs.readFile(botScoresPath(), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+// Read-modify-write, serialized: the backfill pass and a room finishing a game
+// can land on the same file, and each holds only its own entry.
+let botScoreWrites = Promise.resolve();
+
+export function setBotScore(basename, entry) {
+  assertSaveBasename(basename);
+  const run = async () => {
+    const all = await readAllBotScores();
+    if (entry) all[basename] = entry;
+    else delete all[basename];
+    await ensureSavedDir();
+    await fs.writeFile(botScoresPath(), JSON.stringify(all, null, 2));
+    return entry;
+  };
+  botScoreWrites = botScoreWrites.then(run, run);
+  return botScoreWrites;
+}
+
+function botScoreIsCurrent(entry) {
+  return !!entry && entry.version === BOT_SCORE_VERSION;
+}
+
+// The stored par for one save, simulating it first if there is none or the
+// brain has moved on since. `known` lets a caller that already read the whole
+// sidecar (the backfill loop) skip re-reading it per file.
+export async function botScoreFor(basename, { known } = {}) {
+  assertSaveBasename(basename);
+  const all = known ?? (await readAllBotScores());
+  const existing = all[basename];
+  if (botScoreIsCurrent(existing)) return existing;
+  let header;
+  try {
+    const lines = await readLines(path.join(savedDir(), basename));
+    header = parseLineSafe(lines[0] ?? '');
+    if (!header || header.kind !== 'start') return null;
+  } catch {
+    return null;
+  }
+  let entry;
+  try {
+    entry = { ...botScoreForSaveHeader(header), computedAt: new Date().toISOString() };
+  } catch (err) {
+    console.error(`bot par for ${basename} failed: ${err.message}`);
+    return null;
+  }
+  // A par that can't be written is still a par — serve it and move on.
+  try {
+    await setBotScore(basename, entry);
+  } catch (err) {
+    console.error(`Could not store bot par for ${basename}: ${err.message}`);
+  }
+  if (known) known[basename] = entry;
+  return entry;
+}
+
+// Fill in every missing or stale par. Cheap enough to run on a background tick
+// at boot (a game is ~25ms), and exposed as `npm run bot-scores` for a one-off
+// pass over a library that has never been scored.
+export async function backfillBotScores({ onProgress } = {}) {
+  const names = await listSaves();
+  const known = await readAllBotScores();
+  let computed = 0;
+  for (const basename of names) {
+    if (botScoreIsCurrent(known[basename])) continue;
+    const entry = await botScoreFor(basename, { known });
+    if (entry) computed++;
+    onProgress?.({ basename, entry, computed, total: names.length });
+  }
+  return { total: names.length, computed };
+}
+
 // --- Branching: copy the header plus the first `uptoEvents` events into a
 // fresh save file. The copy is a complete, self-contained save, so the
 // existing resume path can open it; the original file is never touched.
@@ -371,6 +465,11 @@ export async function branchSave(basename, uptoEvents) {
 
 const libraryCache = new Map(); // filePath -> { mtimeMs, entry }
 
+function deckKeyOf(drawOrder) {
+  if (!Array.isArray(drawOrder) || drawOrder.length === 0) return null;
+  return createHash('sha1').update(drawOrder.join(',')).digest('hex');
+}
+
 async function summarizeForLibrary(filePath) {
   const basename = path.basename(filePath);
   try {
@@ -379,7 +478,11 @@ async function summarizeForLibrary(filePath) {
     return {
       basename,
       startedAt: header.startedAt,
+      endedAt: state.endedAt,
       variantId: header.variantId,
+      endRule: header.endRule,
+      shareGuarded: !!header.shareGuarded,
+      allowEmptyHints: !!header.allowEmptyHints,
       playerNames: header.players.map((p) => p.name),
       playerBots: header.players.map((p) => !!p.isBot),
       playerCount: header.players.length,
@@ -388,8 +491,15 @@ async function summarizeForLibrary(filePath) {
       status: finished ? (state.endReason || 'finished') : 'in-progress',
       score: score(state),
       maxScore: maxPossibleScore(state),
+      misplays: 3 - state.fuseTokens,
       // The seed reveals the deck order, so only expose it once finished.
       seed: finished ? state.seed : null,
+      // What groups saves dealt from the same cards (see gameDetail). Not the
+      // seed: the same seed shuffles a different deck in a different variant,
+      // while an imported deck order reproduces a deck under a new seed. The
+      // draw order itself is the identity — hashed because it's private, and
+      // `publicEntry` strips it on the way out regardless.
+      deckKey: deckKeyOf(state.initialDeckCards),
       // Per-player counts and timings. Stripped from the lobby listing (which
       // is broadcast after every action) and served only to the stats page.
       stats: gameStats(state, { botFlags: header.players.map((p) => !!p.isBot) }),
@@ -420,13 +530,23 @@ async function cachedLibraryEntries() {
   return out;
 }
 
+// What a cached entry may be sent as: the per-player stats block stays behind
+// (the lobby view rides on every broadcast, and the stats page asks for it
+// separately), and so does the always-present seed.
+function publicEntry({ stats, deckKey, ...rest }) {
+  return rest;
+}
+
 export async function listLibrary() {
   const tags = await readAllTags();
-  // The lobby view rides on every broadcast, so the per-player stats block
-  // stays out of it — the stats page asks for it separately.
-  return (await cachedLibraryEntries()).map(({ stats, ...rest }) => ({
+  const pars = await readAllBotScores();
+  return (await cachedLibraryEntries()).map(publicEntry).map((rest) => ({
     ...rest,
     tags: tags[rest.basename] || [],
+    // Par is derived from the deck, so it's known from move 0 — but it's
+    // withheld while the game is unfinished for the same reason the seed is:
+    // both say something about a deck that is still being played.
+    botScore: rest.status !== 'in-progress' ? pars[rest.basename] ?? null : null,
   }));
 }
 
@@ -447,6 +567,52 @@ export async function listGameStats() {
       maxScore: e.maxScore,
       stats: e.stats,
     }));
+}
+
+// Everything the game-info page shows for one save: the library row, the
+// per-player stats table (the same one the game-over banner draws), the bot
+// par, and the other games dealt from the same deck.
+//
+// Seed, par and the sibling list are all withheld for a game that hasn't
+// finished — and the sibling list only ever relates *finished* games, because
+// "this in-progress game shares a seed with that finished one" would hand over
+// a deck you can already read off the finished game's replay.
+export async function gameDetail(basename) {
+  assertSaveBasename(basename);
+  const entries = await cachedLibraryEntries();
+  const entry = entries.find((e) => e.basename === basename);
+  if (!entry || entry.status === 'unreadable') return null;
+  const finished = entry.status !== 'in-progress';
+  const tags = await readAllTags();
+  const pars = await readAllBotScores();
+  const sameDeck = !finished ? [] : entries
+    .filter((e) => (
+      e.basename !== basename &&
+      e.status !== 'unreadable' &&
+      e.status !== 'in-progress' &&
+      e.deckKey != null &&
+      e.deckKey === entry.deckKey
+    ))
+    .map((e) => ({
+      basename: e.basename,
+      startedAt: e.startedAt,
+      variantId: e.variantId,
+      status: e.status,
+      score: e.score,
+      maxScore: e.maxScore,
+      playerNames: e.playerNames,
+      playerBots: e.playerBots,
+      tags: tags[e.basename] || [],
+      botScore: pars[e.basename] ?? null,
+    }));
+  return {
+    ...publicEntry(entry),
+    tags: tags[basename] || [],
+    stats: entry.stats,
+    // Computed here if the background pass hasn't reached this save yet.
+    botScore: finished ? await botScoreFor(basename, { known: pars }) : null,
+    sameDeck,
+  };
 }
 
 export async function listIncompleteSaves(limit = Infinity) {

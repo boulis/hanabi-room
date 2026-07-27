@@ -134,6 +134,10 @@ function handleMessage(msg) {
       }
       view = msg.view;
       render();
+      if (detailRefreshOnSync && detailFile) {
+        detailRefreshOnSync = false;
+        send({ type: 'gameDetail', file: detailFile });
+      }
       break;
     case 'deckExport':
       triggerDownload(msg.data, msg.filename);
@@ -146,6 +150,9 @@ function handleMessage(msg) {
       break;
     case 'statsView':
       renderStatsView(msg);
+      break;
+    case 'gameDetailView':
+      onGameDetailView(msg.detail);
       break;
     case 'error':
       console.warn('server error:', msg.code, msg.error);
@@ -761,8 +768,15 @@ function renderLibrary(entries) {
   for (const e of entries) {
     const row = document.createElement('div');
     row.className = 'save-row library-row';
-    const label = document.createElement('div');
+    // The label opens the game's info page; the buttons beside it are their
+    // own click targets and never reach this handler.
+    const label = document.createElement(e.status === 'unreadable' ? 'div' : 'button');
     label.className = 'save-label';
+    if (e.status !== 'unreadable') {
+      label.type = 'button';
+      label.title = 'Open game info';
+      label.addEventListener('click', () => openGameDetail(e.basename));
+    }
 
     const title = document.createElement('div');
     title.className = 'save-title';
@@ -777,7 +791,10 @@ function renderLibrary(entries) {
 
     const meta = document.createElement('div');
     meta.className = 'save-meta';
-    meta.textContent = `${e.variantId ?? ''}${e.playerNames ? ' · ' + joinPlayerNames(e.playerNames, e.playerBots) : ''}`;
+    // Par for the same deck, so a row says whether the score was the deck's
+    // doing or the players'.
+    const par = e.botScore ? ` · 🤖 ${e.botScore.score}/${e.botScore.maxScore}` : '';
+    meta.textContent = `${e.variantId ?? ''}${e.playerNames ? ' · ' + joinPlayerNames(e.playerNames, e.playerBots) : ''}${par}`;
     label.append(meta);
 
     if (e.tags && e.tags.length) {
@@ -1066,6 +1083,213 @@ function renderStatsView(msg) {
     shareLabel: 'Per game % time (avg)',
     shareOf: (r) => r.timeShareAvg,
   }));
+}
+
+// --- Game info: everything about one saved game, in a modal. Opened by
+// clicking a library row; the server assembles it (`gameDetail`) so the lobby
+// broadcast doesn't have to carry per-game stats for the whole library.
+
+const detailModal = document.getElementById('game-detail-modal');
+const detailContent = document.getElementById('game-detail-content');
+const detailActions = document.getElementById('game-detail-actions');
+const detailTitle = document.getElementById('game-detail-title');
+const detailBackBtn = document.getElementById('game-detail-back');
+// The file whose detail we're waiting for / showing, plus the trail of games we
+// arrived through (following a same-deck link), so ← walks back.
+let detailFile = null;
+let detailTrail = [];
+// Set when we changed something the detail shows (tags) and are waiting for the
+// server's own confirmation — the lobby broadcast — before re-reading it.
+let detailRefreshOnSync = false;
+
+// Entry point (a library row): a fresh visit, so the back trail starts empty.
+function openGameDetail(file) {
+  detailTrail = [];
+  loadGameDetail(file);
+}
+
+function loadGameDetail(file) {
+  detailFile = file;
+  detailModal.hidden = false;
+  detailBackBtn.hidden = detailTrail.length === 0;
+  detailTitle.textContent = 'Game';
+  detailActions.innerHTML = '';
+  detailContent.innerHTML = '';
+  const loading = document.createElement('div');
+  loading.className = 'lobby-empty';
+  loading.textContent = 'Loading…';
+  detailContent.append(loading);
+  send({ type: 'gameDetail', file });
+}
+
+function closeGameDetail() {
+  detailModal.hidden = true;
+  detailFile = null;
+  detailTrail = [];
+  detailRefreshOnSync = false;
+}
+
+detailBackBtn.addEventListener('click', () => {
+  const prev = detailTrail.pop();
+  if (prev) loadGameDetail(prev);
+  else closeGameDetail();
+});
+document.getElementById('game-detail-close').addEventListener('click', closeGameDetail);
+detailModal.addEventListener('click', (e) => {
+  if (e.target === detailModal) closeGameDetail();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !detailModal.hidden) closeGameDetail();
+});
+
+function onGameDetailView(detail) {
+  if (!detail || detail.basename !== detailFile) return; // stale response
+  renderGameDetail(detail);
+}
+
+// "24/30" plus the fine print — which brain produced it and how its game ended.
+function parNote(par) {
+  const bits = [`bot ${par.version}`];
+  if (par.endReason) bits.push(par.endReason);
+  if (par.misplays) bits.push(`${par.misplays} misplay${par.misplays === 1 ? '' : 's'}`);
+  return bits.join(' · ');
+}
+
+function factRow(label, value) {
+  const row = document.createElement('div');
+  row.className = 'detail-fact';
+  const l = document.createElement('span');
+  l.className = 'detail-fact-label';
+  l.textContent = label;
+  const v = document.createElement('span');
+  v.className = 'detail-fact-value';
+  if (value instanceof Node) v.append(value);
+  else v.textContent = value;
+  row.append(l, v);
+  return row;
+}
+
+function renderGameDetail(d) {
+  detailTitle.textContent = d.startedAt ? new Date(d.startedAt).toLocaleString() : d.basename;
+  detailContent.innerHTML = '';
+
+  const facts = document.createElement('div');
+  facts.className = 'detail-facts';
+  const inProgress = d.status === 'in-progress';
+  facts.append(factRow('Result', inProgress
+    ? `in progress — ${d.score}/${d.maxScore} so far, ${d.moves} moves`
+    : `${d.status} — ${d.score}/${d.maxScore}`));
+  facts.append(factRow('Players', joinPlayerNames(d.playerNames, d.playerBots)));
+  facts.append(factRow('Game type', `${d.variantId} · ${d.endRule} end rule` +
+    (d.allowEmptyHints ? ' · empty hints allowed' : '') +
+    (d.shareGuarded ? ' · guards shared' : '')));
+  facts.append(factRow('Moves', `${d.moves}` + (d.misplays ? ` · ${d.misplays} misplay${d.misplays === 1 ? '' : 's'}` : '')));
+  if (d.stats?.durationMs != null) facts.append(factRow('Length', formatMinsSecs(d.stats.durationMs)));
+
+  // Par: the same deck, played by a table of bots. It says whether the score
+  // was the deck's doing or the players'.
+  if (d.botScore) {
+    const par = document.createElement('span');
+    const delta = d.score - d.botScore.score;
+    const sign = delta > 0 ? `+${delta}` : `${delta}`;
+    par.textContent = `🤖 ${d.botScore.score}/${d.botScore.maxScore}` +
+      (inProgress ? '' : ` — you ${delta === 0 ? 'matched par' : `${sign} vs par`}`);
+    const note = document.createElement('span');
+    note.className = 'detail-par-note';
+    note.textContent = ` (${parNote(d.botScore)})`;
+    par.append(note);
+    facts.append(factRow('Bots on this deck', par));
+  } else if (!inProgress) {
+    facts.append(factRow('Bots on this deck', 'not computed'));
+  }
+  if (d.seed != null) facts.append(factRow('Seed', String(d.seed)));
+  facts.append(factRow('File', d.basename));
+  if (d.tags?.length) {
+    const tagsEl = document.createElement('span');
+    tagsEl.className = 'save-tags';
+    for (const t of d.tags) {
+      const chip = document.createElement('span');
+      chip.className = 'tag-chip';
+      chip.textContent = t;
+      tagsEl.append(chip);
+    }
+    facts.append(factRow('Tags', tagsEl));
+  }
+  detailContent.append(facts);
+
+  if (d.stats) detailContent.append(renderGameStats(d.stats));
+
+  // Other games dealt from the same deck — the point of pasting a seed back
+  // into the lobby. Finished games only (see the server's gameDetail).
+  if (d.sameDeck?.length) {
+    const same = document.createElement('div');
+    same.className = 'detail-section';
+    const h = document.createElement('div');
+    h.className = 'stats-title';
+    h.textContent = `Same deck (${d.sameDeck.length} other game${d.sameDeck.length === 1 ? '' : 's'})`;
+    same.append(h);
+    for (const s of d.sameDeck) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'detail-deck-row';
+      const when = document.createElement('span');
+      when.className = 'detail-deck-when';
+      when.textContent = s.startedAt ? new Date(s.startedAt).toLocaleString() : s.basename;
+      const res = document.createElement('span');
+      res.className = 'detail-deck-score';
+      res.textContent = `${s.score}/${s.maxScore}` + (s.botScore ? ` (🤖 ${s.botScore.score})` : '');
+      const who = document.createElement('span');
+      who.className = 'detail-deck-who';
+      who.textContent = joinPlayerNames(s.playerNames, s.playerBots);
+      row.append(when, res, who);
+      row.addEventListener('click', () => {
+        detailTrail.push(d.basename);
+        loadGameDetail(s.basename);
+      });
+      same.append(row);
+    }
+    detailContent.append(same);
+  }
+
+  detailActions.innerHTML = '';
+  const replayBtn = document.createElement('button');
+  replayBtn.type = 'button';
+  replayBtn.textContent = 'Replay';
+  replayBtn.addEventListener('click', () => {
+    const file = d.basename;
+    closeGameDetail();
+    openReplay(file);
+  });
+  detailActions.append(replayBtn);
+  if (d.seed != null) {
+    const seedBtn = document.createElement('button');
+    seedBtn.type = 'button';
+    seedBtn.textContent = 'Copy seed';
+    seedBtn.addEventListener('click', async () => {
+      const done = await copyText(String(d.seed));
+      statusEl.textContent = done ? `seed ${d.seed} copied` : `seed: ${d.seed}`;
+      setTimeout(() => { statusEl.textContent = 'connected'; }, 2500);
+    });
+    detailActions.append(seedBtn);
+  }
+  const tagBtn = document.createElement('button');
+  tagBtn.type = 'button';
+  tagBtn.textContent = 'Tags';
+  tagBtn.addEventListener('click', () => {
+    const next = prompt('Tags (comma-separated):', (d.tags || []).join(', '));
+    if (next == null) return;
+    send({ type: 'tagSave', file: d.basename, tags: next.split(',').map((t) => t.trim()).filter(Boolean) });
+    // The lobby re-broadcast doesn't carry the detail, so re-ask for it — but
+    // only once that broadcast lands, since it's what tells us the tags have
+    // actually been written (asking straight away can race the write).
+    detailRefreshOnSync = true;
+  });
+  detailActions.append(tagBtn);
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.textContent = 'Close';
+  closeBtn.addEventListener('click', closeGameDetail);
+  detailActions.append(closeBtn);
 }
 
 // Shared by both the player and spectator header branches: leaving clears
@@ -1428,6 +1652,18 @@ function renderGame() {
     actions.append(exportBtn);
 
     banner.append(actions);
+    // Par for this deck: the same cards, played out by a table of bots. It's
+    // the context the bare score lacks — 22/25 means one thing on a deck the
+    // bots take 25 from and another on one they can only get 20 out of.
+    if (v.botScore) {
+      const delta = v.score - v.botScore.score;
+      const par = document.createElement('div');
+      par.className = 'banner-par';
+      par.textContent = `🤖 Bots on this deck: ${v.botScore.score}/${v.botScore.maxScore}` +
+        ` — you ${delta === 0 ? 'matched par' : `${delta > 0 ? '+' : ''}${delta} vs par`}` +
+        ` (${parNote(v.botScore)})`;
+      banner.append(par);
+    }
     if (v.stats) banner.append(renderGameStats(v.stats));
     meta.append(banner);
   }

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { createInitialState, validateDeckAgainstVariant } from './game.js';
 import {
   GameError,
@@ -9,10 +10,12 @@ import {
   undoneLogEntries,
 } from './rules.js';
 import { lobbyView, viewState } from './view.js';
+import { botScoreForState } from './botScore.js';
 import {
   appendEvent,
   loadSave,
   openSave,
+  setBotScore,
 } from './savedGame.js';
 
 const DEFAULT_OPTIONS = {
@@ -38,6 +41,9 @@ export function createRoom() {
     undoRequests: new Set(),
     savePath: null,
     importedDeck: null,
+    // What a table of bots scores on this game's deck; filled in once the game
+    // ends (see recordBotScore).
+    botScore: null,
     // Spectators get an omniscient, read-only view — never part of
     // state.players, so game logic (rules.js) never has to know about them.
     spectators: new Map(),
@@ -69,6 +75,31 @@ async function safeAppend(room, event) {
     await appendEvent(room.savePath, event);
   } catch (err) {
     console.error('Failed to append save event:', err);
+  }
+}
+
+// Par for the deck this game was dealt from — "what would the bots have
+// scored with these cards?" — computed once, when the game ends, and kept on
+// the room so the game-over view can carry it without re-simulating on every
+// broadcast. Also written to the saves' sidecar, so the library shows the same
+// number without recomputing it. A bot game is ~25ms and the result depends
+// only on the deck, which never changes; failure is never fatal (a missing par
+// just isn't displayed).
+async function recordBotScore(room) {
+  try {
+    room.botScore = botScoreForState(room.state);
+  } catch (err) {
+    console.error('Bot par simulation failed:', err.message);
+    return;
+  }
+  if (!room.savePath) return;
+  try {
+    await setBotScore(path.basename(room.savePath), {
+      ...room.botScore,
+      computedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('Failed to store bot par:', err.message);
   }
 }
 
@@ -241,6 +272,7 @@ export async function startGame(room, playerId, { seed } = {}) {
   room.undoStack = [];
   room.undoRequests.clear();
   room.savePath = null;
+  room.botScore = null;
   // Imported deck is one-shot — clear after the game starts using it.
   room.importedDeck = null;
   try {
@@ -263,6 +295,7 @@ export function returnToLobby(room, playerId) {
   room.undoStack = [];
   room.undoRequests.clear();
   room.savePath = null;
+  room.botScore = null;
   room.abandonVotes.clear();
 }
 
@@ -285,6 +318,7 @@ export async function voteAbandon(room, playerId) {
     room.abandonVotes.clear();
     room.undoStack = [];
     await safeAppend(room, { kind: 'end', endReason: 'abandoned' });
+    await recordBotScore(room);
     return { abandoned: true };
   }
   return { abandoned: false };
@@ -345,6 +379,7 @@ export async function applyAction(room, playerId, action, reasoning) {
     // be persisted. The 'end' line is metadata; further events appended after
     // it supersede it on replay.
     await safeAppend(room, { kind: 'end', endReason: room.state.endReason });
+    await recordBotScore(room);
   }
 }
 
@@ -402,6 +437,9 @@ export function viewFor(room, playerId) {
   for (const p of v.players) p.isBot = botIds.has(p.id);
   // Same for the post-game stats rows (seat order matches v.players).
   for (const row of v.stats?.players ?? []) row.isBot = !!v.players[row.index]?.isBot;
+  // Par for this deck, shown next to the final score. Same gate as the seed:
+  // it's a fact about a deck, so it waits until there's nothing left to hide.
+  v.botScore = room.state.status === 'finished' ? room.botScore ?? null : null;
   v.hostId = room.hostId;
   v.options = room.options;
   v.spectators = spectatorList(room);

@@ -8,6 +8,7 @@
     "start": "node server/index.js",
     "bot": "node bot.mjs",
     "benchmark": "node benchmark.mjs",
+    "bot-scores": "node bot-scores.mjs",
     "test": "node --test server/*.test.js"
   },
   "dependencies": {

@@ -39,9 +39,12 @@ import {
   totalBots,
 } from './bots.js';
 import {
+  backfillBotScores,
+  botScoreFor,
   branchSave,
   deckExportFromSave,
   deleteSave,
+  gameDetail,
   listGameStats,
   listIncompleteSaves,
   listLibrary,
@@ -478,6 +481,8 @@ wss.on('connection', async (ws) => {
           }
           const v = viewState(loaded.state, -1);
           v.kind = 'replay';
+          // Same banner as a live game-over, so it gets the same par line.
+          v.botScore = loaded.state.status === 'finished' ? await botScoreFor(basename) : null;
           // Freeze the clock at the replayed position: elapsed time is the gap
           // between the original start and the last applied event, not "now"
           // (which would count every day since the game was played).
@@ -593,6 +598,22 @@ wss.on('connection', async (ws) => {
             gamesTotal: games.length,
             summary: aggregateStats(matching.map((g) => g.stats)),
           });
+          break;
+        }
+        case 'gameDetail': {
+          // Everything about one saved game: the library row, its per-player
+          // stats table, the bot par for its deck, and the other games dealt
+          // from the same deck. Asked for when a library row is opened, so it
+          // stays out of the lobby broadcast.
+          const basename = requireSaveBasename(msg.file);
+          let detail;
+          try {
+            detail = await gameDetail(basename);
+          } catch (err) {
+            throw new GameError(`Cannot read ${basename}: ${err.message}`, 'bad_save');
+          }
+          if (!detail) throw new GameError('Save not found or unreadable', 'no_save');
+          send(ws, { type: 'gameDetailView', detail });
           break;
         }
         case 'tagSave': {
@@ -741,12 +762,30 @@ wss.on('connection', async (ws) => {
 // No top-level await here: some hosts (e.g. Phusion Passenger) load this
 // ESM file via require(), which Node refuses for a module with top-level
 // await. Keeping the await inside main() avoids that restriction.
+// Give every save a bot par, in the background: a game is ~25ms to simulate,
+// but a library of hundreds shouldn't hold up the port. Runs after the server
+// is listening and re-broadcasts the lobby once, so the library picks up the
+// numbers without a reload. Nothing here is fatal — a par that fails to
+// compute is simply not shown.
+function fillBotScoresInBackground() {
+  setTimeout(() => {
+    backfillBotScores()
+      .then(async ({ computed, total }) => {
+        if (!computed) return;
+        console.log(`Bot par computed for ${computed} of ${total} saved games.`);
+        await broadcastServerLobby();
+      })
+      .catch((err) => console.error('Bot par backfill failed:', err));
+  }, 100).unref?.();
+}
+
 async function main() {
   initBots(async (roomId) => broadcastRoomAndLobby(roomId));
   await maybeResumeAtBoot();
 
   server.listen(PORT, HOST, () => {
     console.log(`hanabi-room listening on http://${HOST}:${PORT}`);
+    fillBotScoresInBackground();
   });
 }
 
