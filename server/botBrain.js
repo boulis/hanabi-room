@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.18';
+export const BOT_VERSION = '2.19';
 
 // Thresholds for the free gamble (see gambleChance): better-than-even odds,
 // and never on the last fuse. Both were swept — the score plateau runs from
@@ -886,12 +886,20 @@ function pointerSet(view, seat, played) {
 // possibly-playable card — and the free seat holds a play FULLY determined
 // by shared knowledge (only then can both sides compute the post-play
 // pointer set identically).
-function forcedPlayArmed(view, lockedSeat, freeSeat) {
+function forcedPlayArmed(view, lockedSeat, freeSeat, conventions = STANDARD_CONVENTIONS) {
   if (view.players.length !== 2 || view.hintTokens >= 8) return null;
   const hand = view.players[lockedSeat].hand;
   if (hand.length === 0 || chopIndex(hand) >= 0) return null;
   const locked = sharedCombos(view, lockedSeat);
-  if (locked.some((cs) => knownPlayable(view, cs))) return null; // they can just play
+  // No deadlock if they are already obliged to play something. "Obliged" is the
+  // conventions' reading, not just a provable play: a live colour target is a
+  // firm obligation even though it is only *possibly* playable, and a seat that
+  // is going to play next turn anyway does not need a pointer walked over its
+  // hand. Testing knownPlayable alone declared a deadlock over a hand holding a
+  // colour-clued playable card, and the pointer then commanded a *different*
+  // card played — in the game that turned this up, a guarded one, which
+  // misfired and was lost.
+  if (hasPendingPlay(view, lockedSeat, conventions)) return null;
   if (!locked.some((cs) => possiblyPlayable(view, cs))) return null; // nothing to point at
   const free = sharedCombos(view, freeSeat);
   const freePlay = free.findIndex(
@@ -939,7 +947,7 @@ function forcedPlayStep(view, conventions, memory) {
   // tokens: with tokens in the bank a real hint beats pointer games, and the
   // deadlock this convention exists for is by definition token-starved
   // ("used sparingly").
-  const armed = view.hintTokens === 0 ? forcedPlayArmed(view, other, me) : null;
+  const armed = view.hintTokens === 0 ? forcedPlayArmed(view, other, me, conventions) : null;
   if (armed) {
     if (memory.fpRole !== 'sender') {
       memory.fpRole = 'sender';
@@ -979,12 +987,18 @@ function forcedPlayStep(view, conventions, memory) {
   // Receiver bookkeeping: count the partner's able-to-play discards. The
   // receiver's turns run right after the partner's discard restored a token,
   // so its gate is one looser than the sender's zero.
-  if (view.hintTokens <= 1 && forcedPlayArmed(view, me, other)) {
+  if (view.hintTokens <= 1 && forcedPlayArmed(view, me, other, conventions)) {
     if (memory.fpRole !== 'receiver') {
+      // First turn we read the deadlock. Whatever the partner did last happened
+      // BEFORE it existed, so it cannot have been a pointer advance — the
+      // sender only advances over a hand with no chop, and ours still had one.
+      // Counting it anyway stole a move's meaning: an alarm discard is answered
+      // by guarding our chop, which is itself what locks the hand, so the very
+      // discard that armed us was read as an advance and the partner's next
+      // play commanded the wrong card.
       memory.fpRole = 'receiver';
       memory.fpCount = 0;
-    }
-    if (last && last.type === 'discard' && last.playerIndex === other) {
+    } else if (last && last.type === 'discard' && last.playerIndex === other) {
       memory.fpCount = (memory.fpCount || 0) + 1;
     }
     return null; // armed but nothing commanded — act normally (stall)

@@ -928,35 +928,50 @@ test('bot: a forced discard picks the safest card, not the oldest non-critical o
   assert.ok(d.action.cardIndex >= 1, `threw a possible last copy: ${JSON.stringify(d)}`);
 });
 
-test('bot: forced-play signal — pointer discards, signal play, commanded play', () => {
+// The 2-player token-starved deadlock the forced-play convention exists for:
+// p0 plays a 1 (so 2s become possibly playable), then NUMBER hints lock p0's
+// whole hand (keep-convention — no play obligations) while p1's green_1 gets
+// fully pinned. p1's two discards put the second white_2 and a red_4 in the
+// bin, so EVERY card p0 holds has a last-copy candidate — p0 is truly locked
+// and stalls rather than discard (a card with no critical candidate would
+// simply be thrown, see the "forced: least dangerous" branch). Ends on p0's
+// turn with one token left. With `leaveChop`, the last hint goes elsewhere, so
+// p0 keeps one unclued card and is NOT yet locked. With `obligePlay`, p0's last card is locked by a
+// COLOUR hint instead of a number one, which makes it a live play target: only
+// possibly playable, never provably so — the case a knownPlayable-only test
+// misses.
+function deadlockedPair({ obligePlay = false, leaveChop = false } = {}) {
   const s = craftedState(
     ['yellow_1', 'red_2', 'yellow_2', 'green_2', 'blue_2'],
     ['green_1', 'white_2', 'red_4', 'blue_4', 'yellow_5'],
     { next: ['white_4'] },
   );
-  const memA = {};
-  const memB = {};
-  const conv = undefined; // default conventions
-
-  // Build the deadlock: p0 plays a 1 (so 2s become possibly playable), then
-  // NUMBER hints lock p0's whole hand (keep-convention — no play
-  // obligations) while p1's green_1 gets fully pinned. p1's two discards put
-  // the second white_2 and a red_4 in the bin, so EVERY card p0 holds has a
-  // last-copy candidate — p0 is truly locked and stalls rather than discard
-  // (a card with no critical candidate would simply be thrown, see the
-  // "forced: least dangerous" branch).
   playAction(s, 0, 0);                       // yellow pile 1; p0 draws white_4
   hintAction(s, 1, 0, 'number', 2);          // touches p0's four 2s
   hintAction(s, 0, 1, 'number', 1);          // touches green_1
   discardAction(s, 1, 1);                    // chop discard: white_2 out
   hintAction(s, 0, 1, 'color', 'green');     // green_1 now fully pinned
   discardAction(s, 1, 1);                    // chop discard: red_4 out
+  const lock = (st) => {
+    if (leaveChop) return hintAction(st, 1, 0, 'number', 2); // re-touch: white_4 stays open
+    return obligePlay
+      ? hintAction(st, 1, 0, 'color', 'white')
+      : hintAction(st, 1, 0, 'number', 4);   // either way white_4 is touched
+  };
   hintAction(s, 0, 1, 'number', 5);          // touches yellow_5
-  hintAction(s, 1, 0, 'number', 4);          // touches white_4 — p0 locked
+  lock(s);                                   // p0 locked
   hintAction(s, 0, 1, 'number', 5);          // harmless re-touch: burn a token
-  hintAction(s, 1, 0, 'number', 4);          // harmless re-touch
+  lock(s);                                   // harmless re-touch
   hintAction(s, 0, 1, 'number', 5);          // harmless re-touch
-  hintAction(s, 1, 0, 'number', 4);          // down to 1 token — true deadlock
+  lock(s);                                   // down to 1 token — true deadlock
+  return s;
+}
+
+test('bot: forced-play signal — pointer discards, signal play, commanded play', () => {
+  const s = deadlockedPair();
+  const memA = {};
+  const memB = {};
+  const conv = undefined; // default conventions
 
   // p0 (locked receiver): armed, nothing commanded yet — stalls.
   const a1 = decide(viewState(s, 0), conv, memA);
@@ -988,6 +1003,47 @@ test('bot: forced-play signal — pointer discards, signal play, commanded play'
   assert.ok(a3.reason.startsWith('forced-play signal received'), a3.reason);
   playAction(s, 0, 1);
   assert.equal(s.playedPiles.yellow.length, 2, 'yellow_2 landed');
+});
+
+test('bot: no forced-play deadlock when the locked seat is already obliged to play', () => {
+  // The deadlock premise is that the locked seat CANNOT play. A live colour
+  // target means it can — an obligation, even though only possibly playable —
+  // so there is nothing to walk a pointer over, and reading the partner's next
+  // play as a command would order some other card played instead of the one
+  // the clue asked for.
+  const s = deadlockedPair({ obligePlay: true });
+  const locked = decide(viewState(s, 0), undefined, {});
+  assert.deepEqual(locked.action, { type: 'play', cardIndex: 4 }, locked.reason);
+
+  // The sender's gate is zero tokens; with the locked seat obliged to play,
+  // there is no deadlock to signal into even there.
+  s.hintTokens = 0;
+  const sender = decide(viewState(s, 1), undefined, {});
+  assert.ok(!sender.reason.startsWith('forced-play'), `nothing to signal: ${sender.reason}`);
+});
+
+test('bot: an alarm discard does not also advance the forced-play pointer', () => {
+  // The move that arms us cannot also be a pointer advance. An alarm discard is
+  // answered by guarding our chop — which is itself what locks our hand — so
+  // reading that same discard as an advance sends the partner's next play one
+  // card too far. The sender agrees by construction: it only ever advances over
+  // a hand that already has no chop, and ours had one when they discarded.
+  const s = deadlockedPair({ leaveChop: true }); // p0 still holds an unclued white_4
+  const memA = {};
+  hintAction(s, 0, 1, 'number', 5);                    // p0 stalls; down to 0 tokens
+  discardAction(s, 1, 1);                              // partner's discard: an alarm
+  annotateAction(s, 0, s.players[0].hand[4].id, { guarded: true }); // answered — now locked
+
+  const a1 = decide(viewState(s, 0), undefined, memA);
+  assert.equal(a1.action.type, 'hint', `armed, nothing commanded yet: ${a1.reason}`);
+  assert.equal(memA.fpRole, 'receiver');
+  assert.equal(memA.fpCount, 0, 'the discard that armed us is not an advance');
+  hintAction(s, 0, 1, a1.action.hintType, a1.action.value);
+
+  playAction(s, 1, 0);                                 // green_1: the signal
+  const a2 = decide(viewState(s, 0), undefined, memA);
+  assert.deepEqual(a2.action, { type: 'play', cardIndex: 0 },
+    `pointer 0 — our oldest possibly-playable card: ${a2.reason}`);
 });
 
 // A bare card for hand-built endgame states.

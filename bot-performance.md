@@ -1383,3 +1383,59 @@ rainbowCriticalBlackReverse/35        2 28.98    16   34        0      0        
 rainbowCriticalBlackReverse/35        3 32.42    25   35        3      0           0.38
 rainbowCriticalBlackReverse/35        4 32.00    25   35        5      0           0.54
 ```
+
+## 2.19 — one move, one meaning: an alarm is not a pointer advance
+
+From a real 2-player game, where the bot was ordered by a forced-play signal to
+play its guarded card, misfired, and lost it — while holding a colour-clued card
+that was in fact the playable one.
+
+**The alarm discard was counted as a pointer advance.** The partner discarded
+trash while holding a play — an alarm — and the bot answered it by guarding its
+chop. Guarding the chop is precisely what locks a hand, so on that same turn the
+bot first read the deadlock, armed as receiver, and then counted the discard that
+had armed it as a pointer advance. The partner's next play therefore commanded
+pointer 1 instead of 0: one card too far.
+
+Nothing about that discard was ever an advance, and the sender says so by
+construction — it only advances over a hand that already has **no chop**, and
+the receiver's hand still had one when the discard was made. So the first turn
+we read the deadlock now starts the count at 0 and stops there; only a discard
+made while we were *already* armed moves the pointer.
+
+**The deadlock premise ignored the conventions.** `forcedPlayArmed` declared the
+locked seat unable to play by testing `knownPlayable` — a *provable* play — so a
+hand holding a colour-clued playable card counted as deadlocked. A colour hint is
+an obligation to play, so that seat was never stuck; it now bails on
+`hasPendingPlay`, the same reading everything else uses. (The same
+knownPlayable-for-hasPendingPlay slip 2.18 fixed in the alarm code, in a second
+place.)
+
+A guarded card remains a legal pointer target, and deliberately so: a guard says
+"too dangerous to discard", not "unplayable", and the sender can see the card it
+points at. Replaying the game that turned this up, the fix changes one move in
+74 — the bot plays the colour-clued red 2 the signal was actually pointing at.
+
+Self-play barely moves, as expected for a 2-player-only convention in a rare
+position: at 200 seeds/row (3000 games) 28.719 → 28.728 mean/row, only three
+2-player rows changing at all, fuse-outs 21 → 20.
+
+```
+
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 24.06    19   25       30      0           0.28
+simple/25                             3 24.38    22   25       30      0           0.36
+simple/25                             4 24.24    21   25       32      0           0.56
+rainbow/30                            2 28.14    22   30       18      0           0.30
+rainbow/30                            3 29.46    27   30       32      0           0.26
+rainbow/30                            4 28.92    26   30       18      0           0.46
+rainbowCritical/30                    2 27.50    22   30       12      0           0.46
+rainbowCritical/30                    3 28.42    21   30       19      0           0.40
+rainbowCritical/30                    4 28.04    24   30        9      0           0.58
+rainbowCriticalBlack/35               2 30.18    23   35        3      0           0.58
+rainbowCriticalBlack/35               3 33.12    23   35       14      1           0.38
+rainbowCriticalBlack/35               4 32.00    10   35        9      2           0.58
+rainbowCriticalBlackReverse/35        2 29.12    16   34        0      0           0.44
+rainbowCriticalBlackReverse/35        3 32.42    25   35        3      0           0.38
+rainbowCriticalBlackReverse/35        4 32.00    25   35        5      0           0.54
+```
