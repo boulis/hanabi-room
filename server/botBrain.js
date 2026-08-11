@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.20';
+export const BOT_VERSION = '2.21';
 
 // Thresholds for the free gamble (see gambleChance): better-than-even odds,
 // and never on the last fuse. Both were swept — the score plateau runs from
@@ -871,6 +871,39 @@ function playableAfter(view, color, number, played) {
   return isPlayable(view, color, number);
 }
 
+// --- Which play to make when the conventions oblige several. ---
+// Every candidate is going to be played sooner or later, so the choice is one
+// of ORDER, and what orders it is the teammate: a play that lands the card
+// their hand is waiting on buys a whole turn, and one that lands anything else
+// buys nothing. Counted as cards that become playable *by their own knowledge*
+// — a card they cannot tell is playable is not yet a play to them.
+//
+// Their deduction is not re-run against the new pile (our card landing there
+// can pin one of their cards by copy-counting), so this under-counts rather
+// than over-promises, which is the safe direction for a tie-break.
+function unlockedByPlay(view, partners, played) {
+  let count = 0;
+  for (const { combos } of partners) {
+    for (const cs of combos) {
+      if (cs.length === 0 || knownPlayable(view, cs)) continue; // already theirs to play
+      if (cs.every(([c, n]) => playableAfter(view, c, n, played))) count++;
+    }
+  }
+  return count;
+}
+
+// The same, averaged over what our own card might be — we rarely know. Only its
+// playable identities are weighed: a card the conventions mark for play is one
+// we are asserting is playable, so the worlds where it isn't are not ours to
+// plan around (they cost a fuse whenever we get to them).
+function playUnlockScore(view, partners, combos) {
+  const playable = combos.filter(([c, n]) => isPlayable(view, c, n));
+  if (playable.length === 0) return 0;
+  let sum = 0;
+  for (const identity of playable) sum += unlockedByPlay(view, partners, identity);
+  return sum / playable.length;
+}
+
 // The locked player's pointer set: hand indexes possibly playable by shared
 // knowledge, oldest first, evaluated after the signal play `played`.
 function pointerSet(view, seat, played) {
@@ -1671,11 +1704,19 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   //       ORDER (see commandedPlayCost), and an order we do not mean is worth
   //       less than the turn it costs us to stay quiet.
   const ownPlay = (() => {
+    // Every play the conventions call for, in the order they have always been
+    // taken — provable first, then colour targets oldest-hint-first, then 1s.
+    // That order still decides ties; what can move a candidate up it is landing
+    // the card a teammate's hand is waiting on (see playUnlockScore).
+    const candidates = [];
+    const offer = (i, rank, reason) => {
+      if (!candidates.some((c) => c.index === i)) candidates.push({ index: i, rank, reason });
+    };
     // 1. Play a card we can prove is playable (hint constraints narrowed by
     //    copy-counting over everything we can see).
     for (let i = 0; i < myHand.length; i++) {
       if (knownPlayable(view, myCombos[i]) && !yielded.has(i)) {
-        return { action: { type: 'play', cardIndex: i }, reason: 'known playable' };
+        offer(i, 0, 'known playable');
       }
     }
 
@@ -1690,7 +1731,7 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
     if (conventions.colorHintPlaysNewest) {
       for (const t of mergedColorTargets(myHand, memory, canStillPlay)) {
         if (possiblyPlayable(view, myCombos[t]) && !yielded.has(t)) {
-          return { action: { type: 'play', cardIndex: t }, reason: 'colour hint marks touched card' };
+          offer(t, 1, 'colour hint marks touched card');
         }
       }
     }
@@ -1708,13 +1749,39 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
         const willPlay = onesPlayGate(view, me, ones, myCombos);
         for (const i of ones) {
           if (yielded.has(i)) continue;
-          if (willPlay(i)) {
-            return { action: { type: 'play', cardIndex: i }, reason: 'play all 1s' };
-          }
+          if (willPlay(i)) offer(i, 2, 'play all 1s');
         }
       }
     }
-    return null;
+    if (candidates.length === 0) return null;
+    // Only ever a choice WITHIN a certainty class. A provable play jumped by a
+    // merely-trusted one is a trade of information for tempo, and a losing one:
+    // the certain card lands first, and what it puts on the pile can prove the
+    // trusted card dead before we ever risk it. Measured — reordering across
+    // classes moved fuse-outs 20 -> 27 per 3000 games for no score.
+    const rank = Math.min(...candidates.map((c) => c.rank));
+    const tied = candidates.filter((c) => c.rank === rank);
+    let best = tied[0];
+    let bestScore = -1;
+    if (tied.length > 1) {
+      // One deduction per teammate, reused across candidates: what changes
+      // between them is only which card of ours lands, never their knowledge.
+      const partners = view.players
+        .map((_, seat) => seat)
+        .filter((seat) => seat !== me)
+        .map((seat) => ({ seat, combos: handCombos(view, seat) }));
+      for (const c of tied) {
+        const score = playUnlockScore(view, partners, myCombos[c.index]);
+        if (score > bestScore) {
+          best = c;
+          bestScore = score;
+        }
+      }
+    }
+    return {
+      action: { type: 'play', cardIndex: best.index },
+      reason: bestScore > 0 ? `${best.reason} (opens a play for the table)` : best.reason,
+    };
   })();
   // The partner reads a play as "play yours too", so it is only ours to make
   // when we mean it (the signal above) or when what they would throw at it

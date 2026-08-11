@@ -1503,3 +1503,52 @@ rainbowCriticalBlackReverse/35        2 29.26    20   35        1      0        
 rainbowCriticalBlackReverse/35        3 32.34    25   35        3      0           0.38
 rainbowCriticalBlackReverse/35        4 31.54     8   35        5      1           0.54
 ```
+
+## 2.21 — of several plays, make the one that opens the partner
+
+When the conventions oblige more than one play, every candidate is going to be
+played sooner or later, so the choice is one of ORDER — and what should order it
+is the teammate. A play that lands the card their hand is waiting on buys a
+whole turn; one that lands anything else buys nothing.
+
+From a game: an unequivocal "yellow" hint marked the bot's yellow 4 while an
+older red hint still marked its red 3. Oldest-hint-first took the red 3, which
+opened nothing, when the yellow 4 would have made the partner's card — known to
+them as *either* the yellow 5 or the rainbow 5 — playable on both readings, and
+so playable with certainty.
+
+`playUnlockScore` counts the teammate cards that become playable **by their own
+knowledge** after ours lands: a card they cannot tell is playable is not yet a
+play to them. Our own card's identity is usually unknown to us, so it is
+averaged over the identities it could be, weighing only the playable ones — a
+card the conventions mark for play is one we are asserting is playable. The
+teammate's deduction is not re-run against the new pile, so it under-counts
+rather than over-promises.
+
+**Only ever a choice within a certainty class.** A provable play jumped by a
+merely-trusted one trades information for tempo, and loses: the certain card
+lands first, and what it puts on the pile can prove the trusted card dead before
+we ever risk it. Measured — ranking across classes moved fuse-outs 20 → 27 per
+3000 games for no score. Within classes it is self-play-neutral (28.739 →
+28.735 mean/row at 200 seeds, perfect games level at 969, fuse-outs 20 → 21),
+which is the honest expectation: two bots hint each other into single-candidate
+turns, and it is a human's unequivocal hint that produces the tie worth breaking.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.86    18   25       29      1           0.30
+simple/25                             3 24.44    22   25       31      0           0.34
+simple/25                             4 24.32    21   25       32      0           0.56
+rainbow/30                            2 28.30    22   30       18      0           0.20
+rainbow/30                            3 29.48    27   30       31      0           0.26
+rainbow/30                            4 29.08    27   30       19      0           0.46
+rainbowCritical/30                    2 27.46    22   30       13      1           0.48
+rainbowCritical/30                    3 28.46    21   30       19      0           0.40
+rainbowCritical/30                    4 28.02    24   30       11      0           0.54
+rainbowCriticalBlack/35               2 30.10    24   35        3      1           0.54
+rainbowCriticalBlack/35               3 33.20    28   35       13      1           0.42
+rainbowCriticalBlack/35               4 32.10    10   35       10      2           0.58
+rainbowCriticalBlackReverse/35        2 29.28    20   35        1      0           0.48
+rainbowCriticalBlackReverse/35        3 32.36    25   35        4      0           0.46
+rainbowCriticalBlackReverse/35        4 31.56     8   35        5      1           0.54
+```

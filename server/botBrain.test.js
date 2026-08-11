@@ -1124,6 +1124,33 @@ test('bot: a discard with no chop and no play is not an alarm', () => {
   assert.deepEqual(alarmGuards(viewState(s, 1)), [], 'and the other end reads none');
 });
 
+test('bot: with two plays to choose from, plays the one that opens the partner', () => {
+  // Both cards are colour targets, so both are going to be played; the choice
+  // is one of order, and only the yellow 4 lands the card Ann's hand is waiting
+  // on. Oldest-hint-first would take the red 3 and buy nobody anything.
+  const s = craftedState(
+    ['yellow_1', 'yellow_2', 'yellow_3', 'red_1', 'red_2'],
+    ['red_3', 'yellow_4', 'blue_4', 'green_4', 'white_4'],
+    { next: ['yellow_5', 'white_1', 'white_2', 'white_3', 'green_1'] },
+  );
+  // Ann plays her yellows then her reds, leaving yellow on 3 and red on 2; the
+  // bot spends the turns between pinning the yellow_5 she draws first.
+  playAction(s, 0, 0); hintAction(s, 1, 0, 'number', 5);
+  playAction(s, 0, 0); hintAction(s, 1, 0, 'number', 5);
+  playAction(s, 0, 0); hintAction(s, 1, 0, 'color', 'yellow'); // her yellow_5, now alone
+  playAction(s, 0, 0); hintAction(s, 1, 0, 'number', 5);
+  playAction(s, 0, 0); hintAction(s, 1, 0, 'number', 5);
+  hintAction(s, 0, 1, 'color', 'red');    // older target: the red 3
+  hintAction(s, 1, 0, 'number', 5);
+  hintAction(s, 0, 1, 'color', 'yellow'); // newer target: the yellow 4
+
+  const ann = s.players[0].hand[0];
+  assert.equal(`${ann.color} ${ann.number}`, 'yellow 5', 'Ann is waiting on the yellow 4');
+  const { action, reason } = decide(viewState(s, 1), undefined, {});
+  assert.deepEqual(action, { type: 'play', cardIndex: 1 }, reason);
+  assert.match(reason, /opens a play/, reason);
+});
+
 // A bare card for hand-built endgame states.
 function bareCard(id, color, number) {
   return {
