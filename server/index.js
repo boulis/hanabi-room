@@ -104,6 +104,14 @@ const connections = new Map();
 const REACTION_EMOJI = ['👏', '🤔', '❓', '😱', '❗'];
 const REACTION_THROTTLE_MS = 500;
 
+// Relay one to a room. Resident bots use it too (they hold no connection, so
+// they can't send a react message the ordinary way) — see remindGuards.
+function sendReaction(roomId, playerIndex, emoji) {
+  for (const [ws, conn] of connections) {
+    if (conn.roomId === roomId) send(ws, { type: 'reaction', playerIndex, emoji });
+  }
+}
+
 // How many tags the stats page offers (most-used first) — enough to cover the
 // tags in real use without turning the filter into a wall of chips.
 const STATS_TAG_LIMIT = 20;
@@ -724,11 +732,7 @@ wss.on('connection', async (ws) => {
           const now = Date.now();
           if (now - (conn.lastReactionAt || 0) < REACTION_THROTTLE_MS) break; // drop spam silently
           conn.lastReactionAt = now;
-          for (const [otherWs, otherConn] of connections) {
-            if (otherConn.roomId === room.id) {
-              send(otherWs, { type: 'reaction', playerIndex: idx, emoji: msg.emoji });
-            }
-          }
+          sendReaction(room.id, idx, msg.emoji);
           break;
         }
         default:
@@ -780,7 +784,7 @@ function fillBotScoresInBackground() {
 }
 
 async function main() {
-  initBots(async (roomId) => broadcastRoomAndLobby(roomId));
+  initBots(async (roomId) => broadcastRoomAndLobby(roomId), sendReaction);
   await maybeResumeAtBoot();
 
   server.listen(PORT, HOST, () => {

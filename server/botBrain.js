@@ -1095,15 +1095,7 @@ function findAlarmMove(view, myHand, myCombos, savedCost, conventions = STANDARD
 function recordInferredGuards(view, memory, idx, count) {
   if (!memory) return;
   if (!memory.inferredGuards) memory.inferredGuards = new Set();
-  const hand = view.players[idx].hand;
-  let added = 0;
-  for (let i = 0; i < hand.length && added < count; i++) {
-    const c = hand[i];
-    if (!c.colorClued && !c.numberClued && !c.annotations?.guarded) {
-      memory.inferredGuards.add(c.id);
-      added++;
-    }
-  }
+  for (const id of alarmGuardTargets(view, idx, count)) memory.inferredGuards.add(id);
 }
 
 // Re-apply remembered guards to this turn's view, and forget ids for cards that
@@ -1201,8 +1193,16 @@ export function alarmGuards(view, conventions = STANDARD_CONVENTIONS) {
   }
   if (!anomaly) return [];
   // The discard restored a token, so the alarmer decided with one fewer.
-  const count = view.hintTokens - 1 > 0 ? 2 : 1;
-  const hand = view.players[me].hand;
+  return alarmGuardTargets(view, me, view.hintTokens - 1 > 0 ? 2 : 1);
+}
+
+// The cards an alarm asks a seat to guard: their oldest `count` still-unclued,
+// still-unguarded cards. One definition, read from three sides — the receiver
+// deciding what to mark (alarmGuards), the sender remembering what its alarm
+// will have marked when guards aren't shared (recordInferredGuards), and the
+// driver checking whether a human receiver answered at all (bots.js).
+export function alarmGuardTargets(view, seat, count) {
+  const hand = view.players[seat]?.hand ?? [];
   const ids = [];
   for (let i = 0; i < hand.length && ids.length < count; i++) {
     const c = hand[i];

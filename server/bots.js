@@ -3,7 +3,8 @@
 // view a human client gets (viewFor) — no sockets, no child processes.
 // bot.mjs remains available for running a bot from another machine.
 import {
-  alarmGuards, conventionsFromOptions, decide, defaultBotOptions, sanitizeBotOptions,
+  alarmGuardTargets, alarmGuards, conventionsFromOptions, decide, defaultBotOptions,
+  sanitizeBotOptions,
 } from './botBrain.js';
 import { applyAction, joinRoom, leaveRoom, undoLast, viewFor } from './room.js';
 import { GameError } from './rules.js';
@@ -17,8 +18,12 @@ const BOT_DELAY_MS = Number(process.env.HANABI_BOT_DELAY_MS ?? 1200);
 // requester has time to chain their own undo. Read per use, so a test can
 // widen the window around the moment it wants to exercise.
 const undoGraceMs = () => Number(process.env.HANABI_BOT_UNDO_GRACE_MS ?? 6000);
+// Guard reminder (see remindGuards): the gap between the two ❗ reactions, and
+// how long the bot then holds its turn open for the marks to appear.
+const remindGapMs = () => Number(process.env.HANABI_BOT_REMIND_GAP_MS ?? 2000);
+const remindWaitMs = () => Number(process.env.HANABI_BOT_REMIND_WAIT_MS ?? 12000);
 
-// "<roomId>:<playerId>" -> { roomId, playerId, timer, pending: 'act' | 'undo' | null, graceUntil }
+// "<roomId>:<playerId>" -> { roomId, playerId, timer, pending: 'act' | 'undo' | 'remind' | null, graceUntil }
 //
 // Keyed by BOTH ids: a playerId is unique within a room but not across the
 // server. Resuming a save (or branching one) reuses the ids in its header, so
@@ -31,11 +36,16 @@ const undoGraceMs = () => Number(process.env.HANABI_BOT_UNDO_GRACE_MS ?? 6000);
 const bots = new Map();
 // Set by the transport: async (roomId) => broadcast the room's new state.
 let notify = null;
+// Set by the transport: (roomId, playerIndex, emoji) => relay an ephemeral
+// reaction to the room, the same one a human's react message produces. Bots
+// hold no connection, so they can't send one the ordinary way.
+let react = null;
 
 const seatKey = (roomId, playerId) => `${roomId}:${playerId}`;
 
-export function initBots(notifyFn) {
+export function initBots(notifyFn, reactFn = null) {
   notify = notifyFn;
+  react = reactFn;
 }
 
 export function totalBots() {
@@ -66,7 +76,7 @@ export function addBot(room) {
   player.isBot = true;
   player.botOptions = defaultBotOptions();
   bots.set(seatKey(room.id, player.id), {
-    roomId: room.id, playerId: player.id, timer: null, pending: null, graceUntil: 0,
+    roomId: room.id, playerId: player.id, timer: null, pending: null, graceUntil: 0, awaitingGuards: null,
   });
   return player;
 }
@@ -110,7 +120,7 @@ export function adoptRoomBots(room) {
     p.online = true;
     p.botOptions ??= defaultBotOptions();
     bots.set(seatKey(room.id, p.id), {
-      roomId: room.id, playerId: p.id, timer: null, pending: null, graceUntil: 0,
+      roomId: room.id, playerId: p.id, timer: null, pending: null, graceUntil: 0, awaitingGuards: null,
     });
   }
 }
@@ -171,7 +181,22 @@ export function pokeBots(room) {
 
   const current = room.state.players[room.state.currentPlayer];
   const b = current ? bots.get(seatKey(room.id, current.id)) : undefined;
-  if (!b || b.timer) return;
+  if (!b) return;
+  // Mid-reminder and the marks have appeared: stop waiting and play on. (An
+  // annotate broadcasts like any other action, so this poke is how the bot
+  // hears the answer.)
+  if (b.pending === 'remind' && !guardReminderDue(room, b)) {
+    clearTimeout(b.timer);
+    b.timer = null;
+    b.pending = null;
+    b.awaitingGuards = null;
+  }
+  if (b.timer) return;
+  if (guardReminderDue(room, b)) {
+    b.pending = 'remind';
+    b.timer = setTimeout(() => remindGuards(room, current.id), BOT_DELAY_MS);
+    return;
+  }
   const delay = Math.max(BOT_DELAY_MS, b.graceUntil - Date.now());
   b.pending = 'act';
   b.timer = setTimeout(() => {
@@ -195,12 +220,96 @@ async function botUndo(room, playerId) {
   if (notify) await notify(b.roomId);
 }
 
+// --- Guard reminder ---
+// An alarm discard is only half a signal: it works because the next player
+// answers it by guarding their oldest unclued card(s), which is what moves
+// their chop off the danger. A human can simply forget to click, and the
+// forgotten mark is invisible as a mistake — the bot reads the shared guard
+// flags, sees none, and goes on believing the criticals are still exposed
+// while the human goes on believing they were warned. So when the alarm went
+// unanswered, the bot says so before its next move instead of moving into the
+// misunderstanding: two ❗ reactions two seconds apart, then it holds its turn
+// open long enough for the marks to appear.
+//
+// Only with shareGuarded on. With guards private the bot can't see the answer
+// at all, so there is nothing to detect — it infers the marks instead
+// (inferredGuards in botBrain.js) and nagging would fire on every alarm.
+
+// Called after every bot decision: remember what an alarm we just raised asks
+// of its receiver, so the next turn can check whether they answered.
+function noteAlarm(room, b, view, idx, reason) {
+  if (!reason?.startsWith('ALARM') || !view.shareGuarded) return;
+  const rIdx = (idx + 1) % room.state.players.length;
+  const receiver = room.state.players[rIdx];
+  const seat = room.players.find((p) => p.id === receiver.id);
+  // A bot receiver guards on its own; an absent human can't be reminded, and
+  // waiting on one would just stall the table.
+  if (!seat || seat.isBot || !seat.online) return;
+  // The discard restores a token, so the receiver reads one more than we hold
+  // now — the same arithmetic alarmGuards does from the other side.
+  const ids = alarmGuardTargets(view, rIdx, view.hintTokens > 0 ? 2 : 1);
+  if (ids.length === 0) return;
+  b.awaitingGuards = {
+    playerId: receiver.id,
+    ids,
+    already: new Set(view.players[rIdx].hand.filter((c) => c.annotations?.guarded).map((c) => c.id)),
+  };
+}
+
+// Did the alarm's receiver answer it? Any newly guarded card counts, not just
+// the ones the convention names: a human may reasonably mark a different card
+// (they can see their own hints), and the failure this catches is forgetting
+// entirely. Once every card the alarm pointed at has left the hand there is
+// nothing left to guard — and nothing left to save — so the reminder lapses.
+function guardReminderDue(room, b) {
+  const owed = b.awaitingGuards;
+  if (!owed) return false;
+  const p = room.state?.players.find((pl) => pl.id === owed.playerId);
+  if (!p) return false;
+  if (p.hand.some((c) => c.annotations.guarded && !owed.already.has(c.id))) return false;
+  // A card someone has since clued is off the chop too — the alarm's danger is
+  // handled, just not by a guard mark.
+  return p.hand.some((c) => owed.ids.includes(c.id) && !c.colorClued && !c.numberClued);
+}
+
+function remindGuards(room, playerId) {
+  const b = bots.get(seatKey(room.id, playerId));
+  if (!b) return;
+  b.timer = null;
+  const idx = room.state?.players.findIndex((p) => p.id === playerId) ?? -1;
+  const stillWaiting = room.phase === 'playing' && room.state.status === 'playing'
+    && idx === room.state.currentPlayer && guardReminderDue(room, b);
+  const done = () => {
+    b.timer = null;
+    b.pending = null;
+    // One nag per alarm: if the reminder goes unanswered too, take the turn
+    // rather than hold the table up again on every turn that follows.
+    b.awaitingGuards = null;
+  };
+  if (!stillWaiting) {
+    done();
+    if (room.phase === 'playing' && room.state?.status === 'playing' && idx === room.state.currentPlayer) {
+      pokeBots(room); // reschedule as an ordinary move
+    }
+    return;
+  }
+  react?.(room.id, idx, '❗');
+  b.timer = setTimeout(() => {
+    react?.(room.id, idx, '❗');
+    b.timer = setTimeout(() => {
+      done();
+      botAct(room, playerId).catch((err) => console.error('bot action failed:', err));
+    }, remindWaitMs());
+  }, remindGapMs());
+}
+
 async function botAct(room, playerId) {
   const b = bots.get(seatKey(room.id, playerId));
   if (!b) return;
   if (room.phase !== 'playing' || room.state.status !== 'playing') return;
   const idx = room.state.players.findIndex((p) => p.id === playerId);
   if (idx !== room.state.currentPlayer) return; // stale schedule
+  b.awaitingGuards = null; // whatever the last alarm asked for, this turn settles it
   let view = viewFor(room, playerId);
   try {
     // Per-bot convention options, chosen by whoever created the bot.
@@ -215,6 +324,10 @@ async function botAct(room, playerId) {
     b.memory ??= {};
     const { action, reason } = decide(view, conventions, b.memory);
     await applyAction(room, playerId, action, reason);
+    // Recorded off the pre-action view, which is the right one: our own discard
+    // leaves the receiver's hand untouched, and the token count they'll read is
+    // the one we decided with.
+    noteAlarm(room, b, view, idx, reason);
   } catch (err) {
     console.error(`bot ${playerId} move rejected (${err.message}); using fallback`);
     try {

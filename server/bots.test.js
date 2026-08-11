@@ -8,6 +8,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 // Shrink the human-feeling pauses before the module reads them.
 process.env.HANABI_BOT_DELAY_MS = '10';
 process.env.HANABI_BOT_UNDO_GRACE_MS = '30';
+process.env.HANABI_BOT_REMIND_GAP_MS = '20';
+process.env.HANABI_BOT_REMIND_WAIT_MS = '200';
 const {
   MAX_TOTAL_BOTS,
   addBot,
@@ -334,6 +336,150 @@ test('a human can walk several moves back, alternating requests and own undos', 
     assert.equal(room.state.turn, turn - 4, 'four turns earlier');
     assert.equal(room.state.currentPlayer, 0, 'back on the human');
     resetBots();
+  });
+});
+
+// A 50-card `simple` draw order dealing hands[p][i] round-robin, with the rest
+// of the multiset trailing in a stable order (the same trick botBrain.test.js
+// uses to pin a position).
+function craftedDeck(hands) {
+  const order = [];
+  for (let i = 0; i < 5; i++) for (const hand of hands) order.push(hand[i]);
+  const owed = new Map();
+  for (const color of ['red', 'yellow', 'green', 'blue', 'white']) {
+    for (const n of [1, 1, 1, 2, 2, 3, 3, 4, 4, 5]) {
+      const k = `${color}_${n}`;
+      owed.set(k, (owed.get(k) || 0) + 1);
+    }
+  }
+  for (const k of order) owed.set(k, owed.get(k) - 1);
+  for (const [k, count] of owed) for (let i = 0; i < count; i++) order.push(k);
+  return order;
+}
+
+// Seat a bot (index 0, host) and a human (index 1) on a deck where the bot's
+// next decision is an alarm discard, and run the game up to that point. Guards
+// are shared, so the bot can see whether the human answers.
+async function alarmSetup(reacted) {
+  const room = createRoom('Alarm');
+  const bot = addBot(room);
+  const human = joinRoom(room, { name: 'Ann' });
+  room.options.endRule = 'lax';
+  room.options.shareGuarded = true;
+  room.importedDeck = craftedDeck([
+    ['red_2', 'blue_3', 'white_1', 'green_3', 'yellow_1'], // bot
+    ['red_2', 'blue_3', 'yellow_4', 'green_4', 'white_4'], // human
+  ]);
+  initBots(async () => pokeBots(room), (roomId, playerIndex, emoji) => {
+    reacted.push({ roomId, playerIndex, emoji });
+  });
+  await startGame(room, bot.id, {});
+  // Walk to the position from botBrain.test.js's two-critical alarm: the
+  // human's red_2 and blue_3 are both last copies on different colours and
+  // numbers, so no single hint protects both. Applied directly (no poke), so
+  // the bot doesn't start playing mid-setup.
+  const hint = (from, to, value) => applyAction(room, from, {
+    type: 'hint', toPlayerIndex: to, hintType: 'number', value,
+  });
+  await hint(bot.id, 1, 4);
+  await hint(human.id, 0, 1);
+  await applyAction(room, bot.id, { type: 'discard', cardIndex: 0 });
+  await hint(human.id, 0, 1);
+  await applyAction(room, bot.id, { type: 'discard', cardIndex: 0 });
+  await hint(human.id, 0, 1);
+  assert.equal(room.state.currentPlayer, 0, 'the bot is on turn');
+  return { room, bot, human };
+}
+
+test('alarm: the bot nags an unanswered guard before moving again', async () => {
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    const reacted = [];
+    const { room, human } = await alarmSetup(reacted);
+
+    pokeBots(room);
+    await waitFor(() => room.state.currentPlayer === 1, 'bot took its alarm turn');
+    const alarm = room.state.log.filter((e) => e.type === 'discard').pop();
+    assert.ok(alarm.reasoning?.startsWith('ALARM'), `expected an alarm (got: ${alarm.reasoning})`);
+    assert.deepEqual(reacted, [], 'nothing to nag about yet');
+
+    // The human answers with a move instead of a guard — exactly the slip the
+    // reminder exists for.
+    await applyAction(room, human.id, {
+      type: 'hint', toPlayerIndex: 0, hintType: 'number', value: 1,
+    });
+    pokeBots(room);
+    await waitFor(() => reacted.length === 2, 'two reminder reactions');
+    assert.deepEqual(reacted.map((r) => r.emoji), ['❗', '❗']);
+    assert.deepEqual(reacted.map((r) => r.playerIndex), [0, 0], 'the bot is the one exclaiming');
+    assert.equal(room.state.currentPlayer, 0, 'the bot holds its turn while it waits');
+
+    // Unanswered, it plays on — and does not nag a second time next turn.
+    await waitFor(() => room.state.currentPlayer === 1, 'bot moved after the wait');
+    await applyAction(room, human.id, { type: 'discard', cardIndex: 4 });
+    pokeBots(room);
+    await waitFor(() => room.state.currentPlayer === 1, 'bot took its next turn');
+    assert.equal(reacted.length, 2, 'one nag per alarm');
+    resetBots();
+  });
+});
+
+test('alarm: a human who guards is never nagged', async () => {
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    const reacted = [];
+    const { room, human } = await alarmSetup(reacted);
+    pokeBots(room);
+    await waitFor(() => room.state.currentPlayer === 1, 'bot took its alarm turn');
+
+    // The convention answered properly: guard the oldest unclued cards, then move.
+    const hand = room.state.players[1].hand;
+    for (const c of [hand[0], hand[1]]) {
+      await applyAction(room, human.id, { type: 'annotate', cardId: c.id, guarded: true });
+    }
+    await applyAction(room, human.id, {
+      type: 'hint', toPlayerIndex: 0, hintType: 'number', value: 1,
+    });
+    pokeBots(room);
+    await waitFor(() => room.state.currentPlayer === 1, 'bot took its next turn');
+    assert.deepEqual(reacted, [], 'no reminder when the alarm was answered');
+    resetBots();
+  });
+});
+
+test('alarm: guarding during the nag lets the bot move on at once', async () => {
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    const prevWait = process.env.HANABI_BOT_REMIND_WAIT_MS;
+    process.env.HANABI_BOT_REMIND_WAIT_MS = '5000';
+    try {
+      const reacted = [];
+      const { room, human } = await alarmSetup(reacted);
+      pokeBots(room);
+      await waitFor(() => room.state.currentPlayer === 1, 'bot took its alarm turn');
+      await applyAction(room, human.id, {
+        type: 'hint', toPlayerIndex: 0, hintType: 'number', value: 1,
+      });
+      pokeBots(room);
+      await waitFor(() => reacted.length === 2, 'two reminder reactions');
+
+      // Annotate is turn-free: the human marks their chop mid-nag and the bot
+      // stops waiting out the full 5s.
+      const started = Date.now();
+      await applyAction(room, human.id, {
+        type: 'annotate', cardId: room.state.players[1].hand[0].id, guarded: true,
+      });
+      pokeBots(room);
+      await waitFor(() => room.state.currentPlayer === 1, 'bot moved once guarded', 2000);
+      assert.ok(Date.now() - started < 4000, 'the bot did not sit out the whole wait');
+    } finally {
+      if (prevWait === undefined) delete process.env.HANABI_BOT_REMIND_WAIT_MS;
+      else process.env.HANABI_BOT_REMIND_WAIT_MS = prevWait;
+      resetBots();
+    }
   });
 });
 
