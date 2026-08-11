@@ -1439,3 +1439,67 @@ rainbowCriticalBlackReverse/35        2 29.12    16   34        0      0        
 rainbowCriticalBlackReverse/35        3 32.42    25   35        3      0           0.38
 rainbowCriticalBlackReverse/35        4 32.00    25   35        5      0           0.54
 ```
+
+## 2.20 — a play is an order, and only a choice can be a signal
+
+Three rules, all the same idea: a move only carries a message if its maker
+could have made a different one, and if the other end can see that they could.
+
+**A discard forced on us is not an alarm.** With no chop and no play in hand,
+every option is a bad discard, so throwing the cheapest is damage control — and
+that is exactly how the other end reads it (`alarmGuards`' `senderFree` screen).
+`findAlarmMove` was raising one anyway: the human it asked to guard reported
+"I am not sure what was the alert", which is the whole story. An alarm now
+requires a choice we made — a play declined, or a chop we could have thrown.
+
+**A play by a player who could not have discarded is not an order.** The
+forced-play deadlock now tests the FREE seat's chop too: with every card clued
+or guarded, their turn was play-or-throw-a-keeper, so playing was forced, not
+chosen. Same test on both sides — the free seat reads it as "my play would be
+taken as a command", the locked seat as "their play was one". (It reads guard
+marks, so like the rest of the chop model it wants `shareGuarded`; without it
+the fallback is the plain clue-based chop.)
+
+**And the converse: while the partner is locked, our play IS an order, so an
+order we do not mean is not ours to make.** The bot used to play its colour
+target in that spot and leave the partner to answer a command it never sent —
+which cost a last-copy blue 4 in the game this came from. It now weighs what
+they would throw at the order (the worst card the pointer could reach; a
+playable one costs nothing, they score) against the discard we would make
+instead, and keeps quiet when the order is dearer. Restricted to `hintTokens
+<= 1`, the same starved window the receiver arms in: with tokens in the bank a
+hint gets them out of the deadlock and no one is guessing. Unrestricted it
+withheld plays a bot partner would never have misread, at -0.33/row on the
+2-player rows.
+
+One more, found on the way: the forced "least dangerous" discard now leaves
+guarded cards alone while anything else is throwable. Guarding was our own
+answer to an alarm — the strongest statement the conventions have that a card
+must not be thrown — and `discardRisk` cannot see it, reading a wholly unclued
+guarded card as the safest thing in the hand precisely because nothing is known
+about it.
+
+At 200 seeds/row (3000 games): 28.728 -> 28.739 mean/row, perfect games 963 ->
+969, fuse-outs level at 20. The 3- and 4-player rows carry it (the guarded-card
+exemption, which applies at every count); the 2-player rows pay a little for the
+new silence and come out even.
+
+```
+
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.86    18   25       29      1           0.30
+simple/25                             3 24.40    22   25       30      0           0.36
+simple/25                             4 24.30    21   25       32      0           0.56
+rainbow/30                            2 28.24    22   30       18      0           0.22
+rainbow/30                            3 29.48    27   30       31      0           0.26
+rainbow/30                            4 29.08    27   30       19      0           0.46
+rainbowCritical/30                    2 27.44    22   30       13      1           0.50
+rainbowCritical/30                    3 28.46    21   30       19      0           0.42
+rainbowCritical/30                    4 28.00    24   30       10      0           0.56
+rainbowCriticalBlack/35               2 30.18    24   35        3      1           0.52
+rainbowCriticalBlack/35               3 33.24    28   35       14      1           0.40
+rainbowCriticalBlack/35               4 32.08    10   35        9      2           0.58
+rainbowCriticalBlackReverse/35        2 29.26    20   35        1      0           0.48
+rainbowCriticalBlackReverse/35        3 32.34    25   35        3      0           0.38
+rainbowCriticalBlackReverse/35        4 31.54     8   35        5      1           0.54
+```

@@ -4,7 +4,7 @@ import { createInitialState } from './game.js';
 import { getVariant } from './variants.js';
 import { annotateAction, discardAction, hintAction, playAction } from './rules.js';
 import { viewState } from './view.js';
-import { alarmGuards, colorPlayTargets, decide, endgameHelpfulness, handCombos, knownPlayable, mergedColorTargets, protectiveStall, rememberColorTargets } from './botBrain.js';
+import { STANDARD_CONVENTIONS, alarmGuards, chopIndex, colorPlayTargets, decide, endgameHelpfulness, handCombos, knownPlayable, mergedColorTargets, protectiveStall, rememberColorTargets } from './botBrain.js';
 
 const COLORS = ['red', 'yellow', 'green', 'blue', 'white'];
 const DIST = [1, 1, 1, 2, 2, 3, 3, 4, 4, 5];
@@ -1044,6 +1044,84 @@ test('bot: an alarm discard does not also advance the forced-play pointer', () =
   const a2 = decide(viewState(s, 0), undefined, memA);
   assert.deepEqual(a2.action, { type: 'play', cardIndex: 0 },
     `pointer 0 — our oldest possibly-playable card: ${a2.reason}`);
+});
+
+test('bot: a play is no order when the player could not have discarded', () => {
+  // Whether a play SPOKE depends on the hand that made it: with every card
+  // clued or guarded, that turn was play-or-throw-a-keeper, so playing was
+  // forced rather than chosen and commands nothing.
+  const s = deadlockedPair();
+  s.shareGuarded = true;              // "could have discarded" reads their guards
+  const memA = {};
+  hintAction(s, 0, 1, 'number', 5);   // p0 stalls; down to 0 tokens
+  discardAction(s, 1, 1);             // p1's chop discard
+  const a1 = decide(viewState(s, 0), undefined, memA);
+  assert.equal(memA.fpRole, 'receiver', 'armed while the partner still has a chop');
+  hintAction(s, 0, 1, a1.action.hintType, a1.action.value);
+
+  // p1 answers an alarm of its own, guarding what is left unclued: no chop.
+  for (const c of s.players[1].hand) {
+    if (!c.colorClued && !c.numberClued) annotateAction(s, 1, c.id, { guarded: true });
+  }
+  assert.equal(chopIndex(s.players[1].hand), -1, 'the partner cannot discard by convention');
+  decide(viewState(s, 0), undefined, memA);
+  assert.equal(memA.fpRole, null, 'so nothing it does is a signal');
+});
+
+test('bot: withholds a play that would order the partner into a costly one', () => {
+  // Ann is locked and the bot holds a chop, so the bot's play is an ORDER: she
+  // answers it by playing what the pointer reaches. Her candidates include the
+  // last white 2 — four pile points — against a chop the bot barely values, so
+  // the play is not the bot's to make however good it is for the bot.
+  const s = craftedState(
+    ['yellow_1', 'red_2', 'yellow_2', 'white_2', 'blue_2'],
+    ['green_1', 'white_2', 'red_4', 'blue_4', 'yellow_5'],
+    { next: ['white_4'] },
+  );
+  playAction(s, 0, 0);                 // yellow 1; Ann draws white_4
+  hintAction(s, 1, 0, 'number', 2);    // locks Ann's four 2s
+  hintAction(s, 0, 1, 'number', 5);    // filler (touches yellow_5)
+  discardAction(s, 1, 1);              // white_2 out → Ann's white_2 is the last copy
+  hintAction(s, 0, 1, 'number', 5);
+  hintAction(s, 1, 0, 'number', 4);    // white_4 touched — Ann fully locked
+  hintAction(s, 0, 1, 'number', 5);
+  hintAction(s, 1, 0, 'number', 4);
+  hintAction(s, 0, 1, 'color', 'green'); // a colour target for the bot: not pinned
+  hintAction(s, 1, 0, 'number', 4);
+  hintAction(s, 0, 1, 'color', 'green'); // ...down to 0 tokens, target re-marked
+  assert.equal(chopIndex(s.players[0].hand), -1, 'Ann is locked');
+  assert.ok(chopIndex(s.players[1].hand) >= 0, 'the bot could discard instead');
+
+  const off = decide(viewState(s, 1), { ...STANDARD_CONVENTIONS, forcedPlaySignals: false }, {});
+  assert.deepEqual(off.action, { type: 'play', cardIndex: 0 },
+    `with the convention off it simply plays: ${off.reason}`);
+  const on = decide(viewState(s, 1), undefined, {});
+  assert.equal(on.action.type, 'discard', `with it on the play is withheld: ${on.reason}`);
+});
+
+test('bot: a discard with no chop and no play is not an alarm', () => {
+  // The same critical chop as the alarm test above, but nothing the bot could
+  // have thrown instead: every option was a bad discard, so throwing the
+  // cheapest is damage control, not a message — and unreadable as one at the
+  // other end, which screens exactly this.
+  const s = craftedState(
+    ['green_3', 'yellow_4', 'blue_4', 'white_4', 'red_2'],
+    ['yellow_5', 'red_4', 'blue_4', 'green_4', 'white_2'],
+  );
+  s.shareGuarded = true;            // so the other end can see we had no chop
+  hintAction(s, 0, 1, 'number', 4); // keeps p1's chop on the critical yellow_5
+  hintAction(s, 1, 0, 'number', 3); // touches p0's green_3
+  s.hintTokens = 0;
+  for (const c of s.players[0].hand) {
+    if (!c.colorClued && !c.numberClued) annotateAction(s, 0, c.id, { guarded: true });
+  }
+  assert.equal(chopIndex(s.players[0].hand), -1, 'nothing it could have thrown instead');
+
+  const { action, reason } = decide(viewState(s, 0));
+  assert.equal(action.type, 'discard', reason);
+  assert.ok(!reason.startsWith('ALARM'), `a forced discard is not an alarm: ${reason}`);
+  discardAction(s, 0, action.cardIndex);
+  assert.deepEqual(alarmGuards(viewState(s, 1)), [], 'and the other end reads none');
 });
 
 // A bare card for hand-built endgame states.

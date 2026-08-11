@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.19';
+export const BOT_VERSION = '2.20';
 
 // Thresholds for the free gamble (see gambleChance): better-than-even odds,
 // and never on the last fuse. Both were swept — the score plateau runs from
@@ -886,11 +886,19 @@ function pointerSet(view, seat, played) {
 // possibly-playable card — and the free seat holds a play FULLY determined
 // by shared knowledge (only then can both sides compute the post-play
 // pointer set identically).
-function forcedPlayArmed(view, lockedSeat, freeSeat, conventions = STANDARD_CONVENTIONS) {
-  if (view.players.length !== 2 || view.hintTokens >= 8) return null;
+// The deadlock itself, without asking what the free seat holds: the locked seat
+// cannot conventionally act, and the free seat CAN discard — so a play by the
+// free seat is a choice, and therefore an order.
+function deadlocked(view, lockedSeat, freeSeat, conventions = STANDARD_CONVENTIONS) {
+  if (view.players.length !== 2 || view.hintTokens >= 8) return false;
   const hand = view.players[lockedSeat].hand;
-  if (hand.length === 0 || chopIndex(hand) >= 0) return null;
-  const locked = sharedCombos(view, lockedSeat);
+  if (hand.length === 0 || chopIndex(hand) >= 0) return false;
+  // A play only *means* anything if its maker could have discarded instead.
+  // With no chop of their own — every card clued or guarded — their turn was
+  // play-or-throw-a-keeper, so playing was forced, not chosen, and carries no
+  // order. The same test serves both sides: the free seat reads it as "my play
+  // would be taken as a command", the locked seat as "their play was one".
+  if (chopIndex(view.players[freeSeat].hand) < 0) return false;
   // No deadlock if they are already obliged to play something. "Obliged" is the
   // conventions' reading, not just a provable play: a live colour target is a
   // firm obligation even though it is only *possibly* playable, and a seat that
@@ -899,14 +907,54 @@ function forcedPlayArmed(view, lockedSeat, freeSeat, conventions = STANDARD_CONV
   // colour-clued playable card, and the pointer then commanded a *different*
   // card played — in the game that turned this up, a guarded one, which
   // misfired and was lost.
-  if (hasPendingPlay(view, lockedSeat, conventions)) return null;
-  if (!locked.some((cs) => possiblyPlayable(view, cs))) return null; // nothing to point at
+  if (hasPendingPlay(view, lockedSeat, conventions)) return false;
+  // Nothing to point at.
+  return sharedCombos(view, lockedSeat).some((cs) => possiblyPlayable(view, cs));
+}
+
+function forcedPlayArmed(view, lockedSeat, freeSeat, conventions = STANDARD_CONVENTIONS) {
+  if (!deadlocked(view, lockedSeat, freeSeat, conventions)) return null;
   const free = sharedCombos(view, freeSeat);
   const freePlay = free.findIndex(
     (cs) => cs.length === 1 && isPlayable(view, cs[0][0], cs[0][1]),
   );
   if (freePlay < 0) return null;
   return { freePlay, playedIdentity: free[freePlay][0] };
+}
+
+// What playing right now would cost the PARTNER. While they are deadlocked our
+// play is an order (see deadlocked), which they answer by playing the card the
+// pointer reaches — so a play we do not mean as an order is not ours to make,
+// however good it is for us. Priced as the worst of the cards the pointer could
+// resolve to: we cannot be certain which one they are counting to, so the risk
+// is what to weigh, not the best case. A candidate that really is playable
+// costs nothing — they score. Null when our play orders nothing.
+function commandedPlayCost(view, conventions) {
+  if (!conventions.forcedPlaySignals || view.hintTokens > 1) return null;
+  const me = view.viewerIndex;
+  const other = 1 - me;
+  if (!deadlocked(view, other, me, conventions)) return null;
+  const set = pointerSet(view, other, null);
+  if (set.length === 0) return null; // nothing they would fire at
+  let worst = 0;
+  for (const i of set) {
+    const card = view.players[other].hand[i];
+    if (isPlayable(view, card.color, card.number)) continue;
+    worst = Math.max(worst, discardCost(view, card.color, card.number));
+  }
+  // On the last fuse a commanded misfire ends the game, which costs every point
+  // still on the table — no discard of ours is ever worse than that.
+  if (worst > 0 && view.fuseTokens === 1) return Infinity;
+  return worst;
+}
+
+// The pile points our own alternative costs: the discard we would make instead
+// of playing. Provable trash is free; otherwise it is the chop's risk (we only
+// ask this while deadlocked, which means we have one).
+function ownDiscardCost(view, myCombos) {
+  for (const combos of myCombos) if (knownUseless(view, combos)) return 0;
+  const chop = chopIndex(view.players[view.viewerIndex].hand);
+  return chop >= 0 ? discardRisk(view, myCombos[chop]) : Infinity;
 }
 
 function forcedPlayStep(view, conventions, memory) {
@@ -1046,6 +1094,13 @@ function findAlarmMove(view, myHand, myCombos, savedCost, conventions = STANDARD
   // markers only — never our private memory — which is precisely what the
   // partner can reconstruct.
   const declinedPlay = hasPendingPlay(view, view.viewerIndex, conventions);
+  // An alarm has to be a CHOICE the partner can see we made: either we declined
+  // a play they know we had, or we had an ordinary chop to throw instead. With
+  // neither, every option was a bad discard and throwing the cheapest is damage
+  // control, not a message — which is exactly how the other end reads it
+  // (alarmGuards' senderFree screen), so raising one here is the two sides
+  // drifting: we would ask for guards nobody hears us ask for.
+  if (!declinedPlay && chopIndex(myHand) < 0) return null;
   // 0. The free alarm: a card we can PROVE is worthless costs no pile points
   //    and no fuse to throw, so the forgone play is the entire price — and the
   //    entire signal. It needs that play: without one, throwing trash is the
@@ -1611,49 +1666,64 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   const forced = forcedPlayStep(view, conventions, memory);
   if (forced) return forced;
 
-  // 1. Play a card we can prove is playable (hint constraints narrowed by
-  //    copy-counting over everything we can see).
-  for (let i = 0; i < myHand.length; i++) {
-    if (knownPlayable(view, myCombos[i]) && !yielded.has(i)) {
-      return { action: { type: 'play', cardIndex: i }, reason: 'known playable' };
-    }
-  }
-
-  // 2. Play a pending colour-hint target, oldest hint first — skipping any
-  //    target deduction says can't be playable.
-  // We trust the sender and the convention: the target is theirs to choose, and
-  // they can see the card. Requiring it to be *provably* playable (as the last
-  // fuse used to) breaks that trust — the card sits unplayed while the sender,
-  // who counts it as a pending play, withholds further help, and both sides
-  // stall the game out. A target we can prove unplayable is already skipped by
-  // the slide in colorPlayTargets, so what reaches here is what they asked for.
-  if (conventions.colorHintPlaysNewest) {
-    for (const t of mergedColorTargets(myHand, memory, canStillPlay)) {
-      if (possiblyPlayable(view, myCombos[t]) && !yielded.has(t)) {
-        return { action: { type: 'play', cardIndex: t }, reason: 'colour hint marks touched card' };
+  // 1-2b. The play our own conventions call for, if any. Held back rather than
+  //       returned outright: while the partner is deadlocked, playing is an
+  //       ORDER (see commandedPlayCost), and an order we do not mean is worth
+  //       less than the turn it costs us to stay quiet.
+  const ownPlay = (() => {
+    // 1. Play a card we can prove is playable (hint constraints narrowed by
+    //    copy-counting over everything we can see).
+    for (let i = 0; i < myHand.length; i++) {
+      if (knownPlayable(view, myCombos[i]) && !yielded.has(i)) {
+        return { action: { type: 'play', cardIndex: i }, reason: 'known playable' };
       }
     }
-  }
 
-  // 2b. Play-all-1s: every card touched by a "1" hint is to be played,
-  //     oldest first, while it can still be a playable 1. Reveal exception,
-  //     as with colour hints: once any obligated 1 is pinned to a single
-  //     identity, the 1s read as information (e.g. "that's the dead
-  //     duplicate"), not as a play order.
-  if (conventions.playAllOnes) {
-    // In a reverse-suit variant a "1" that could still be the reversed suit's
-    // own 1 is a keep, not a play — see onesPlayObligations.
-    const ones = onesPlayObligations(view, myHand, myCombos);
-    if (!ones.some((i) => myCombos[i].length === 1)) {
-      const willPlay = onesPlayGate(view, me, ones, myCombos);
-      for (const i of ones) {
-        if (yielded.has(i)) continue;
-        if (willPlay(i)) {
-          return { action: { type: 'play', cardIndex: i }, reason: 'play all 1s' };
+    // 2. Play a pending colour-hint target, oldest hint first — skipping any
+    //    target deduction says can't be playable.
+    // We trust the sender and the convention: the target is theirs to choose, and
+    // they can see the card. Requiring it to be *provably* playable (as the last
+    // fuse used to) breaks that trust — the card sits unplayed while the sender,
+    // who counts it as a pending play, withholds further help, and both sides
+    // stall the game out. A target we can prove unplayable is already skipped by
+    // the slide in colorPlayTargets, so what reaches here is what they asked for.
+    if (conventions.colorHintPlaysNewest) {
+      for (const t of mergedColorTargets(myHand, memory, canStillPlay)) {
+        if (possiblyPlayable(view, myCombos[t]) && !yielded.has(t)) {
+          return { action: { type: 'play', cardIndex: t }, reason: 'colour hint marks touched card' };
         }
       }
     }
-  }
+
+    // 2b. Play-all-1s: every card touched by a "1" hint is to be played,
+    //     oldest first, while it can still be a playable 1. Reveal exception,
+    //     as with colour hints: once any obligated 1 is pinned to a single
+    //     identity, the 1s read as information (e.g. "that's the dead
+    //     duplicate"), not as a play order.
+    if (conventions.playAllOnes) {
+      // In a reverse-suit variant a "1" that could still be the reversed suit's
+      // own 1 is a keep, not a play — see onesPlayObligations.
+      const ones = onesPlayObligations(view, myHand, myCombos);
+      if (!ones.some((i) => myCombos[i].length === 1)) {
+        const willPlay = onesPlayGate(view, me, ones, myCombos);
+        for (const i of ones) {
+          if (yielded.has(i)) continue;
+          if (willPlay(i)) {
+            return { action: { type: 'play', cardIndex: i }, reason: 'play all 1s' };
+          }
+        }
+      }
+    }
+    return null;
+  })();
+  // The partner reads a play as "play yours too", so it is only ours to make
+  // when we mean it (the signal above) or when what they would throw at it
+  // costs no more than the discard we would otherwise make. Staying quiet still
+  // leaves us the better half of the turn: with a token we can hint them out of
+  // the deadlock, and without one our discard hands them one.
+  const commanded = ownPlay ? commandedPlayCost(view, conventions) : null;
+  const silenced = commanded !== null && commanded > ownDiscardCost(view, myCombos);
+  if (ownPlay && !silenced) return ownPlay;
 
   // 3. Final-round case: nothing of our own to play after all, so the save
   //    (deferred at step 0) is back on the table.
@@ -1737,9 +1807,16 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
     // could be critical, and tokens remain, a harmless stall hint is cheaper
     // than gambling a card the team paid hints to protect; a provably safe
     // card is simply discarded (the draw keeps the game moving).
+    // A card we guarded is exempt while anything else is available: guarding it
+    // was our own answer to an alarm — the strongest statement the conventions
+    // have that a card must not be thrown — and discardRisk cannot see that,
+    // reading a wholly unclued guarded card as the safest thing in the hand
+    // precisely because nothing is known about it.
+    const guarded = (i) => !!myHand[i].annotations?.guarded;
+    const throwable = myHand.map((_, i) => i).filter((i) => !guarded(i));
     let forced = 0;
     let forcedRisk = Infinity;
-    for (let i = 0; i < myHand.length; i++) {
+    for (const i of (throwable.length > 0 ? throwable : myHand.map((_, j) => j))) {
       const risk = discardRisk(view, myCombos[i]);
       if (risk < forcedRisk) {
         forced = i;
