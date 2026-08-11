@@ -1319,3 +1319,67 @@ rainbowCriticalBlackReverse/35        2 28.94    16   34        0      0        
 rainbowCriticalBlackReverse/35        3 32.52    26   35        3      0           0.36
 rainbowCriticalBlackReverse/35        4 31.82    25   35        4      0           0.56
 ```
+
+## 2.18 — declining an obliged play is an alarm however cheap the discard
+
+**Receiver.** `alarmGuards` only asked "did they give up a play?" in its
+*chop-discard* branch. A discard of a **touched** card took a different branch,
+which bails out early on two readings that both sound right on their own:
+
+- the thrown card was dead → "routine trash disposal";
+- the discarder had no chop left, every card clued → "forced normality".
+
+Neither survives the discarder holding a play the conventions oblige. Throwing
+known trash costs them *nothing but the forgone play*, which makes it the
+cheapest possible alarm, not the quietest possible move — and a hand with no
+chop at all is precisely a hand that can't raise an alarm any other way.
+
+Seen in a real 2-player game (seed 2012633385, `rainbowCriticalBlackReverse`):
+the human held `green4ᶜ | black2ⁿ | yellow2ⁿ | white5ᶜⁿ | white2ᶜ` — every card
+clued, `white2` a live colour target on a white pile at 1 — and discarded the
+`black2`, dead since both `black3`s were gone. The bot read trash disposal,
+guarded nothing, and discarded its own chop: the `rainbow5`, unreplaceable.
+
+The `hasPendingPlay` test is hoisted above the touched-discard screens, so it
+now covers every discard rather than only the chop.
+
+**Sender.** The same fact makes a new alarm available, and it is the safest one
+there is: throw a card we can *prove* is worthless while holding an obliged
+play. It loses no pile points and no fuse — the price is one turn of tempo —
+where the previous cheapest alarm burnt a genuinely useful card, and the one
+after that gambled an unknown chop. So it goes first in `findAlarmMove`, gated
+on the same `hasPendingPlay` call the receiver reads it with (without that play
+the discard is the most ordinary move in the game and says nothing). It prefers
+an *untouched* trash card, which no partner can misread as a yield — that
+reading is only ever applied to a touched discard.
+
+**Nagging.** The guard reminder in the driver (`bots.js`) keys off the
+decision's reason, so it covers the new alarm without a change — which is what
+it most needs: a bot throwing a card it has proved worthless is, on the table,
+the most routine move in the game, so it is the easiest alarm of all for a human
+to sit through without answering.
+
+At 200 seeds/row (3000 games) the pair is worth **+0.059 mean/row**, 28.660 →
+28.719, with 14 of 15 rows up or level and perfect games 929 → 963. Fuse-outs
+18 → 21: alarms now fire in positions that previously had none available, and a
+guarded partner plays on rather than discarding. The larger part of the value is
+with a human partner, which self-play cannot measure at all.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 24.06    19   25       30      0           0.28
+simple/25                             3 24.38    22   25       30      0           0.36
+simple/25                             4 24.24    21   25       32      0           0.56
+rainbow/30                            2 28.06    20   30       18      0           0.28
+rainbow/30                            3 29.46    27   30       32      0           0.26
+rainbow/30                            4 28.92    26   30       18      0           0.46
+rainbowCritical/30                    2 27.50    22   30       12      0           0.46
+rainbowCritical/30                    3 28.42    21   30       19      0           0.40
+rainbowCritical/30                    4 28.04    24   30        9      0           0.58
+rainbowCriticalBlack/35               2 30.18    23   35        3      0           0.58
+rainbowCriticalBlack/35               3 33.12    23   35       14      1           0.38
+rainbowCriticalBlack/35               4 32.00    10   35        9      2           0.58
+rainbowCriticalBlackReverse/35        2 28.98    16   34        0      0           0.46
+rainbowCriticalBlackReverse/35        3 32.42    25   35        3      0           0.38
+rainbowCriticalBlackReverse/35        4 32.00    25   35        5      0           0.54
+```

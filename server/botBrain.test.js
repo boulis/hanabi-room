@@ -761,6 +761,32 @@ test('bot: alarms with a useful touched discard when a critical chop needs savin
   assert.ok(reason.startsWith('ALARM'), reason);
 });
 
+test('bot: alarms by throwing trash rather than a useful card when it has a play', () => {
+  // The cheapest alarm of all: the thrown card is provably dead, so the only
+  // price is the play given up — which is the whole signal. Preferred over
+  // burning the useful touched card the alarm above settles for.
+  const s = craftedState(
+    ['red_1', 'yellow_5', 'blue_4', 'green_4', 'white_4'],
+    ['red_2', 'red_2', 'blue_1', 'white_3', 'green_2'],
+    { next: ['green_5', 'yellow_1'] },
+  );
+  playAction(s, 0, 0);                  // red 1
+  playAction(s, 1, 0);                  // red 2 → the Bot's twin is dead
+  hintAction(s, 0, 1, 'number', 2);     // pin the number first...
+  hintAction(s, 1, 0, 'number', 4);     // stall
+  hintAction(s, 0, 1, 'color', 'red');  // ...then the colour: provably dead, so no target
+  hintAction(s, 1, 0, 'number', 4);     // stall
+  hintAction(s, 0, 1, 'color', 'blue'); // a live target: blue 1, playable
+  s.hintTokens = 0;                     // no way to hint Ann's critical yellow_5 chop
+  const { action, reason } = decide(viewState(s, 1));
+  assert.deepEqual(action, { type: 'discard', cardIndex: 0 }, reason);
+  assert.match(reason, /^ALARM: discarding trash/, reason);
+  // ...and the other end reads it: the same forgone play the sender priced in.
+  discardAction(s, 1, action.cardIndex);
+  const hand = s.players[0].hand;
+  assert.deepEqual(alarmGuards(viewState(s, 0)), [hand[0].id], 'Ann guards her critical chop');
+});
+
 test('bot: reads an alarm and guards — two cards when the alarmer had tokens', () => {
   const s = craftedState(
     ['yellow_4', 'blue_3', 'green_2', 'white_2', 'red_4'],
@@ -802,6 +828,37 @@ test('bot: a routine chop discard triggers no guards', () => {
   hintAction(s, 1, 0, 'number', 4);
   discardAction(s, 0, 1); // plain chop discard (index 0 is "4"-clued), nothing anomalous
   assert.deepEqual(alarmGuards(viewState(s, 1)), []);
+});
+
+test('bot: throwing known trash instead of an obliged play raises the alarm', () => {
+  // The cheapest alarm there is: the discarded card is provably dead, so it
+  // costs the sender nothing but the play they gave up — which is exactly what
+  // makes it deliberate. Read as routine trash disposal, the partner discarded
+  // its own critical chop instead of guarding it.
+  const build = (lastHint) => {
+    const s = craftedState(
+      ['red_1', 'red_2', 'yellow_1', 'green_4', 'white_4'],
+      ['red_2', 'blue_3', 'green_2', 'blue_4', 'white_3'],
+      { next: ['green_5'] },
+    );
+    playAction(s, 0, 0);                  // red 1
+    playAction(s, 1, 0);                  // red 2 → Ann's own red 2 is now dead
+    hintAction(s, 0, 1, 'number', 3);     // stall
+    hintAction(s, 1, 0, 'color', 'red');  // ...
+    hintAction(s, 0, 1, 'number', 4);     // stall
+    hintAction(s, 1, 0, 'number', 2);     // ...pinned red 2: provably dead, so no target
+    hintAction(s, 0, 1, 'color', 'blue'); // stall
+    lastHint(s);
+    discardAction(s, 0, 0);               // throw the dead red 2
+    return s;
+  };
+  const withPlay = build((s) => hintAction(s, 1, 0, 'color', 'yellow')); // target: yellow 1
+  const guards = alarmGuards(viewState(withPlay, 1));
+  assert.ok(guards.length > 0, 'the forgone colour target makes the trash discard an alarm');
+  // Control: same discard with nothing to play is exactly the routine disposal
+  // the touched-discard screen is there to ignore.
+  const noPlay = build((s) => hintAction(s, 1, 0, 'number', 4)); // a keep hint, no obligation
+  assert.deepEqual(alarmGuards(viewState(noPlay, 1)), [], 'trash disposal alone is not a signal');
 });
 
 test('bot: a "1" hint means play every touched 1 that can still be playable', () => {

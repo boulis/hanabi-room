@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.17';
+export const BOT_VERSION = '2.18';
 
 // Thresholds for the free gamble (see gambleChance): better-than-even odds,
 // and never on the last fuse. Both were swept — the score plateau runs from
@@ -1014,8 +1014,9 @@ function expectedDiscardCost(view, combos) {
 // tells the next player something is amiss, used when hints can't cover the
 // danger (no tokens at all, or one hint can't protect two endangered cards).
 // Ordered safest first:
-//   1. discard a touched card that is provably not critical but still useful
-//      (discarding provable trash reads as routine, so it must be useful);
+//   0. discard provable trash while holding an obvious play — costs nothing at
+//      all, so it is taken whenever both halves are in hand;
+//   1. discard a touched card that is provably not critical but still useful;
 //   2. discard the chop while holding an obvious play — the forgone play is
 //      the anomaly;
 //   3. discard PAST the chop;
@@ -1024,6 +1025,27 @@ function expectedDiscardCost(view, combos) {
 function findAlarmMove(view, myHand, myCombos, savedCost, conventions = STANDARD_CONVENTIONS) {
   if (view.hintTokens >= 8) return null; // discarding is illegal right now
   const touched = (c) => c.colorClued || c.numberClued;
+  // Exactly the condition alarmGuards uses to *read* every alarm below, so
+  // emission and detection can never disagree about what counts as a forgone
+  // play. A colour hint is an obligation to play, so declining one speaks just
+  // as loudly as declining a known-playable card. hasPendingPlay reads live
+  // markers only — never our private memory — which is precisely what the
+  // partner can reconstruct.
+  const declinedPlay = hasPendingPlay(view, view.viewerIndex, conventions);
+  // 0. The free alarm: a card we can PROVE is worthless costs no pile points
+  //    and no fuse to throw, so the forgone play is the entire price — and the
+  //    entire signal. It needs that play: without one, throwing trash is the
+  //    most ordinary move in the game and says nothing at all. Prefer an
+  //    untouched one, which no partner can misread as a yield (that reading is
+  //    only ever applied to a touched discard, see alarmGuards).
+  if (declinedPlay) {
+    const trash = [];
+    for (let i = 0; i < myHand.length; i++) if (knownUseless(view, myCombos[i])) trash.push(i);
+    const pick = trash.find((i) => !touched(myHand[i])) ?? trash[0];
+    if (pick != null) {
+      return { action: { type: 'discard', cardIndex: pick }, reason: 'ALARM: discarding trash instead of an obvious play' };
+    }
+  }
   for (let i = 0; i < myHand.length; i++) {
     if (!touched(myHand[i]) || knownUseless(view, myCombos[i]) || knownPlayable(view, myCombos[i])) continue;
     if (myCombos[i].some(([c, n]) => identityCritical(view, c, n))) continue;
@@ -1043,15 +1065,12 @@ function findAlarmMove(view, myHand, myCombos, savedCost, conventions = STANDARD
   const chop = chopIndex(myHand);
   const late = view.deckSize <= 10;
   const worthIt = (i) => savedCost >= 2 || (late && savedCost > expectedDiscardCost(view, myCombos[i]));
-  // Exactly the condition alarmGuards uses to *read* this signal, so emission
-  // and detection can never disagree about what counts as a forgone play. A
-  // colour hint is an obligation to play, so declining one to discard the chop
-  // speaks just as loudly as declining a known-playable card — and it costs no
-  // more: the chop is untouched, so throwing it consumes no hint markers and
-  // the target stays in hand (memory keeps it across a discard) to be played
-  // next turn. hasPendingPlay reads live markers only — never our private
-  // memory — which is precisely what the partner can reconstruct.
-  if (chop >= 0 && hasPendingPlay(view, view.viewerIndex, conventions) && worthIt(chop)) {
+  // Reached only when we hold no trash to throw instead (alarm 0). It costs no
+  // more than that one: the chop is untouched, so throwing it consumes no hint
+  // markers and the play target stays in hand (memory keeps it across a
+  // discard) to be played next turn — but the chop is an UNKNOWN card, so what
+  // it might have been has to be priced in.
+  if (chop >= 0 && declinedPlay && worthIt(chop)) {
     return { action: { type: 'discard', cardIndex: chop }, reason: 'ALARM: discarding instead of an obvious play' };
   }
   if (chop >= 0) {
@@ -1151,8 +1170,19 @@ export function alarmGuards(view, conventions = STANDARD_CONVENTIONS) {
       if (myCombos[i].some(([c, n]) => c === e.card.color && n === e.card.number)) return [];
     }
   }
-  let anomaly = false;
-  if (e.wasTouched) {
+  // Discarding at all while holding a play the conventions oblige is deliberate,
+  // whatever was thrown: the tempo was given up on purpose. This is the
+  // receiver's own reading, not just a provable play — a live colour-hint target
+  // is a firm obligation even though it is only *possibly* playable — and it is
+  // the same hasPendingPlay call the sender makes, so the two ends can't drift.
+  // It comes FIRST because the touched-discard screens below read "the card was
+  // dead" and "they had no chop left" as routine or forced, and neither is
+  // routine when a play was there to be made: throwing known trash costs the
+  // discarder nothing but the forgone play, which makes it the cheapest alarm
+  // there is, not the quietest move there is.
+  const declinedPlay = hasPendingPlay(view, e.playerIndex, conventions);
+  let anomaly = declinedPlay;
+  if (!declinedPlay && e.wasTouched) {
     // A deliberate touched-discard alarm burns a USEFUL card — if the card
     // was actually dead, this was routine trash disposal (the discarder's
     // elimination can outrun what we can reconstruct).
@@ -1179,17 +1209,8 @@ export function alarmGuards(view, conventions = STANDARD_CONVENTIONS) {
       }
     }
     anomaly = !(combos.length > 0 && combos.every(([c, num]) => isUseless(view, c, num)));
-  } else if (e.chopIndex != null && e.chopIndex >= 0 && e.cardIndex !== e.chopIndex) {
+  } else if (!declinedPlay && e.chopIndex != null && e.chopIndex >= 0 && e.cardIndex !== e.chopIndex) {
     anomaly = true; // discarded past the chop
-  } else {
-    // A normal-looking chop discard while holding a play the conventions say
-    // they should have made. "A play" is the receiver's own reading, not just a
-    // provable one: a live colour-hint target is a firm obligation even though
-    // it is only *possibly* playable, so leaving it unplayed to discard the chop
-    // is every bit as deliberate as forgoing a known-playable card. Sharing
-    // hasPendingPlay keeps this identical to what the discarder would have
-    // computed for themselves.
-    anomaly = hasPendingPlay(view, e.playerIndex, conventions);
   }
   if (!anomaly) return [];
   // The discard restored a token, so the alarmer decided with one fewer.

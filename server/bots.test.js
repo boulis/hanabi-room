@@ -342,9 +342,10 @@ test('a human can walk several moves back, alternating requests and own undos', 
 // A 50-card `simple` draw order dealing hands[p][i] round-robin, with the rest
 // of the multiset trailing in a stable order (the same trick botBrain.test.js
 // uses to pin a position).
-function craftedDeck(hands) {
+function craftedDeck(hands, next = []) {
   const order = [];
   for (let i = 0; i < 5; i++) for (const hand of hands) order.push(hand[i]);
+  order.push(...next);
   const owed = new Map();
   for (const color of ['red', 'yellow', 'green', 'blue', 'white']) {
     for (const n of [1, 1, 1, 2, 2, 3, 3, 4, 4, 5]) {
@@ -480,6 +481,61 @@ test('alarm: guarding during the nag lets the bot move on at once', async () => 
       else process.env.HANABI_BOT_REMIND_WAIT_MS = prevWait;
       resetBots();
     }
+  });
+});
+
+test('alarm: the free trash alarm is nagged like any other', async () => {
+  // The cheapest alarm — throwing a provably dead card while holding a play —
+  // is also the easiest for a human to sit through: on the table it looks like
+  // the most routine move in the game. So the reminder has to cover it, which
+  // it does by keying off the reason rather than the kind of card thrown.
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    const reacted = [];
+    const room = createRoom('Trash alarm');
+    const bot = addBot(room);
+    const human = joinRoom(room, { name: 'Ann' });
+    room.options.endRule = 'lax';
+    room.options.shareGuarded = true;
+    room.importedDeck = craftedDeck([
+      ['red_1', 'red_2', 'blue_1', 'white_3', 'green_2'], // bot
+      ['red_2', 'yellow_5', 'blue_4', 'green_4', 'white_4'], // human
+    ], ['green_5', 'yellow_1']);
+    initBots(async () => pokeBots(room), (roomId, playerIndex, emoji) => {
+      reacted.push({ roomId, playerIndex, emoji });
+    });
+    await startGame(room, bot.id, {});
+    // Applied directly (no poke) so the bot doesn't start playing mid-setup:
+    // both red 1 and one red 2 go down, leaving the bot's own red 2 dead, and
+    // Ann pins it (number, then colour — so it slides out of the play targets)
+    // before clueing the blue 1 the bot is then obliged to play.
+    const hint = (from, to, hintType, value) => applyAction(room, from, {
+      type: 'hint', toPlayerIndex: to, hintType, value,
+    });
+    await applyAction(room, bot.id, { type: 'play', cardIndex: 0 });
+    await applyAction(room, human.id, { type: 'play', cardIndex: 0 });
+    await hint(bot.id, 1, 'number', 4);
+    await hint(human.id, 0, 'number', 2);
+    await hint(bot.id, 1, 'number', 4);
+    await hint(human.id, 0, 'color', 'red');
+    await hint(bot.id, 1, 'number', 4);
+    await hint(human.id, 0, 'color', 'blue');
+    room.state.hintTokens = 0; // no way to hint Ann's critical yellow_5 chop
+    assert.equal(room.state.currentPlayer, 0, 'the bot is on turn');
+
+    pokeBots(room);
+    await waitFor(() => room.state.currentPlayer === 1, 'bot took its alarm turn');
+    const alarm = room.state.log.filter((e) => e.type === 'discard').pop();
+    assert.match(alarm.reasoning ?? '', /^ALARM: discarding trash/, alarm.reasoning);
+
+    // Ann moves on without guarding — the slip the reminder exists for.
+    await hint(human.id, 0, 'number', 2);
+    pokeBots(room);
+    await waitFor(() => reacted.length === 2, 'two reminder reactions');
+    assert.deepEqual(reacted.map((r) => r.emoji), ['❗', '❗']);
+    assert.deepEqual(reacted.map((r) => r.playerIndex), [0, 0], 'the bot is the one exclaiming');
+    resetBots();
   });
 });
 
