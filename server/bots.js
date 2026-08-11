@@ -149,21 +149,37 @@ export function resetBots() {
 export function pokeBots(room) {
   if (!room || room.phase !== 'playing' || room.state?.status !== 'playing') return;
 
+  // A nag belongs to the turn it was raised on. When an undo rolls that turn
+  // away, drop the pending chain now instead of letting it sit out its 12s hold
+  // — otherwise a turn that comes back round mid-hold gets played rather than
+  // re-nagged. The alarm stays armed: it is still unanswered, and the move it
+  // warned about is being replayed.
+  const onTurnId = room.state.players[room.state.currentPlayer]?.id;
+  for (const b of bots.values()) {
+    if (b.roomId !== room.id || b.pending !== 'remind' || b.playerId === onTurnId) continue;
+    clearTimeout(b.timer);
+    b.timer = null;
+    b.pending = null;
+  }
+
   // A human requested an undo and the most recent action is a bot's: the bot
   // obliges. (Without this, a bot's action on top of the stack would block
   // the previous human from ever undoing their own move.)
   const top = room.undoStack[room.undoStack.length - 1];
   if (top && bots.has(seatKey(room.id, top.playerId)) && room.undoRequests.size > 0) {
     const b = bots.get(seatKey(room.id, top.playerId));
-    // A queued action must not swallow the request. Honouring an undo puts the
+    // A queued task must not swallow the request. Honouring an undo puts the
     // bot back on turn, so the very next poke queues its replacement move (after
     // the grace pause) — and a request to walk one move further back arrives
     // while that timer is pending. Refusing to schedule then left the request
     // hanging for good: when the queued action finally fired it found the turn
     // rolled away, returned as a stale schedule, and nothing poked again. So an
-    // undo request preempts a queued action; going back is always what the
-    // player asked for most recently.
-    if (b.pending === 'act' && b.timer) {
+    // undo request preempts whatever is queued; going back is always what the
+    // player asked for most recently. That includes a nag in flight (which held
+    // the request for its full 14 seconds and then stranded it the same way) —
+    // asking about guards is moot on a turn we are about to roll back, and the
+    // alarm stays armed for when it comes round again.
+    if (b.timer && b.pending !== 'undo') {
       clearTimeout(b.timer);
       b.timer = null;
       b.pending = null;
@@ -214,6 +230,11 @@ async function botUndo(room, playerId) {
     return;
   }
   await undoLast(room, playerId);
+  // Taking our move back unmakes whatever it asked for. An armed alarm always
+  // refers to our most recent action — noteAlarm sets it as we act, botAct
+  // clears it as we act again — which is precisely the move being undone here,
+  // so the guards it asked for are no longer owed and must not be nagged about.
+  b.awaitingGuards = null;
   // It's the bot's turn again now; give the requester room to chain their
   // own undo before the bot re-takes (likely the same) action.
   b.graceUntil = Date.now() + undoGraceMs();
@@ -277,27 +298,40 @@ function remindGuards(room, playerId) {
   if (!b) return;
   b.timer = null;
   const idx = room.state?.players.findIndex((p) => p.id === playerId) ?? -1;
-  const stillWaiting = room.phase === 'playing' && room.state.status === 'playing'
-    && idx === room.state.currentPlayer && guardReminderDue(room, b);
-  const done = () => {
-    b.timer = null;
-    b.pending = null;
-    // One nag per alarm: if the reminder goes unanswered too, take the turn
-    // rather than hold the table up again on every turn that follows.
-    b.awaitingGuards = null;
-  };
-  if (!stillWaiting) {
-    done();
-    if (room.phase === 'playing' && room.state?.status === 'playing' && idx === room.state.currentPlayer) {
+  const onTurn = () => room.phase === 'playing' && room.state?.status === 'playing'
+    && idx === room.state.currentPlayer;
+  // The turn rolled away under us: an undo put the receiver back on the very
+  // move we are nagging about. Drop the nag — exclaiming out of turn is noise —
+  // but KEEP the alarm armed. It is still unanswered, and the turn that was
+  // going to settle it is being replayed, so the reminder is owed again. (Left
+  // to `settle`, an undo mid-nag silently spent the alarm and the replayed turn
+  // went unwarned, which is exactly the mistake the reminder exists to catch.)
+  const abandon = () => { b.timer = null; b.pending = null; };
+  // Answered, or the turn taken: nothing more is owed for this alarm.
+  const settle = () => { b.timer = null; b.pending = null; b.awaitingGuards = null; };
+  // Re-checked before each step, since 2s + 12s is plenty of time for the
+  // guards to appear or for the table to move under us.
+  const step = () => {
+    if (!onTurn()) { abandon(); return false; }
+    if (!guardReminderDue(room, b)) {
+      settle();
       pokeBots(room); // reschedule as an ordinary move
+      return false;
     }
-    return;
-  }
+    return true;
+  };
+  if (!step()) return;
   react?.(room.id, idx, '❗');
   b.timer = setTimeout(() => {
+    b.timer = null;
+    if (!step()) return;
     react?.(room.id, idx, '❗');
     b.timer = setTimeout(() => {
-      done();
+      // One nag per turn: unanswered, take the turn rather than hold the table
+      // up again. botAct settles the alarm — but only once it is really our
+      // move, so a turn rolled away in the meantime keeps it armed.
+      b.timer = null;
+      b.pending = null;
       botAct(room, playerId).catch((err) => console.error('bot action failed:', err));
     }, remindWaitMs());
   }, remindGapMs());

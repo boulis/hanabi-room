@@ -484,6 +484,82 @@ test('alarm: guarding during the nag lets the bot move on at once', async () => 
   });
 });
 
+test('alarm: an undo mid-nag replays the turn, and the nag with it', async () => {
+  // Taking the move back puts the human on the very turn they were warned
+  // about. The alarm is still unanswered, so the reminder is owed again — it
+  // used to be spent by the undo and the replayed turn went unwarned.
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    const prevWait = process.env.HANABI_BOT_REMIND_WAIT_MS;
+    process.env.HANABI_BOT_REMIND_WAIT_MS = '5000';
+    try {
+      const reacted = [];
+      const { room, human } = await alarmSetup(reacted);
+      pokeBots(room);
+      await waitFor(() => room.state.currentPlayer === 1, 'bot took its alarm turn');
+      const nagged = () => applyAction(room, human.id, {
+        type: 'hint', toPlayerIndex: 0, hintType: 'number', value: 1,
+      });
+
+      await nagged(); // moving on without guarding
+      pokeBots(room);
+      await waitFor(() => reacted.length === 2, 'nagged once');
+
+      await undoLast(room, human.id); // ...taken back mid-nag
+      pokeBots(room);
+      assert.equal(room.state.currentPlayer, 1, 'the human is on the move again');
+      await nagged(); // and made again, still without guarding
+      pokeBots(room);
+      await waitFor(() => reacted.length === 4, 'nagged again on the replayed turn');
+      assert.deepEqual(reacted.map((r) => r.emoji), ['❗', '❗', '❗', '❗']);
+    } finally {
+      if (prevWait === undefined) delete process.env.HANABI_BOT_REMIND_WAIT_MS;
+      else process.env.HANABI_BOT_REMIND_WAIT_MS = prevWait;
+      resetBots();
+    }
+  });
+});
+
+test('alarm: an undo request mid-nag is honoured, not held for the whole nag', async () => {
+  // The nag holds the bot's turn open for 12s. A request to undo the bot's
+  // alarm arriving in that window used to be dropped outright — pokeBots would
+  // not schedule past the pending timer, and when it fired the turn had rolled
+  // away, so nothing rescheduled and the request hung until some other
+  // broadcast happened along (9 minutes, in the game that turned this up).
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    const prevWait = process.env.HANABI_BOT_REMIND_WAIT_MS;
+    process.env.HANABI_BOT_REMIND_WAIT_MS = '5000';
+    try {
+      const reacted = [];
+      const { room, human } = await alarmSetup(reacted);
+      pokeBots(room);
+      await waitFor(() => room.state.currentPlayer === 1, 'bot took its alarm turn');
+      const alarmTurn = room.state.turn;
+      await applyAction(room, human.id, {
+        type: 'hint', toPlayerIndex: 0, hintType: 'number', value: 1,
+      });
+      pokeBots(room);
+      await waitFor(() => reacted.length === 2, 'nagged, and now holding its turn');
+
+      // Ann walks back: her own move first, then the bot's alarm behind it.
+      await undoLast(room, human.id);
+      assert.equal(room.undoStack[room.undoStack.length - 1].playerId, room.players[0].id,
+        'the bot alarm is on top of the stack');
+      requestUndo(room, human.id);
+      pokeBots(room);
+      await waitFor(() => room.state.turn === alarmTurn - 1, 'bot undid its alarm');
+      assert.equal(room.undoRequests.size, 0, 'request consumed');
+    } finally {
+      if (prevWait === undefined) delete process.env.HANABI_BOT_REMIND_WAIT_MS;
+      else process.env.HANABI_BOT_REMIND_WAIT_MS = prevWait;
+      resetBots();
+    }
+  });
+});
+
 test('alarm: the free trash alarm is nagged like any other', async () => {
   // The cheapest alarm — throwing a provably dead card while holding a play —
   // is also the easiest for a human to sit through: on the table it looks like
