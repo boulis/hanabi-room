@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.21';
+export const BOT_VERSION = '2.22';
 
 // Thresholds for the free gamble (see gambleChance): better-than-even odds,
 // and never on the last fuse. Both were swept — the score plateau runs from
@@ -635,9 +635,15 @@ function afterNumberHint(hand, value) {
 // Would this player, following the conventions, already play something on
 // their own? (Known-playable card, a live colour-hint target, or a 1s
 // obligation that can still be playable.)
-function hasPendingPlay(view, seat, conventions = STANDARD_CONVENTIONS) {
+// `reader` asks the question from another seat's chair: deduce `seat`'s hand
+// WITHOUT counting the reader's own cards, which they cannot see. Used when a
+// pending play has to be one both ends can prove — a signal read off knowledge
+// only the sender holds is no signal at all (see findAlarmMove).
+function hasPendingPlay(view, seat, conventions = STANDARD_CONVENTIONS, reader = null) {
   const hand = view.players[seat].hand;
-  const combos = handCombos(view, seat);
+  const combos = reader == null || reader === seat
+    ? handCombos(view, seat)
+    : combosFor(view, hand, [seat, reader]);
   if (combos.some((cs) => knownPlayable(view, cs))) return true;
   if (conventions.playAllOnes) {
     const ones = onesPlayObligations(view, hand, combos);
@@ -1126,7 +1132,15 @@ function findAlarmMove(view, myHand, myCombos, savedCost, conventions = STANDARD
   // as loudly as declining a known-playable card. hasPendingPlay reads live
   // markers only — never our private memory — which is precisely what the
   // partner can reconstruct.
-  const declinedPlay = hasPendingPlay(view, view.viewerIndex, conventions);
+  //
+  // And it is asked from THEIR chair, not ours: our own deduction counts the
+  // cards we can see in their hand, so a pair of "4"s that only we can narrow
+  // to green-or-black reads to us as a certain play and to them as nothing at
+  // all. Declining a play they cannot prove we had is not a signal, it is a
+  // discard — and they would answer it with a blank look, which is exactly what
+  // happened in the game this came from.
+  const audience = (view.viewerIndex + 1) % view.players.length;
+  const declinedPlay = hasPendingPlay(view, view.viewerIndex, conventions, audience);
   // An alarm has to be a CHOICE the partner can see we made: either we declined
   // a play they know we had, or we had an ordinary chop to throw instead. With
   // neither, every option was a bad discard and throwing the cheapest is damage
@@ -1148,10 +1162,23 @@ function findAlarmMove(view, myHand, myCombos, savedCost, conventions = STANDARD
       return { action: { type: 'discard', cardIndex: pick }, reason: 'ALARM: discarding trash instead of an obvious play' };
     }
   }
-  for (let i = 0; i < myHand.length; i++) {
-    if (!touched(myHand[i]) || knownUseless(view, myCombos[i]) || knownPlayable(view, myCombos[i])) continue;
-    if (myCombos[i].some(([c, n]) => identityCritical(view, c, n))) continue;
-    return { action: { type: 'discard', cardIndex: i }, reason: 'ALARM: discarding a useful touched card' };
+  // A touched card is only a signal if it is worth something WHATEVER it turns
+  // out to be. `!knownUseless` says merely "it might be useful" — and when it
+  // lands in the discard pile dead, the partner sees trash disposal, which is
+  // exactly what their screen calls it. Requiring every candidate to still be
+  // wanted makes the card they actually see match the message we meant.
+  const provablyUseful = (i) => myCombos[i].length > 0
+    && myCombos[i].every(([c, n]) => !isUseless(view, c, n));
+  // A preference, not a requirement: a card that only *might* be useful still
+  // carries the message most of the time, and the alternative to a shaky signal
+  // here is no signal at all — the danger we are pointing at is certain.
+  for (const sure of [true, false]) {
+    for (let i = 0; i < myHand.length; i++) {
+      if (!touched(myHand[i]) || knownUseless(view, myCombos[i]) || knownPlayable(view, myCombos[i])) continue;
+      if (sure !== provablyUseful(i)) continue;
+      if (myCombos[i].some(([c, n]) => identityCritical(view, c, n))) continue;
+      return { action: { type: 'discard', cardIndex: i }, reason: 'ALARM: discarding a useful touched card' };
+    }
   }
   // The riskier alarm types throw away an UNKNOWN own card (the chop, or a
   // card past it). Two ways to clear the bar:
@@ -1190,8 +1217,12 @@ function findAlarmMove(view, myHand, myCombos, savedCost, conventions = STANDARD
   let best = -1;
   let bestCost = Infinity;
   for (let i = 0; i < myHand.length; i++) {
+    // Same preference: a "critical" card whose pile can no longer reach it is
+    // trash on the table and reads as trash, however dearly we paid for it — so
+    // a certainly-useful one is worth a tie-break's worth of cost.
     if (!touched(myHand[i]) || !provablyCritical(view, myCombos[i])) continue;
-    const cost = Math.max(...myCombos[i].map(([c, n]) => discardCost(view, c, n)));
+    const cost = Math.max(...myCombos[i].map(([c, n]) => discardCost(view, c, n)))
+      + (provablyUseful(i) ? 0 : 0.5);
     if (cost < savedCost && cost < bestCost) {
       best = i;
       bestCost = cost;
@@ -1234,6 +1265,24 @@ function applyInferredGuards(view, memory) {
     }
   }
   for (const id of ids) if (!present.has(id)) ids.delete(id);
+}
+
+// Was this identity already dead before the discard that put it in the pile?
+// Only the last copy of an identity can move its pile's cap, so anything else
+// is judged as it stands; for a last copy, a pile capped exactly at its own
+// number was capped BY it, and it was alive a moment ago.
+function deadWhenThrown(view, color, number, viewerSeat) {
+  if (!isUseless(view, color, number)) return false;
+  const pile = view.playedPiles[color];
+  const suit = suitOf(view, color);
+  const played = pile.count > 0
+    && (suit.direction === 'up' ? number <= pile.top : number >= pile.top);
+  if (played) return true;
+  const k = `${color}_${number}`;
+  const totals = deckCounts(view);
+  const visible = visibleCounts(view, [viewerSeat]);
+  if ((visible.get(k) || 0) < (totals.get(k) || 0)) return true; // copies left: not our doing
+  return suit.direction === 'up' ? number > pile.cap + 1 : number < 6 - pile.cap - 1;
 }
 
 // Receiver side of the alarm convention: when my predecessor's last action
@@ -1287,8 +1336,14 @@ export function alarmGuards(view, conventions = STANDARD_CONVENTIONS) {
   if (!declinedPlay && e.wasTouched) {
     // A deliberate touched-discard alarm burns a USEFUL card — if the card
     // was actually dead, this was routine trash disposal (the discarder's
-    // elimination can outrun what we can reconstruct).
-    if (isUseless(view, e.card.color, e.card.number)) return [];
+    // elimination can outrun what we can reconstruct). The question is whether
+    // it was dead when they THREW it, not now: the pile cap we are reading
+    // already counts this discard, and sacrificing the last copy of a needed
+    // card is exactly what caps its pile just short of it. Asking "is it
+    // useless?" of the state it produced answers yes for every deliberate
+    // sacrifice — the loudest alarm there is, dismissed as taking out the
+    // rubbish. So when it was the last copy, we give it back before judging.
+    if (deadWhenThrown(view, e.card.color, e.card.number, me)) return [];
     // And if the discarder had no chop — every other card clued or guarded
     // (their newest card is the post-discard draw) — the touched discard was
     // forced normality, not a signal.

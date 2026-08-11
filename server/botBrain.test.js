@@ -4,7 +4,7 @@ import { createInitialState } from './game.js';
 import { getVariant } from './variants.js';
 import { annotateAction, discardAction, hintAction, playAction } from './rules.js';
 import { viewState } from './view.js';
-import { STANDARD_CONVENTIONS, alarmGuards, chopIndex, colorPlayTargets, decide, endgameHelpfulness, handCombos, knownPlayable, mergedColorTargets, protectiveStall, rememberColorTargets } from './botBrain.js';
+import { STANDARD_CONVENTIONS, alarmGuardTargets, alarmGuards, chopIndex, colorPlayTargets, decide, endgameHelpfulness, handCombos, knownPlayable, mergedColorTargets, protectiveStall, rememberColorTargets } from './botBrain.js';
 
 const COLORS = ['red', 'yellow', 'green', 'blue', 'white'];
 const DIST = [1, 1, 1, 2, 2, 3, 3, 4, 4, 5];
@@ -1380,9 +1380,9 @@ test('bot: no empty-hint signal when the room disallows empty hints', () => {
 // Bots playing whole games against each other: the strongest regression net —
 // every rule interacts, and the game must actually end without the brain ever
 // proposing an illegal action (rules.js throws on those).
-function playOut(seed, playerCount) {
+function playOut(seed, playerCount, { onAlarm, variantId = 'simple' } = {}) {
   const players = Array.from({ length: playerCount }, (_, i) => ({ id: `p${i}`, name: `Bot${i}` }));
-  const state = createInitialState({ variantId: 'simple', endRule: 'lax', players, seed, shareGuarded: true });
+  const state = createInitialState({ variantId, endRule: 'lax', players, seed, shareGuarded: true });
   const memories = players.map(() => ({}));
   let guard = 0;
   while (state.status === 'playing' && guard++ < 500) {
@@ -1390,17 +1390,57 @@ function playOut(seed, playerCount) {
     for (const cardId of alarmGuards(viewState(state, idx))) {
       annotateAction(state, idx, cardId, { guarded: true });
     }
-    const { action } = decide(viewState(state, idx), undefined, memories[idx]);
+    const { action, reason } = decide(viewState(state, idx), undefined, memories[idx]);
     switch (action.type) {
       case 'play': playAction(state, idx, action.cardIndex); break;
       case 'discard': discardAction(state, idx, action.cardIndex); break;
       case 'hint': hintAction(state, idx, action.toPlayerIndex, action.hintType, action.value); break;
       default: throw new Error(`bot proposed unknown action ${action.type}`);
     }
+    if (onAlarm && reason?.startsWith('ALARM') && state.status === 'playing') {
+      const next = (idx + 1) % playerCount;
+      const view = viewState(state, next);
+      onAlarm({ reason, seed, view, read: alarmGuards(view), owed: alarmGuardTargets(view, next, 1) });
+    }
   }
   assert.equal(state.status, 'finished', `game did not end (seed ${seed})`);
   return state;
 }
+
+test('bot vs bot: alarms these games used to raise unreadably are read now', () => {
+  // A signal has to be readable from the RECEIVER's chair, and their chair sees
+  // less than ours. Two ways that drifted, both live in the games below:
+  //   - we counted the cards in THEIR hand to prove the play we then "declined",
+  //     so what we called a forgone play was, to them, no reason for anything;
+  //   - they judged the thrown card by a pile cap our own sacrifice had just
+  //     lowered — throwing the last copy of a needed card is exactly what caps
+  //     its pile short of it — so the loudest alarm in the book read as trash.
+  // Each of these games contained an alarm nobody read before the fix.
+  //
+  // Not asserted globally, and deliberately: when no certainly-useful card is
+  // in reach the bot still throws a merely-possibly-useful one, which lands
+  // dead often enough to be dismissed. That gamble is the right one — the
+  // danger it points at is certain, and the alternative is silence.
+  const games = [
+    ['simple', 2, 16], ['simple', 3, 31], ['rainbow', 2, 28],
+    ['rainbowCritical', 4, 14], ['rainbowCriticalBlack', 3, 29],
+    ['rainbowCriticalBlackReverse', 3, 35],
+  ];
+  let alarms = 0;
+  for (const [variantId, playerCount, seed] of games) {
+    playOut(seed, playerCount, {
+      variantId,
+      onAlarm({ reason, view, read, owed }) {
+        alarms++;
+        if (view.deckSize === 0) return;  // the endgame search decides for itself
+        if (owed.length === 0) return;    // nothing left for them to guard
+        assert.ok(read.length > 0,
+          `alarm nobody reads (${variantId} ${playerCount}p seed ${seed}): ${reason}`);
+      },
+    });
+  }
+  assert.ok(alarms > 0, 'the games should have contained alarms to check');
+});
 
 test('bot vs bot: full games end legally with a sane score', () => {
   for (const [seed, playerCount] of [[1, 2], [2, 3], [3, 4], [42, 2], [99, 3]]) {

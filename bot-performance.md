@@ -1552,3 +1552,54 @@ rainbowCriticalBlackReverse/35        2 29.28    20   35        1      0        
 rainbowCriticalBlackReverse/35        3 32.36    25   35        4      0           0.46
 rainbowCriticalBlackReverse/35        4 31.56     8   35        5      1           0.54
 ```
+
+## 2.22 — a signal read off cards only the sender can see is no signal
+
+From a game: the bot discarded its chop and then asked its partner to guard,
+and the partner could not tell what the alert had been. It held two "4"s that
+IT could narrow to green-or-black — both playable — because it could see the
+blue 4 and white 4 in the partner's hand. The partner, who cannot see their own
+cards, could prove only {green, blue, white, black}: no playable card, no
+forgone play, nothing to answer. The bot had signalled off private knowledge.
+
+**Asked from their chair now.** `hasPendingPlay` takes an optional `reader`, and
+`findAlarmMove` passes the seat that will read the alarm, so our own hand is
+deduced *without* counting the reader's cards — exactly what they will compute.
+The drift is one-directional (their deduction is strictly weaker, so they can
+only ever prove less), which is what makes matching it enough to close it.
+
+**And the receiver was asking the wrong question.** Its "was the card useful?"
+screen ran `isUseless` against the pile cap *after* the discard — and throwing
+the last copy of a needed card is precisely what caps its pile just short of
+it. So every deliberate sacrifice, the loudest alarm in the book, read as
+taking out the rubbish. It now asks whether the card was dead when *thrown*,
+giving back the copy when it was the last one (`deadWhenThrown`).
+
+**A third, kept as a preference rather than a rule.** A touched card that is
+only *possibly* useful lands dead often enough to be dismissed, so a certainly-
+useful one is picked first — but not required. Required, it cost 49 perfect
+games per 3000: when nothing certain is in reach the alternative to a shaky
+signal is silence, and the danger being pointed at is certain.
+
+Unreadable alarms across 600 bot-vs-bot games: 87 → 53, and the ones left are
+that deliberate gamble. Self-play at 200 seeds/row: 28.735 → 28.761 mean/row,
+perfect games 969 → 971, fuse-outs level at 21.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.86    18   25       29      1           0.34
+simple/25                             3 24.40    22   25       31      0           0.36
+simple/25                             4 24.32    21   25       32      0           0.56
+rainbow/30                            2 28.30    22   30       18      0           0.20
+rainbow/30                            3 29.48    27   30       31      0           0.26
+rainbow/30                            4 29.08    27   30       19      0           0.46
+rainbowCritical/30                    2 27.44    22   30       13      1           0.50
+rainbowCritical/30                    3 28.46    21   30       19      0           0.40
+rainbowCritical/30                    4 28.06    24   30       11      0           0.54
+rainbowCriticalBlack/35               2 30.12    24   35        3      1           0.58
+rainbowCriticalBlack/35               3 33.30    28   35       13      1           0.42
+rainbowCriticalBlack/35               4 32.16    10   35       10      2           0.58
+rainbowCriticalBlackReverse/35        2 29.32    21   35        1      0           0.52
+rainbowCriticalBlackReverse/35        3 32.40    25   35        4      0           0.48
+rainbowCriticalBlackReverse/35        4 31.70     8   35        5      1           0.60
+```
