@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.24';
+export const BOT_VERSION = '2.25';
 
 // Thresholds for the free gamble (see gambleChance): better-than-even odds,
 // and never on the last fuse. Both were swept — the score plateau runs from
@@ -510,6 +510,24 @@ function onesPlayObligations(view, hand, combos) {
   return ones.filter((i) => !combos[i].some(([c, n]) => n === 1 && reversed.has(c)));
 }
 
+// The slots the "1" order will actually be acted on, all three screens in one
+// place: the obligation itself, the reveal exception (once any obligated 1 is
+// pinned to a single identity the set reads as information, not an order), and
+// the last-fuse gate. Every side of the convention reads it through here — the
+// receiver playing them, the giver counting a pending play, and the saver
+// deciding whether a "1" keep-hint is safe to give. Those used to be three
+// separate readings and they drifted: the saver screened with a bare
+// possiblyPlayable, so in a reverse-suit variant it refused to save a chop 1
+// as "it would misfire" while the receiver's own rule reads that very card as
+// a keep — leaving the black 1, the one card there the hint is unambiguous
+// about, the one card that could never be saved.
+function onesPlayOrder(view, seat, hand, combos, conventions = STANDARD_CONVENTIONS) {
+  if (!conventions.playAllOnes) return [];
+  const ones = onesPlayObligations(view, hand, combos);
+  if (ones.some((i) => combos[i].length === 1)) return [];
+  return ones.filter(onesPlayGate(view, seat, ones, combos));
+}
+
 // An identity that must not be lost: still needed, and every other copy has
 // been discarded (played copies would make it useless, handled above).
 function identityCritical(view, color, number) {
@@ -645,11 +663,7 @@ function hasPendingPlay(view, seat, conventions = STANDARD_CONVENTIONS, reader =
     ? handCombos(view, seat)
     : combosFor(view, hand, [seat, reader]);
   if (combos.some((cs) => knownPlayable(view, cs))) return true;
-  if (conventions.playAllOnes) {
-    const ones = onesPlayObligations(view, hand, combos);
-    const willPlay = onesPlayGate(view, seat, ones, combos);
-    if (!ones.some((i) => combos[i].length === 1) && ones.some(willPlay)) return true;
-  }
+  if (onesPlayOrder(view, seat, hand, combos, conventions).length > 0) return true;
   // Same reading the receiver uses (target slides past provably-unplayable
   // touched cards), so we never count a "pending play" they won't actually
   // make — that mismatch used to leave a colour-clued card nobody would touch
@@ -864,9 +878,17 @@ function findSaveHint(view, seat, chop, conventions) {
     const hint = { hintType: 'color', value: color };
     if (!possiblyPlayable(view, after[chop]) && ok(hint)) return { hint, how: 'pin' };
   }
-  if (card.number === 1 && conventions.playAllOnes && !isPlayable(view, card.color, card.number)) {
-    const after = combosFor(view, afterNumberHint(hand, 1), [seat, view.viewerIndex]);
-    if (possiblyPlayable(view, after[chop])) return null; // would trigger a misplay
+  if (card.number === 1 && !isPlayable(view, card.color, card.number)) {
+    // Read with the receiver's own rule (onesPlayOrder), not a bare
+    // possiblyPlayable: a "1" they can't yet tell apart from a reversed suit's
+    // own 1 is a keep to them, which is precisely the save we are trying to
+    // give — and in such a variant that 1 is the single most critical card on
+    // the table.
+    const hinted = afterNumberHint(hand, 1);
+    const after = combosFor(view, hinted, [seat, view.viewerIndex]);
+    if (onesPlayOrder(view, seat, hinted, after, conventions).includes(chop)) {
+      return null; // would trigger a misplay
+    }
   }
   const keep = { hintType: 'number', value: card.number };
   return ok(keep) ? { hint: keep, how: 'keep' } : null;
@@ -1446,12 +1468,8 @@ function findDeadOneWarning(view, seat, conventions) {
   if (!conventions.playAllOnes || view.hintTokens <= 0) return null;
   const hand = view.players[seat].hand;
   const combos = handCombos(view, seat);
-  const ones = onesPlayObligations(view, hand, combos);
-  if (ones.length === 0) return null;
-  // Already reads as information: a pinned 1 disables the play order entirely.
-  if (ones.some((i) => combos[i].length === 1)) return null;
-  // The 1 they would actually play next, under the same gate decideCore uses.
-  const next = ones.find(onesPlayGate(view, seat, ones, combos));
+  // The 1 they would actually play next, read exactly as they read it.
+  const [next] = onesPlayOrder(view, seat, hand, combos, conventions);
   if (next === undefined) return null;
   const victim = hand[next];
   if (!isUseless(view, victim.color, victim.number)) return null; // genuinely playable
@@ -1830,22 +1848,12 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
       }
     }
 
-    // 2b. Play-all-1s: every card touched by a "1" hint is to be played,
-    //     oldest first, while it can still be a playable 1. Reveal exception,
-    //     as with colour hints: once any obligated 1 is pinned to a single
-    //     identity, the 1s read as information (e.g. "that's the dead
-    //     duplicate"), not as a play order.
-    if (conventions.playAllOnes) {
-      // In a reverse-suit variant a "1" that could still be the reversed suit's
-      // own 1 is a keep, not a play — see onesPlayObligations.
-      const ones = onesPlayObligations(view, myHand, myCombos);
-      if (!ones.some((i) => myCombos[i].length === 1)) {
-        const willPlay = onesPlayGate(view, me, ones, myCombos);
-        for (const i of ones) {
-          if (yielded.has(i)) continue;
-          if (willPlay(i)) offer(i, 2, 'play all 1s');
-        }
-      }
+    // 2b. Play-all-1s: every card the "1" order actually reaches, oldest first
+    //     (see onesPlayOrder — the reverse-suit obligation, the reveal
+    //     exception and the last-fuse gate, the same reading everyone else
+    //     applies to us).
+    for (const i of onesPlayOrder(view, me, myHand, myCombos, conventions)) {
+      if (!yielded.has(i)) offer(i, 2, 'play all 1s');
     }
     if (candidates.length === 0) return null;
     // Only ever a choice WITHIN a certainty class. A provable play jumped by a

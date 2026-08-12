@@ -124,15 +124,33 @@ test('bot: in a reverse variant a "1" hint means keep — the 1 could be the cri
 
 test('bot: in a reverse variant a "1" is played once the black 1 is ruled out', () => {
   // Ann holds the only black_1, so copy-counting removes it from the bot's
-  // candidates — the obligation is back on.
+  // candidates — the obligation is back on. She holds it in the middle of her
+  // hand, not on her chop: on the chop it is the most critical card on the
+  // table and saving it outranks any play of ours (see the test below).
   const s = craftedStateV(
     'rainbowCriticalBlackReverse',
-    ['black_1', 'white_3', 'green_4', 'yellow_4', 'blue_4'],
+    ['white_3', 'green_4', 'black_1', 'yellow_4', 'blue_4'],
     ['red_1', 'white_2', 'green_3', 'yellow_2', 'blue_3'],
   );
   hintAction(s, 0, 1, 'number', 1); // touches the bot's red_1 only
   const { action, reason } = decide(viewState(s, 1));
   assert.deepEqual(action, { type: 'play', cardIndex: 0 }, reason);
+});
+
+test('bot: saves a black 1 on the chop with the "1" hint that reads as keep', () => {
+  // The one card in a reverse variant a "1" hint is unambiguous about. Black is
+  // never touched by a colour hint and black_1 is played last, so the number
+  // hint is the ONLY way to protect it — and the receiver, unable to rule black
+  // out, reads it as keep rather than as a play order. The bot used to screen
+  // that hint out with a bare possiblyPlayable ("they'd misfire on it") and so
+  // could never save the deck's most critical card; it discarded instead.
+  const s = craftedStateV(
+    'rainbowCriticalBlackReverse',
+    ['white_4', 'white_3', 'green_4', 'yellow_4', 'blue_4'],
+    ['black_1', 'red_2', 'green_3', 'yellow_2', 'blue_3'],
+  );
+  const { action, reason } = decide(viewState(s, 0));
+  assert.deepEqual(action, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 1 }, reason);
 });
 
 test('bot: on the last fuse it trusts a FRESH "1" order and plays the oldest', () => {

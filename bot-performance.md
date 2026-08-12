@@ -1699,3 +1699,54 @@ rainbowCriticalBlackReverse/35        2 29.20    21   34        0      0        
 rainbowCriticalBlackReverse/35        3 32.80    25   35        6      0           0.42
 rainbowCriticalBlackReverse/35        4 31.86    25   35        3      0           0.48
 ```
+
+## 2.25 — the black 1 was the one card it could never save
+
+In a reverse variant the black 1 is the pile's last card and its only copy: the
+most critical card on the table. Black is never in a colour hint's touched set
+and the card is not playable until the very end, so the "1" number hint is the
+*only* way to protect it — and the receiver, unable to rule black out, already
+read that hint as a keep (2.14's `onesPlayObligations`).
+
+The saver never got that far. `findSaveHint` screened the "1" keep-hint with a
+bare `possiblyPlayable`: after the hint the card reads {yellow 1, blue 1,
+white 1, black 1} and those piles are empty, so it concluded "they would misfire
+on it" and returned null. No save existed, so the bot discarded its chop and let
+the black 1 go — in every game of the variant. Caught in a live 3-player game
+(save 20260812-213024): a human hint pushed the partner's chop onto the black 1,
+the bot saw the danger (`saveWorthy` true, no pending play for that seat) and
+still had nothing it was willing to say.
+
+Sender and receiver reading one convention two different ways is the bug behind
+the symptom. The three screens that make up the "1" order — the obligation, the
+reveal exception (a pinned 1 turns the set into information) and the last-fuse
+gate — now live in one function, `onesPlayOrder`, and every side calls it: the
+receiver playing them, `hasPendingPlay` counting them, `findDeadOneWarning`, and
+the saver deciding the hint is safe to give.
+
+Confined to reverse variants by construction, and the benchmark agrees — every
+other row is identical to 2.24's. On the three affected rows at 500 seeds:
+perfect games 133 -> 185, mean 31.12 -> 31.01, fuse-outs 7 -> 11. That is the
+shape of the trade: the token and the tempo the save spends cost a fraction of a
+point on average, and keeping black's last card alive is what makes 35 reachable
+at all. Whole-table at 200 seeds: 28.840 -> 28.806 mean/row, perfect games
+995 -> 1010, fuse-outs 21 -> 22.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.94    18   25       30      0           0.28
+simple/25                             3 24.30    20   25       30      0           0.34
+simple/25                             4 24.36    21   25       33      0           0.62
+rainbow/30                            2 28.30    22   30       16      0           0.22
+rainbow/30                            3 29.36    20   30       32      1           0.30
+rainbow/30                            4 29.16    27   30       22      0           0.50
+rainbowCritical/30                    2 27.38    22   30       11      0           0.48
+rainbowCritical/30                    3 28.62    21   30       19      0           0.42
+rainbowCritical/30                    4 28.02    24   30       10      0           0.58
+rainbowCriticalBlack/35               2 30.62    21   35        4      0           0.58
+rainbowCriticalBlack/35               3 33.48    24   35       14      2           0.42
+rainbowCriticalBlack/35               4 32.02    10   35       10      2           0.60
+rainbowCriticalBlackReverse/35        2 28.86    21   35        1      0           0.42
+rainbowCriticalBlackReverse/35        3 32.64    25   35        8      0           0.42
+rainbowCriticalBlackReverse/35        4 31.70    25   35        6      0           0.44
+```
