@@ -245,7 +245,15 @@ const server = http.createServer(async (req, res) => {
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 function send(ws, payload) {
-  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
+  if (ws.readyState !== ws.OPEN) return;
+  // Marks the connection as having a view of its own, so the slow initial
+  // lobby sync knows not to overwrite it when it finally arrives (see the
+  // greeting in the connection handler).
+  if (payload.type === 'sync') {
+    const conn = connections.get(ws);
+    if (conn) conn.synced = true;
+  }
+  ws.send(JSON.stringify(payload));
 }
 
 function inRoomViewFor(room, playerId) {
@@ -315,7 +323,7 @@ function requireSeat(conn) {
 }
 
 wss.on('connection', async (ws) => {
-  const conn = { playerId: null, roomId: null, isSpectator: false };
+  const conn = { playerId: null, roomId: null, isSpectator: false, synced: false };
   connections.set(ws, conn);
   send(ws, {
     type: 'hello',
@@ -324,13 +332,21 @@ wss.on('connection', async (ws) => {
   // The message listener must be attached before any await: a client that
   // sends right after connecting (reconnect, bot, script) would otherwise
   // have its message dropped while the saves directory is being scanned.
-  // Handlers await `greeted` so the initial lobby sync still arrives first.
-  const greeted = serverLobbyView()
-    .then((view) => send(ws, { type: 'sync', view }))
+  //
+  // The greeting is fired and forgotten rather than awaited by the handlers.
+  // Building it means summarizing the whole save library, which is seconds on
+  // a cold cache, and making every incoming message wait for that stalled a
+  // reconnecting client — or a bot, or the smoke script — behind a listing it
+  // is about to navigate away from anyway. What the wait was really protecting
+  // is ordering: a `createRoom` answered first would have its in-room view
+  // stomped by the lobby sync landing afterwards. So the greeting is dropped
+  // instead if anything else has already synced this connection (`conn.synced`,
+  // set by `send`), which is the same guarantee without the queue.
+  serverLobbyView()
+    .then((view) => { if (!conn.synced) send(ws, { type: 'sync', view }); })
     .catch((err) => console.error('initial lobby sync failed:', err));
 
   ws.on('message', async (raw) => {
-    await greeted;
     let msg;
     try {
       msg = JSON.parse(raw.toString());
@@ -773,7 +789,15 @@ wss.on('connection', async (ws) => {
 // compute is simply not shown.
 function fillBotScoresInBackground() {
   setTimeout(() => {
-    backfillBotScores()
+    // Warm the library cache first. Summarizing every save replays it through
+    // the rules engine, so on a cold cache the first player to open the lobby
+    // waits seconds for it; doing it here moves that cost to boot, where
+    // nobody is watching. Scans are serialized (see cachedLibraryEntries), so
+    // a client connecting mid-warm queues behind this one instead of racing
+    // it with a second full scan.
+    listLibrary()
+      .catch((err) => console.error('Library warm-up failed:', err))
+      .then(() => backfillBotScores())
       .then(async ({ computed, total }) => {
         if (!computed) return;
         console.log(`Bot par computed for ${computed} of ${total} saved games.`);

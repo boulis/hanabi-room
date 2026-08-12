@@ -228,3 +228,29 @@ test('game info: an unknown save is reported as missing, not as an empty page', 
     await assert.rejects(() => gameDetail('../escape.jsonl'), /Bad save filename/);
   });
 });
+
+test('library: concurrent listings agree, and a later one sees a save written meanwhile', async () => {
+  await withTmpSaveDir(async () => {
+    // Distinct variants: two saves opened in the same millisecond would take
+    // the same timestamped filename.
+    await setupRoom({ seed: 11 });
+    await setupRoom({ seed: 12, variantId: 'rainbow' });
+    // Three callers at once — the shape of five players opening the lobby on a
+    // cold cache. Scans are serialized so only the first replays the saves and
+    // the rest come back off the mtime cache (a timing win this can't assert);
+    // what it can assert is that serializing them doesn't change the answer.
+    const [a, b, c] = await Promise.all([listLibrary(), listLibrary(), listLibrary()]);
+    assert.equal(a.length, 2);
+    assert.deepEqual(b.map((e) => e.basename), a.map((e) => e.basename));
+    assert.deepEqual(c.map((e) => e.basename), a.map((e) => e.basename));
+
+    // Serializing must not hand a later caller an earlier caller's snapshot: a
+    // scan started while one is running still lists what exists when its turn
+    // comes. (A shared in-flight promise would miss this save.)
+    const pending = listLibrary();
+    await setupRoom({ seed: 13, variantId: 'rainbowCritical' });
+    const after = await listLibrary();
+    await pending;
+    assert.equal(after.length, 3, 'the save written mid-scan is in the next listing');
+  });
+});

@@ -509,7 +509,24 @@ async function summarizeForLibrary(filePath) {
   }
 }
 
-async function cachedLibraryEntries() {
+// Scans never run concurrently. A cold scan replays every save through the
+// rules engine — seconds over a library of hundreds — and the cache only fills
+// as each file finishes, so two scans started together find the same empty
+// cache and do the same work twice. Serializing through one chain (the same
+// way bot-score writes are) means the first scan pays the cost and everyone
+// queued behind it comes back warm in milliseconds. Each caller still gets its
+// OWN scan rather than sharing the in-flight one, so a lobby broadcast that
+// lands mid-scan reports the file as it is when its turn comes, not as it was
+// when someone else's scan started.
+let libraryScanChain = Promise.resolve();
+
+function cachedLibraryEntries() {
+  const run = libraryScanChain.then(scanLibrary, scanLibrary);
+  libraryScanChain = run.then(() => {}, () => {});
+  return run;
+}
+
+async function scanLibrary() {
   const names = await listSaves(); // already newest-first (timestamp prefix)
   const out = [];
   for (const name of names) {
