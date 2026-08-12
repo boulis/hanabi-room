@@ -1650,3 +1650,52 @@ rainbowCriticalBlackReverse/35        2 29.32    21   34        0      0        
 rainbowCriticalBlackReverse/35        3 32.40    25   35        4      0           0.48
 rainbowCriticalBlackReverse/35        4 31.70     8   35        5      1           0.60
 ```
+
+## 2.24 — the 2-save is a precaution, and should behave like one
+
+Saving a lone 2 protects a card that is not certainly lost: its twin is still
+out there. That buys it far less latitude than a last copy, and it had been
+taking a last copy's liberties. Three rules, all from watching it spend a hint
+on a black 2 in a reversed suit and lock its partner's whole hand doing it.
+
+**A 2 in a suit played 5→1 is not a "2".** There the 2 is the second to last
+card of its pile — a 4 by any other name — and none of the reasons to protect a
+2 on sight apply to it. `saveWorthy` now asks the suit's direction.
+
+**It must not lock the partner out of discarding.** Locked, they can only stall
+or throw a card the team paid a hint to keep, which is a worse place to be than
+one 2 down. Checked against the hint actually settled on (`hintWouldLock`), not
+up front: a play hint gets the card played and a colour pin may still leave them
+a chop, and either is a fine way to save it.
+
+**And it is not worth the last hints.** Three tokens, not two: a precaution
+should never be the hint that leaves the table unable to speak, and one spent
+here is one not spent on a play or a real save over the next two turns.
+
+None of this touches a certain last copy — a 5, or a 2 whose twin is already
+gone. Those are still saved at any token count, in any suit, locked hand or not.
+
+At 200 seeds/row: 28.771 → 28.840 mean/row, perfect games 971 → 995, fuse-outs
+18 → 21. The reversed-suit rows carry it (+0.37 and +0.42 at 3 and 4 players),
+which is exactly where a "2" was least worth a hint. The token threshold is
+roughly neutral on its own (28.833 → 28.840, +3 perfect games); the value is in
+the other two.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.94    18   25       30      0           0.28
+simple/25                             3 24.30    20   25       30      0           0.34
+simple/25                             4 24.36    21   25       33      0           0.62
+rainbow/30                            2 28.30    22   30       16      0           0.22
+rainbow/30                            3 29.36    20   30       32      1           0.30
+rainbow/30                            4 29.16    27   30       22      0           0.50
+rainbowCritical/30                    2 27.38    22   30       11      0           0.48
+rainbowCritical/30                    3 28.62    21   30       19      0           0.42
+rainbowCritical/30                    4 28.02    24   30       10      0           0.58
+rainbowCriticalBlack/35               2 30.62    21   35        4      0           0.58
+rainbowCriticalBlack/35               3 33.48    24   35       14      2           0.42
+rainbowCriticalBlack/35               4 32.02    10   35       10      2           0.60
+rainbowCriticalBlackReverse/35        2 29.20    21   34        0      0           0.42
+rainbowCriticalBlackReverse/35        3 32.80    25   35        6      0           0.42
+rainbowCriticalBlackReverse/35        4 31.86    25   35        3      0           0.48
+```

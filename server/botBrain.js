@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.23';
+export const BOT_VERSION = '2.24';
 
 // Thresholds for the free gamble (see gambleChance): better-than-even odds,
 // and never on the last fuse. Both were swept — the score plateau runs from
@@ -798,16 +798,40 @@ function findPlayHint(view, seat, conventions) {
 }
 
 // A chop card we shouldn't let go: critical (last remaining copy), or a
-// still-needed 2 whose twin isn't anywhere we can see — losing an early 2
-// caps its pile for a long time, so it gets the benefit of the doubt.
+// still-needed 2 whose twin isn't anywhere we can see — losing an early 2 caps
+// its pile for a long time, so it gets the benefit of the doubt.
 function saveWorthy(view, card) {
   if (isCritical(view, card)) return true;
-  // A 2 isn't a guaranteed loss, so only spend a token on it when tokens
-  // aren't scarce.
-  if (view.hintTokens < 2) return false;
+  return loneTwoWorthSaving(view, card);
+}
+
+// The 2-save is a *precaution*, not a rescue: the twin is still out there, so
+// nothing is certainly lost. That buys it much less latitude than a last copy.
+function loneTwoWorthSaving(view, card) {
+  // Three tokens, not two. A precaution should never be the hint that leaves
+  // the table unable to speak, and one spent here is one not spent on a play
+  // or a real save the next two turns.
+  if (view.hintTokens < 3) return false;
   if (card.number !== 2 || isUseless(view, card.color, card.number)) return false;
+  // Only where a 2 is an EARLY card. In a suit played 5→1 the 2 is the second
+  // to last card of its pile — a 4 by any other name — and none of the reasons
+  // to protect a 2 on sight apply to it.
+  if (suitOf(view, card.color).direction !== 'up') return false;
   const visible = visibleCounts(view, [view.viewerIndex]);
   return (visible.get(`${card.color}_2`) || 0) - 1 === 0; // only this copy in sight
+}
+
+// Would this hint leave them with nothing to discard — every card clued or
+// guarded? For a precaution that is a bad trade: they are locked into stalling
+// or throwing a card the team paid a hint to keep, which is a worse place to be
+// than one 2 down. (A last copy is worth locking a hand for; a lone 2 isn't.)
+function hintWouldLock(view, seat, hint) {
+  const hand = view.players[seat].hand;
+  const touched = new Set((hint.hintType === 'color'
+    ? colorHintTouches(view, hand, hint.value).map(({ i }) => i)
+    : hand.map((c, i) => (c.number === hint.value ? i : -1)).filter((i) => i >= 0)));
+  return !hand.some((c, i) => !c.colorClued && !c.numberClued
+    && !c.annotations?.guarded && !touched.has(i));
 }
 
 // The best way to protect `chop` in `seat`'s hand. A play hint that gets the
@@ -819,27 +843,33 @@ function saveWorthy(view, card) {
 function findSaveHint(view, seat, chop, conventions) {
   const hand = view.players[seat].hand;
   const card = hand[chop];
+  // A precaution that locks their hand is not worth taking (see hintWouldLock),
+  // so a lone 2 loses the keep-hint that would do it. Applied to the hint we
+  // settle on, not up front: a play hint gets the card played and a colour pin
+  // may leave them a chop, and either of those is still a fine way to save it.
+  const precaution = !isCritical(view, card) && loneTwoWorthSaving(view, card);
+  const ok = (hint) => !precaution || !hintWouldLock(view, seat, hint);
   if (isPlayable(view, card.color, card.number)) {
     let best = null;
     for (const cand of playHintCandidates(view, seat, conventions)) {
       if (!cand.playIdxs.includes(chop)) continue;
       if (!best || cand.score > best.score) best = cand;
     }
-    if (best) return { hint: best.hint, how: 'play' };
+    if (best && ok(best.hint)) return { hint: best.hint, how: 'play' };
   }
   for (const color of view.hintableColors) {
     const touched = colorHintTouches(view, hand, color);
     if (touched.length === 0 || touched[touched.length - 1].i !== chop) continue;
     const after = combosFor(view, afterColorHint(view, hand, color), [seat, view.viewerIndex]);
-    if (!possiblyPlayable(view, after[chop])) {
-      return { hint: { hintType: 'color', value: color }, how: 'pin' };
-    }
+    const hint = { hintType: 'color', value: color };
+    if (!possiblyPlayable(view, after[chop]) && ok(hint)) return { hint, how: 'pin' };
   }
   if (card.number === 1 && conventions.playAllOnes && !isPlayable(view, card.color, card.number)) {
     const after = combosFor(view, afterNumberHint(hand, 1), [seat, view.viewerIndex]);
     if (possiblyPlayable(view, after[chop])) return null; // would trigger a misplay
   }
-  return { hint: { hintType: 'number', value: card.number }, how: 'keep' };
+  const keep = { hintType: 'number', value: card.number };
+  return ok(keep) ? { hint: keep, how: 'keep' } : null;
 }
 
 // The most recent play/discard/hint in the log that wasn't undone.

@@ -1169,6 +1169,61 @@ test('bot: with two plays to choose from, plays the one that opens the partner',
   assert.match(reason, /opens a play/, reason);
 });
 
+test('bot: a 2 in a suit played 5→1 is not saved as a "2"', () => {
+  // The 2-save protects an EARLY card. Where the suit runs 5→1 the 2 is the
+  // second to last card of its pile — a 4 by any other name — so none of the
+  // reasons to protect a 2 on sight apply to it.
+  const reasonFor = (chopCard) => {
+    const s = craftedStateV('rainbowCriticalBlackReverse',
+      [chopCard, 'red_3', 'red_4', 'green_3', 'green_4'],   // Ann: chop is chopCard
+      ['white_3', 'white_4', 'blue_3', 'blue_4', 'yellow_3'],
+    );
+    hintAction(s, 0, 1, 'number', 3); // hand the turn to the bot, tokens to spare
+    return decide(viewState(s, 1), undefined, {}).reason;
+  };
+  const black = reasonFor('black_2');
+  assert.ok(!/save black 2/.test(black), `a reversed 2 is not an early card: ${black}`);
+  // ...whereas the same chop in an ordinary 1→5 suit is saved.
+  assert.match(reasonFor('blue_2'), /save blue 2/);
+});
+
+test('bot: does not spend a 2-save that locks the partner out of discarding', () => {
+  // A precaution is not worth leaving them unable to discard: locked, they must
+  // stall or throw a card the team paid a hint to keep, which is a worse place
+  // to be than one 2 down — its twin is still out there.
+  const s = craftedState(
+    ['blue_2', 'red_3', 'red_4', 'green_3', 'green_4'],  // chop: the lone blue 2
+    ['white_3', 'white_4', 'yellow_3', 'yellow_4', 'green_5'],
+  );
+  hintAction(s, 0, 1, 'number', 3);
+  hintAction(s, 1, 0, 'number', 3);   // clue Ann's 3s...
+  hintAction(s, 0, 1, 'number', 4);
+  hintAction(s, 1, 0, 'number', 4);   // ...and her 4s: only the blue 2 is left open
+  hintAction(s, 0, 1, 'number', 5);   // hand the turn back, three tokens left
+  assert.equal(chopIndex(s.players[0].hand), 0, 'the blue 2 is her chop');
+  assert.ok(s.hintTokens >= 3, 'and tokens are not what stops the save');
+  const { reason } = decide(viewState(s, 1), undefined, {});
+  assert.ok(!/save blue 2/.test(reason), `the save would lock her hand: ${reason}`);
+});
+
+test('bot: keeps the last hints for better things than a 2-save', () => {
+  // Same lone 2, but with harmless cards left open behind it, so the save would
+  // neither lock her nor be outranked by a dearer chop — only the tokens decide.
+  const s = craftedState(
+    ['blue_2', 'red_3', 'red_4', 'green_3', 'green_4'],
+    ['white_3', 'white_4', 'yellow_3', 'yellow_4', 'green_5'],
+  );
+  hintAction(s, 0, 1, 'number', 3);
+  hintAction(s, 1, 0, 'number', 3);   // her 4s stay open behind the 2
+  hintAction(s, 0, 1, 'number', 5);
+  assert.equal(chopIndex(s.players[0].hand), 0, 'the blue 2 is her chop');
+  s.hintTokens = 3;
+  assert.match(decide(viewState(s, 1), undefined, {}).reason, /save blue 2/, 'saved at three');
+  s.hintTokens = 2;
+  const tight = decide(viewState(s, 1), undefined, {}).reason;
+  assert.ok(!/save blue 2/.test(tight), `not at two: ${tight}`);
+});
+
 // A bare card for hand-built endgame states.
 function bareCard(id, color, number) {
   return {
