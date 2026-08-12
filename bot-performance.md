@@ -1603,3 +1603,50 @@ rainbowCriticalBlackReverse/35        2 29.32    21   35        1      0        
 rainbowCriticalBlackReverse/35        3 32.40    25   35        4      0           0.48
 rainbowCriticalBlackReverse/35        4 31.70     8   35        5      1           0.60
 ```
+
+## 2.23 — the silence rule was priced for the worst case, and hid from a full bank
+
+2.20 taught the bot to withhold a play while the partner is locked, because
+there the play is an order. Two things about *when* were wrong, and together
+they had it sitting on cards its partner was asking for.
+
+**It priced the worst card the pointer could ever reach.** The pointer reaches
+one card — their oldest possibly-playable one — and nobody is counting advances
+at that moment, because a bot that is really signalling answers in
+`forcedPlayStep` and never reaches this gate at all. Pricing the worst instead
+meant one expensive card anywhere in a locked hand silenced every play,
+turn after turn.
+
+**And it applied with a token still in the bank.** A signal is only ever *sent*
+at zero tokens, so zero is the only place a play of ours can be taken for one.
+With a token in hand the partner is not stuck — we can hint them out of it —
+and holding back there just made them spend the token stalling while we sat on
+a card they had hinted us to play.
+
+From the game: the partner, locked, stalled with keep-hints at one token while
+the bot held a provable white 3 and discarded its chop three turns running. Both
+fixes together, that play goes in; and where the order really is dear — the
+2.20 position, where the pointer reaches a last-copy blue 4 at zero tokens — the
+bot still keeps quiet.
+
+Self-play at 200 seeds/row: 28.761 → 28.771 mean/row, perfect games level at
+971, fuse-outs 21 → 18.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.94    18   25       30      0           0.30
+simple/25                             3 24.40    22   25       31      0           0.36
+simple/25                             4 24.32    21   25       32      0           0.56
+rainbow/30                            2 28.28    22   30       19      0           0.26
+rainbow/30                            3 29.48    27   30       31      0           0.26
+rainbow/30                            4 29.08    27   30       19      0           0.46
+rainbowCritical/30                    2 27.40    22   30       12      0           0.52
+rainbowCritical/30                    3 28.46    21   30       19      0           0.40
+rainbowCritical/30                    4 28.06    24   30       11      0           0.54
+rainbowCriticalBlack/35               2 30.24    23   35        3      0           0.54
+rainbowCriticalBlack/35               3 33.30    28   35       13      1           0.42
+rainbowCriticalBlack/35               4 32.16    10   35       10      2           0.58
+rainbowCriticalBlackReverse/35        2 29.32    21   34        0      0           0.46
+rainbowCriticalBlackReverse/35        3 32.40    25   35        4      0           0.48
+rainbowCriticalBlackReverse/35        4 31.70     8   35        5      1           0.60
+```

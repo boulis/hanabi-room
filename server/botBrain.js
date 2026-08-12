@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.22';
+export const BOT_VERSION = '2.23';
 
 // Thresholds for the free gamble (see gambleChance): better-than-even odds,
 // and never on the last fuse. Both were swept — the score plateau runs from
@@ -964,27 +964,36 @@ function forcedPlayArmed(view, lockedSeat, freeSeat, conventions = STANDARD_CONV
 // What playing right now would cost the PARTNER. While they are deadlocked our
 // play is an order (see deadlocked), which they answer by playing the card the
 // pointer reaches — so a play we do not mean as an order is not ours to make,
-// however good it is for us. Priced as the worst of the cards the pointer could
-// resolve to: we cannot be certain which one they are counting to, so the risk
-// is what to weigh, not the best case. A candidate that really is playable
-// costs nothing — they score. Null when our play orders nothing.
+// however good it is for us.
+//
+// Priced on the card the pointer ACTUALLY reaches, which is their oldest
+// possibly-playable one: nobody is counting advances here, since a sender that
+// is really signalling answers in forcedPlayStep and never reaches this. Taking
+// the worst card the pointer could ever reach instead was far too timid — it
+// sat on plays turn after turn while the partner burned hints stalling, in a
+// position where the card they would have fired was playable anyway.
+//
+// A card that really is playable costs nothing: they score. Null when our play
+// orders nothing.
 function commandedPlayCost(view, conventions) {
-  if (!conventions.forcedPlaySignals || view.hintTokens > 1) return null;
+  // Only with the bank empty. A signal is only ever SENT at zero tokens (see
+  // forcedPlayStep), so that is the only place a play of ours can be taken for
+  // one; with a token still in hand the partner is not stuck — we can hint them
+  // out of it — and holding plays back there just made them spend the token
+  // stalling while we sat on a card they had asked for.
+  if (!conventions.forcedPlaySignals || view.hintTokens > 0) return null;
   const me = view.viewerIndex;
   const other = 1 - me;
   if (!deadlocked(view, other, me, conventions)) return null;
-  const set = pointerSet(view, other, null);
-  if (set.length === 0) return null; // nothing they would fire at
-  let worst = 0;
-  for (const i of set) {
-    const card = view.players[other].hand[i];
-    if (isPlayable(view, card.color, card.number)) continue;
-    worst = Math.max(worst, discardCost(view, card.color, card.number));
-  }
+  const pointed = pointerSet(view, other, null)[0];
+  if (pointed == null) return null; // nothing they would fire at
+  const card = view.players[other].hand[pointed];
+  if (isPlayable(view, card.color, card.number)) return 0;
+  const cost = discardCost(view, card.color, card.number);
   // On the last fuse a commanded misfire ends the game, which costs every point
   // still on the table — no discard of ours is ever worse than that.
-  if (worst > 0 && view.fuseTokens === 1) return Infinity;
-  return worst;
+  if (cost > 0 && view.fuseTokens === 1) return Infinity;
+  return cost;
 }
 
 // The pile points our own alternative costs: the discard we would make instead

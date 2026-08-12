@@ -1068,18 +1068,17 @@ test('bot: a play is no order when the player could not have discarded', () => {
   assert.equal(memA.fpRole, null, 'so nothing it does is a signal');
 });
 
-test('bot: withholds a play that would order the partner into a costly one', () => {
-  // Ann is locked and the bot holds a chop, so the bot's play is an ORDER: she
-  // answers it by playing what the pointer reaches. Her candidates include the
-  // last white 2 — four pile points — against a chop the bot barely values, so
-  // the play is not the bot's to make however good it is for the bot.
+// Ann locked with every card clued, the bot holding a chop and no tokens left:
+// the bot's play is an order she answers by playing the card the pointer reaches
+// — her OLDEST possibly-playable one, which is whatever `annFirst` puts in front.
+function orderedPlayPair(annFirst, annSecond) {
   const s = craftedState(
-    ['yellow_1', 'red_2', 'yellow_2', 'white_2', 'blue_2'],
+    ['yellow_1', annFirst, annSecond, 'yellow_2', 'blue_2'],
     ['green_1', 'white_2', 'red_4', 'blue_4', 'yellow_5'],
     { next: ['white_4'] },
   );
   playAction(s, 0, 0);                 // yellow 1; Ann draws white_4
-  hintAction(s, 1, 0, 'number', 2);    // locks Ann's four 2s
+  hintAction(s, 1, 0, 'number', 2);    // locks Ann's three 2s
   hintAction(s, 0, 1, 'number', 5);    // filler (touches yellow_5)
   discardAction(s, 1, 1);              // white_2 out → Ann's white_2 is the last copy
   hintAction(s, 0, 1, 'number', 5);
@@ -1091,12 +1090,31 @@ test('bot: withholds a play that would order the partner into a costly one', () 
   hintAction(s, 0, 1, 'color', 'green'); // ...down to 0 tokens, target re-marked
   assert.equal(chopIndex(s.players[0].hand), -1, 'Ann is locked');
   assert.ok(chopIndex(s.players[1].hand) >= 0, 'the bot could discard instead');
+  assert.equal(s.hintTokens, 0, 'and the bank is empty');
+  return s;
+}
 
+test('bot: withholds a play that would order the partner into a costly one', () => {
+  // The pointer reaches Ann's last white 2 — four pile points — against a chop
+  // the bot barely values. Not the bot's play to make, however good it is for
+  // the bot.
+  const s = orderedPlayPair('white_2', 'red_2');
   const off = decide(viewState(s, 1), { ...STANDARD_CONVENTIONS, forcedPlaySignals: false }, {});
   assert.deepEqual(off.action, { type: 'play', cardIndex: 0 },
     `with the convention off it simply plays: ${off.reason}`);
   const on = decide(viewState(s, 1), undefined, {});
   assert.equal(on.action.type, 'discard', `with it on the play is withheld: ${on.reason}`);
+});
+
+test('bot: makes the same play when the order it carries is cheap', () => {
+  // Same position and the same last white 2 in Ann's hand — only now the
+  // pointer reaches a red 2 first, whose twin is still out there. Losing that
+  // costs nothing, so there is nothing to stay quiet about.
+  // Pricing the WORST card the pointer might ever reach instead of the one it
+  // does had the bot sitting on plays while its partner burned hints stalling.
+  const s = orderedPlayPair('red_2', 'white_2');
+  const { action, reason } = decide(viewState(s, 1), undefined, {});
+  assert.deepEqual(action, { type: 'play', cardIndex: 0 }, reason);
 });
 
 test('bot: a discard with no chop and no play is not an alarm', () => {
