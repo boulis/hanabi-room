@@ -36,10 +36,33 @@ function timestampSlug(d = new Date()) {
   );
 }
 
-export async function openSave(state, hostId, botIds = new Set()) {
+// Write a brand-new save file, never over an existing one. The name carries
+// the start time to the millisecond, which is unique in practice but not by
+// construction: two games started in the same millisecond in the same variant
+// name the same file, and a plain writeFile would silently truncate the first
+// one's log — losing a game in progress. Exclusive create turns that into an
+// EEXIST we can answer by advancing the stamp a millisecond at a time until a
+// free name turns up. Only the name moves; nothing inside the file reads it,
+// and a stamp a few ms ahead of the header's startedAt is of no consequence.
+const MAX_NAME_ATTEMPTS = 1000;
+
+async function writeNewSave(suffix, contents) {
   await ensureSavedDir();
-  const filename = `${timestampSlug()}-${state.variantId}.jsonl`;
-  const filePath = path.join(savedDir(), filename);
+  const started = Date.now();
+  for (let step = 0; step < MAX_NAME_ATTEMPTS; step++) {
+    const name = `${timestampSlug(new Date(started + step))}-${suffix}.jsonl`;
+    const filePath = path.join(savedDir(), name);
+    try {
+      await fs.writeFile(filePath, contents, { flag: 'wx' });
+      return filePath;
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+    }
+  }
+  throw new Error(`No free save filename for ${suffix} after ${MAX_NAME_ATTEMPTS} tries`);
+}
+
+export async function openSave(state, hostId, botIds = new Set()) {
   const header = {
     kind: 'start',
     startedAt: new Date().toISOString(),
@@ -57,8 +80,7 @@ export async function openSave(state, hostId, botIds = new Set()) {
     })),
     deck: state.initialDeckCards,
   };
-  await fs.writeFile(filePath, JSON.stringify(header) + '\n');
-  return filePath;
+  return writeNewSave(state.variantId, JSON.stringify(header) + '\n');
 }
 
 export async function appendEvent(filePath, event) {
@@ -452,11 +474,7 @@ export async function branchSave(basename, uptoEvents) {
   const kept = [lines[0], ...lines.slice(1, 1 + upto)];
   const header = parseLineSafe(lines[0]);
   const variant = header?.variantId ?? 'unknown';
-  const filename = `${timestampSlug()}-branch-${variant}.jsonl`;
-  const filePath = path.join(savedDir(), filename);
-  await ensureSavedDir();
-  await fs.writeFile(filePath, kept.join('\n') + '\n');
-  return filePath;
+  return writeNewSave(`branch-${variant}`, kept.join('\n') + '\n');
 }
 
 // --- Library: every save summarized for the server-lobby listing. Entries
