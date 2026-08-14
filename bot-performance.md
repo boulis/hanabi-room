@@ -1750,3 +1750,65 @@ rainbowCriticalBlackReverse/35        2 28.86    21   35        1      0        
 rainbowCriticalBlackReverse/35        3 32.64    25   35        8      0           0.42
 rainbowCriticalBlackReverse/35        4 31.70    25   35        6      0           0.44
 ```
+
+## 2.26 — a turn spent speaking is a turn that cannot lose a card
+
+Three players, and the hint you are about to give is for the seat *after* the
+next one. The next player can give it just as well — and if they do, their turn
+is speech, so the chop you were about to spend a token protecting was never in
+danger this round. Who is responsible for what, in other words, depends on what
+everyone else's turn is already committed to.
+
+`turnOutlook` reads that commitment from our own chair: `play` (a play the
+conventions oblige), `hint` (they cannot discard, or they owe someone a hint),
+`trash` (a card they can prove worthless — let them throw it, it costs the team
+nothing and hands back a token), `discard`. The save scan, which until now knew
+only one reason a teammate was unavailable — that they were busy playing — now
+reads all of them.
+
+The lesson was in the difference between two of those grades, and it is worth
+about 0.7 a row.
+
+**A locked hand is a fact.** Every card clued or guarded: there is nothing there
+to throw, whatever we do next. So their chop needs nothing from us, and the
+hint they owe is theirs to give — we leave it alone (`leaveHintTo`), which is
+what turns their forced turn into a useful one instead of a stall.
+
+**An owed hint is a forecast**, and it survives only as long as its reason. The
+first cut treated the two alike, and gave the hint itself the same turn it
+skipped the save — taking away the very reason the teammate had to speak, so
+they discarded the chop we had just declined to protect. Last copies thrown per
+game went 1.29 -> 2.12 and the table lost 0.69 a row. Wiring the abstention in
+recovered most of it (1.85) but not all: forecasts are dissolved by our own
+move, and each round we postpone is the same bet taken again. So a forecast no
+longer cancels the save. It only lets our own play go first, which is the one
+thing the save currently outranks — and with no play of our own the save still
+happens, so a wrong forecast costs a turn rather than a card.
+
+**Never over a last copy.** Occupying a turn postpones the danger by one round;
+a save ends it for good. That trade is fine for a card whose twin is still in
+the deck and losing for one that cannot be replaced.
+
+Whole table at 200 seeds: 28.806 -> 28.858 mean/row, perfect games 1010 ->
+1060, fuse-outs 22 -> 17. Every 3- and 4-player row is neutral or better bar
+two at -0.05 and -0.02; 2-player rows are untouched, there being no seat to
+defer to.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.94    18   25       30      0           0.28
+simple/25                             3 24.34    22   25       31      0           0.34
+simple/25                             4 24.38    21   25       32      0           0.58
+rainbow/30                            2 28.30    22   30       16      0           0.22
+rainbow/30                            3 29.50    27   30       33      0           0.30
+rainbow/30                            4 29.28    26   30       29      0           0.38
+rainbowCritical/30                    2 27.38    22   30       11      0           0.48
+rainbowCritical/30                    3 28.78    21   30       23      0           0.48
+rainbowCritical/30                    4 27.78     4   30       10      1           0.68
+rainbowCriticalBlack/35               2 30.62    21   35        4      0           0.58
+rainbowCriticalBlack/35               3 33.56    28   35       15      0           0.42
+rainbowCriticalBlack/35               4 32.42    10   35       12      1           0.54
+rainbowCriticalBlackReverse/35        2 28.86    21   35        1      0           0.42
+rainbowCriticalBlackReverse/35        3 32.58    25   35        7      1           0.56
+rainbowCriticalBlackReverse/35        4 31.98    25   35        8      0           0.44
+```

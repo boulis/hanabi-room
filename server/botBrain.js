@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.25';
+export const BOT_VERSION = '2.26';
 
 // Thresholds for the free gamble (see gambleChance): better-than-even odds,
 // and never on the last fuse. Both were swept — the score plateau runs from
@@ -669,6 +669,69 @@ function hasPendingPlay(view, seat, conventions = STANDARD_CONVENTIONS, reader =
   // make — that mismatch used to leave a colour-clued card nobody would touch
   // while we withheld further help, deadlocking both sides into stalls.
   return colorPlayTargets(hand, (slot) => possiblyPlayable(view, combos[slot])).length > 0;
+}
+
+// Who does this seat owe a hint to — a chop they have to save, or a play they
+// can hand over? Returns that seat, or -1. Their own priorities, read from our
+// chair, so the answer is what they will actually do rather than what we would.
+//
+// Their hand toward US is the blind spot: we cannot see our own cards, so a
+// hint they owe us is invisible here. That only ever turns a "yes" into a "no",
+// which costs a deferral and never a card — the mistake we cannot afford is
+// believing their turn is spoken for when it is free.
+function hintOwedTo(view, seat, conventions = STANDARD_CONVENTIONS) {
+  if (view.hintTokens <= 0) return -1; // nothing to say it with
+  for (let step = 1; step < view.players.length; step++) {
+    const idx = (seat + step) % view.players.length;
+    if (idx === view.viewerIndex) continue;
+    if (hasPendingPlay(view, idx, conventions)) continue; // they will play, not be hinted
+    const hand = view.players[idx].hand;
+    const chop = chopIndex(hand);
+    if (chop >= 0 && saveWorthy(view, hand[chop])) return idx;
+    // The first player free to act is the only one they are responsible for;
+    // anyone past that is somebody else's to cover (the same rule our own save
+    // scan follows), so the search stops here either way.
+    return findPlayHint(view, idx, conventions) ? idx : -1;
+  }
+  return -1;
+}
+
+// How a seat's turn is going to be spent, as far as we can tell from ours. The
+// question behind it is only ever "will they discard?", because that is the
+// one turn that can lose a card while we watch.
+//
+//   play    they hold a play the conventions oblige
+//   hint    they cannot discard (locked hand) or owe a hint to someone after
+//           them — either way their turn is speech, not a throw
+//   trash   they hold a card they can prove worthless; throwing it costs the
+//           team nothing and hands back a token
+//   discard they will throw a card that might still be worth something
+//
+// A locked hand counts as speech only while a token remains: with none they
+// are forced to throw a card the team paid hints to keep.
+//
+// The reading is only worth as much as our own next move lets it be: an owed
+// hint is a reason to speak that WE can take away by giving that hint
+// ourselves, and then they discard after all. Whoever leans on this outlook
+// has to leave `owed` alone for the turn (see the save scan and the play-hint
+// loop) — measured, taking it back was worth −0.7 a row and 0.8 extra last
+// copies thrown per game, the single worst thing tried here.
+// `certain` separates the two grades of "they will not discard". A locked hand
+// is a fact about their cards: there is nothing there to throw, whatever we do
+// with our turn. An owed hint is only a forecast — it survives exactly as long
+// as the reason behind it, and our own move is the likeliest thing to dissolve
+// it. Only the fact is safe to bet a card on.
+function turnOutlook(view, seat, conventions = STANDARD_CONVENTIONS) {
+  if (hasPendingPlay(view, seat, conventions)) return { kind: 'play', owed: -1, certain: true };
+  const locked = chopIndex(view.players[seat].hand) < 0;
+  const owed = hintOwedTo(view, seat, conventions);
+  if (view.hintTokens > 0 && (locked || owed >= 0)) {
+    return { kind: 'hint', owed, certain: locked };
+  }
+  if (handCombos(view, seat).some((cs) => knownUseless(view, cs))) {
+    return { kind: 'trash', owed: -1, certain: false };
+  }
+  return { kind: 'discard', owed: -1, certain: false };
 }
 
 // Score a valid play hint so competing options can be compared. Immediate
@@ -1687,12 +1750,51 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   // still exposes a second endangered card — an alarm discard (see
   // findAlarmMove) makes the next player guard instead.
   let urgentSave = null;
+  // A hint we are deliberately not giving, because a player ahead of us is
+  // going to give it and their turn being spent on it is what keeps their own
+  // chop off the discard pile. -1 when we owe nobody that courtesy.
+  let leaveHintTo = -1;
+  // Set when the save we found can wait a turn — their own turn looks spoken
+  // for, so our play goes first (see the scan below).
+  let saveMayWait = false;
   if (conventions.numberHintSaves) {
     for (let step = 1; step < view.players.length; step++) {
       const idx = (me + step) % view.players.length;
-      if (hasPendingPlay(view, idx, conventions)) continue;
+      const outlook = turnOutlook(view, idx, conventions);
+      if (outlook.kind === 'play') continue;
       const hand = view.players[idx].hand;
       const chop = chopIndex(hand);
+      // A turn spent speaking is a turn that cannot lose a card, so a teammate
+      // who will not discard needs no save from us this round. That comes in
+      // two grades, and they have to be spent differently — the whole lesson of
+      // this rule is that the difference is worth about 0.7 a row.
+      //
+      // CERTAIN — a locked hand. Every card is clued or guarded, so there is
+      // nothing there to throw whatever we do next. Their chop is not in
+      // danger, and the player they owe a hint to is covered by them, so the
+      // scan stops here rather than passing to the next seat. It commits us in
+      // return: `leaveHintTo` carries their hint out of this scan and the
+      // play-hint loop must not give it. A locked player is going to speak
+      // regardless — leaving them this hint is what makes their forced turn
+      // useful instead of a stall.
+      if (outlook.kind === 'hint' && outlook.certain) {
+        leaveHintTo = outlook.owed;
+        break;
+      }
+      // LIKELY — they owe someone a hint. That is a forecast, not a fact: it
+      // survives only as long as its reason, and our own move is the likeliest
+      // thing to dissolve it. So it does not cancel the save; it only lets our
+      // own play go first, which is the one thing the save currently outranks.
+      // With no play of our own the save still happens below at step 3, so a
+      // wrong forecast costs a turn's delay rather than a card.
+      //
+      // Never over a last copy. Occupying their turn postpones the danger by
+      // one round; a save ends it for good. Postponing repeatedly on a card
+      // that cannot be replaced is the same bet taken again every round, and
+      // it loses: allowing it threw 1.85 last copies a game against 1.29.
+      const chopCritical = chop >= 0
+        && identityCritical(view, hand[chop].color, hand[chop].number);
+      if (outlook.kind === 'hint' && !chopCritical) saveMayWait = true;
       if (chop >= 0 && saveWorthy(view, hand[chop])) {
         const save = view.hintTokens > 0 ? pickSave(view, idx, chop, conventions) : null;
         const exposed = save ? save.exposed ?? 0 : 0;
@@ -1804,7 +1906,7 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
   // 0. The save outranks even our own play: the play keeps for next turn,
   //    the endangered card doesn't. Exception: in the final round a deferred
   //    play may never happen, so plays come first there.
-  if (urgentSave && view.finalTurn === null) return urgentSave;
+  if (urgentSave && !saveMayWait && view.finalTurn === null) return urgentSave;
 
   // 0b. Forced-play signals (2-player deadlock; needs driver memory) — both
   //     the sender's pointer moves and the receiver's commanded play.
@@ -1907,6 +2009,10 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
     for (let step = 1; step < view.players.length; step++) {
       const idx = (me + step) % view.players.length;
       if (hasPendingPlay(view, idx, conventions)) continue; // they already have a play
+      // Not ours to give: we skipped saving a teammate's chop precisely because
+      // this hint was going to occupy their turn. Saying it here would leave
+      // them with nothing to do but throw the card we declined to protect.
+      if (idx === leaveHintTo) continue;
       const hint = findPlayHint(view, idx, conventions);
       if (hint) {
         return {

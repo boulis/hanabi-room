@@ -1540,3 +1540,54 @@ test('bot vs bot: full games end legally with a sane score', () => {
     assert.ok(score >= 8, `seed ${seed} (${playerCount}p): score ${score} suspiciously low`);
   }
 });
+
+test('bot (3p): leaves the far hint to a locked player whose turn is a hint anyway', () => {
+  // Bot's hand is entirely clued, so it has nothing it can throw: its turn is
+  // going to be speech whatever we do. Giving Cy's play hint ourselves would
+  // spend our turn on the one thing that player's forced turn can do for free.
+  const s = craftedState3(
+    ['white_4', 'white_3', 'blue_4', 'green_4', 'yellow_4'],
+    ['red_3', 'yellow_3', 'green_3', 'blue_3', 'white_3'],
+    ['yellow_3', 'blue_3', 'red_4', 'red_2', 'green_1'],
+  );
+  hintAction(s, 0, 1, 'number', 3); // clues every card Bot holds — locked
+  hintAction(s, 1, 0, 'number', 3); // harmless, hands the turn on
+  hintAction(s, 2, 0, 'number', 3); // …and back to us
+  const { action, reason } = decide(viewState(s, 0));
+  assert.notEqual(action.type, 'hint', `Cy's hint is Bot's to give: ${reason}`);
+  assert.deepEqual(action, { type: 'discard', cardIndex: 0 }, reason);
+});
+
+test('bot (3p): a save that can wait yields to our own play — but never over a last copy', () => {
+  // Bot owes Cy a play hint, so Bot's turn is speech and their chop is not in
+  // danger this round. Our own play goes first; the save is still there next
+  // turn, because we always act immediately before them.
+  const waits = craftedState3(
+    ['red_1', 'white_4', 'blue_4', 'green_4', 'yellow_4'],
+    ['green_2', 'white_3', 'blue_3', 'red_3', 'blue_4'],
+    ['yellow_4', 'white_4', 'green_4', 'red_4', 'blue_1'],
+  );
+  // The "3" leaves Bot two unclued cards: the chop it lands on (the lone green
+  // 2) and a spare, so the save we are weighing here is one that can actually
+  // be given — a precaution that would lock their hand is refused outright.
+  hintAction(waits, 0, 1, 'number', 3);
+  hintAction(waits, 1, 2, 'number', 4); // leaves Cy's chop on the playable blue 1
+  hintAction(waits, 2, 0, 'number', 1); // gives us a play of our own
+  const a = decide(viewState(waits, 0));
+  assert.deepEqual(a.action, { type: 'play', cardIndex: 0 }, a.reason);
+
+  // Same shape, but Bot's chop is the only green 5 there will ever be. A save
+  // ends that danger for good; occupying their turn only postpones it, and
+  // postponing a last copy is the same bet taken again every round.
+  const cannotWait = craftedState3(
+    ['red_1', 'white_4', 'blue_4', 'green_4', 'yellow_4'],
+    ['green_5', 'white_3', 'blue_3', 'red_3', 'blue_4'],
+    ['yellow_4', 'white_4', 'green_4', 'red_4', 'blue_1'],
+  );
+  hintAction(cannotWait, 0, 1, 'number', 3);
+  hintAction(cannotWait, 1, 2, 'number', 4);
+  hintAction(cannotWait, 2, 0, 'number', 1);
+  const b = decide(viewState(cannotWait, 0));
+  assert.equal(b.action.type, 'hint', `the green 5 cannot wait: ${b.reason}`);
+  assert.equal(b.action.toPlayerIndex, 1, b.reason);
+});
