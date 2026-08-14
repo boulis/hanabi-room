@@ -66,7 +66,7 @@ The lobby also has an **Import deck order** file input so the host can hand-pick
 
 On `npm start`, if any save's last event isn't an `end` (server crash, killed mid-game, or someone undid the game-ending move and kept playing) the host is prompted in the terminal to resume one of the 3 most recent — or type a filename for any other. Press Enter to skip. The prompt is silently skipped when stdin isn't a TTY (e.g. backgrounded for the smoke test) or when `HANABI_NO_RESUME_PROMPT=1` is set. After a resume, players reconnect by reopening their browser; their existing seat is recovered by `playerId` or by name.
 
-There's no step-through replay viewer yet; the JSONL is the source of truth for reconstruction, and re-running a finished game from scratch only needs the seed (paste it into the lobby).
+Any save can be stepped through from the server lobby: the **Review** button on a Game library row replays it move by move, showing every hand (including the bots' recorded reasoning). **Play from move N** branches a save into a new game that carries on from that point, leaving the original untouched. Re-running a finished game from scratch only needs the seed — paste it into the lobby.
 
 ## Game library and bot par
 
@@ -89,3 +89,5 @@ npm run bot-scores                      # (re)compute bot par for every save
 ```
 
 See [CLAUDE.md](./CLAUDE.md) for the architecture overview — module layout, hint mechanics, end-of-deck rules, WebSocket protocol, etc.
+
+Open items and the decisions taken on them live in [future-work.md](./future-work.md); what each bot version changed is in [bot-performance.md](./bot-performance.md).
