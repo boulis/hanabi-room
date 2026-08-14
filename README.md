@@ -90,4 +90,4 @@ npm run bot-scores                      # (re)compute bot par for every save
 
 See [CLAUDE.md](./CLAUDE.md) for the architecture overview — module layout, hint mechanics, end-of-deck rules, WebSocket protocol, etc.
 
-Open items and the decisions taken on them live in [future-work.md](./future-work.md); what each bot version changed is in [bot-performance.md](./bot-performance.md).
+Open bot work and the decisions taken on it live in [BOT_ROADMAP.md](./BOT_ROADMAP.md); what each bot version changed, with benchmarks, is in [bot-performance.md](./bot-performance.md).
