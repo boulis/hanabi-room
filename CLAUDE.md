@@ -14,6 +14,7 @@ A self-hosted Hanabi card game for a small group of friends (2–5 players). One
 - `node --test server/game.test.js` — run a single test file
 - `PORT=3999 node server/index.js & sleep 0.6 && PORT=3999 node smoke.mjs` — end-to-end smoke test against a live WS server (`smoke.mjs` is the script)
 - `npm run benchmark` (or `node benchmark.mjs --seeds N --players 2,3 --variants simple --end lax`) — deterministic bot-vs-bot score statistics over fixed seeds. Run it before and after any bot-brain change and put the numbers in the commit message; results are never committed as files since the same code always reproduces them.
+- `npm run deferred-opportunity` (or `node deferred-opportunity.mjs --seeds N --players 3,4 --variants simple`) — measures how often a *deferred* play hint would be available and provable-on-arrival (see `BOT_ROADMAP.md`). Deterministic like the benchmark, but far slower — it clones the state per candidate hint, so 900 games is ~3 minutes.
 - `npm run bot-scores` — compute the bot par score of every saved game that lacks one or whose stored par came from an older `BOT_VERSION` (see Bot par score). The server does the same pass in the background at boot; this is the one-off for a fresh library or right after a version bump.
 
 Requires Node ≥ 20 (uses ES modules and `node:test`).

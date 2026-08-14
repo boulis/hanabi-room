@@ -9,6 +9,7 @@
     "bot": "node bot.mjs",
     "benchmark": "node benchmark.mjs",
     "bot-scores": "node bot-scores.mjs",
+    "deferred-opportunity": "node deferred-opportunity.mjs",
     "test": "node --test server/*.test.js"
   },
   "dependencies": {

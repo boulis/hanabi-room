@@ -86,6 +86,8 @@ node --test server/rules.test.js        # one file
 PORT=3999 node server/index.js &        # boot for the smoke test
 PORT=3999 node smoke.mjs                # end-to-end WS protocol check
 npm run bot-scores                      # (re)compute bot par for every save
+npm run benchmark                       # deterministic bot-vs-bot score statistics
+npm run deferred-opportunity            # measure the deferred-play opportunity (slow)
 ```
 
 See [CLAUDE.md](./CLAUDE.md) for the architecture overview — module layout, hint mechanics, end-of-deck rules, WebSocket protocol, etc.

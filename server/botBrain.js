@@ -96,7 +96,7 @@ function neededNumber(view, color) {
   return suit.direction === 'up' ? pile.top + 1 : pile.top - 1;
 }
 
-function isPlayable(view, color, number) {
+export function isPlayable(view, color, number) {
   return neededNumber(view, color) === number;
 }
 
@@ -218,7 +218,7 @@ export function knownUseless(view, combos) {
   return combos.length > 0 && combos.every(([c, n]) => isUseless(view, c, n));
 }
 
-function possiblyPlayable(view, combos) {
+export function possiblyPlayable(view, combos) {
   return combos.some(([c, n]) => isPlayable(view, c, n));
 }
 
@@ -521,7 +521,7 @@ function onesPlayObligations(view, hand, combos) {
 // as "it would misfire" while the receiver's own rule reads that very card as
 // a keep — leaving the black 1, the one card there the hint is unambiguous
 // about, the one card that could never be saved.
-function onesPlayOrder(view, seat, hand, combos, conventions = STANDARD_CONVENTIONS) {
+export function onesPlayOrder(view, seat, hand, combos, conventions = STANDARD_CONVENTIONS) {
   if (!conventions.playAllOnes) return [];
   const ones = onesPlayObligations(view, hand, combos);
   if (ones.some((i) => combos[i].length === 1)) return [];
@@ -626,7 +626,7 @@ function touchedColorSet(view, hintColor) {
   );
 }
 
-function colorHintTouches(view, hand, hintColor) {
+export function colorHintTouches(view, hand, hintColor) {
   const tset = touchedColorSet(view, hintColor);
   return hand.map((card, i) => ({ card, i })).filter(({ card }) => tset.has(card.color));
 }

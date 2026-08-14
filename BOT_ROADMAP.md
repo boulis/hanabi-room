@@ -214,7 +214,9 @@ exhaustively.
 every decision with a token to spend, the hints whose focus card is not playable
 now, *is* playable once the queue of already-obliged plays resolves, and which
 the receiver could **prove** playable when that moment came. Colour hints only:
-a number hint means keep, so it cannot carry a play order today.
+a number hint means keep, so it cannot carry a play order today. Re-run it with
+`npm run deferred-opportunity` (`deferred-opportunity.mjs`; deterministic, and
+the numbers below are `--seeds 60 --players 2,3,4`).
 
 | players | turns/game offering one | distinct cards/game | …on a turn that was otherwise a discard or a stall |
 | --- | --- | --- | --- |
