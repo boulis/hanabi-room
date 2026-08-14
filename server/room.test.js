@@ -646,6 +646,43 @@ test('save: each action appends an event line', async () => {
     assert.equal(ev.kind, 'action');
     assert.equal(ev.playerId, alice.id);
     assert.equal(ev.action.type, 'discard');
+    // The event's time is when the move was made, not when the append got
+    // around to running: replay stamps the reconstructed log entries from it,
+    // so a gap between the two clock readings is a resumed log that differs
+    // from the live one it replays.
+    assert.equal(
+      Date.parse(ev.t),
+      room.state.log[0].at,
+      'the save records the move\'s own timestamp',
+    );
+  });
+});
+
+test('save: a resumed log matches the live one even when the clock ticks', async () => {
+  await withTmpSaveDir(async () => {
+    // Every reading of the clock a millisecond after the last, so the write
+    // can never land in the same millisecond as the move. Without the fix this
+    // is exactly the (rare, real) case where resume rebuilt timestamps the
+    // live game never had.
+    const realNow = Date.now;
+    let tick = 1_770_000_000_000;
+    Date.now = () => tick++;
+    try {
+      const { room, alice, bob } = await setupRoom();
+      // Spend a token through the save (not by poking state) so the replay
+      // reaches the same place, and discarding is legal in both.
+      const bobN = room.state.players[1].hand[0].number;
+      const aliceN = room.state.players[0].hand[0].number;
+      await applyAction(room, alice.id, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: bobN });
+      await applyAction(room, bob.id, { type: 'hint', toPlayerIndex: 0, hintType: 'number', value: aliceN });
+      // A discard logs the draw that follows it, so this is the action whose
+      // entries have to share one timestamp.
+      await applyAction(room, alice.id, { type: 'discard', cardIndex: 0 });
+      const resumed = await resumeRoom(room.savePath);
+      assert.deepEqual(resumed.state.log, room.state.log);
+    } finally {
+      Date.now = realNow;
+    }
   });
 });
 

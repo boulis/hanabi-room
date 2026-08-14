@@ -317,7 +317,11 @@ export async function voteAbandon(room, playerId) {
     room.state.endedAt = Date.now();
     room.abandonVotes.clear();
     room.undoStack = [];
-    await safeAppend(room, { kind: 'end', endReason: 'abandoned' });
+    await safeAppend(room, {
+      kind: 'end',
+      endReason: 'abandoned',
+      t: new Date(room.state.endedAt).toISOString(), // when it ended, not when it was written
+    });
     await recordBotScore(room);
     return { abandoned: true };
   }
@@ -373,12 +377,23 @@ export async function applyAction(room, playerId, action, reasoning) {
   }
   const event = { kind: 'action', playerId, action };
   if (why) event.reasoning = why;
+  // Timestamp the event with when the move was made, not when the write got
+  // around to starting. Replay stamps the reconstructed log from this, so any
+  // gap between the two clock reads is a resumed log that differs from the
+  // live one it replays — which is exactly what it used to be.
+  const movedAt = room.state.log[logLenBefore]?.at;
+  if (movedAt != null) event.t = new Date(movedAt).toISOString();
   await safeAppend(room, event);
   if (room.state.status === 'finished') {
     // Keep savePath set: an undo + continuation after game-over should still
     // be persisted. The 'end' line is metadata; further events appended after
     // it supersede it on replay.
-    await safeAppend(room, { kind: 'end', endReason: room.state.endReason });
+    await safeAppend(room, {
+      kind: 'end',
+      endReason: room.state.endReason,
+      // Same reasoning: replay restores endedAt from this line.
+      ...(room.state.endedAt != null ? { t: new Date(room.state.endedAt).toISOString() } : {}),
+    });
     await recordBotScore(room);
   }
 }

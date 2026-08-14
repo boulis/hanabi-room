@@ -674,3 +674,30 @@ test('annotate: validates note as string and guarded as boolean', () => {
   assert.throws(() => annotateAction(s, 0, id, { note: 7 }), GameError);
   assert.throws(() => annotateAction(s, 0, id, { guarded: 'yes' }), GameError);
 });
+
+test('log: every entry one action produces carries a single timestamp', () => {
+  // A ticking clock — every reading a millisecond after the last — so a second
+  // reading inside one action cannot be missed. Live, that second reading only
+  // differed when a real millisecond boundary fell between a discard and the
+  // draw it triggers: rare, and enough to make a resumed log differ from the
+  // live one it replays about once in a hundred round trips, because replay
+  // stamps every entry of an action from the save's single event time.
+  const realNow = Date.now;
+  let tick = 1_770_000_000_000;
+  Date.now = () => tick++;
+  try {
+    const state = freshState();
+    state.hintTokens -= 1; // discarding is illegal at the maximum
+    const before = state.log.length;
+    discardAction(state, 0, 0); // pushes a 'discard' entry AND a 'draw' entry
+    const produced = state.log.slice(before);
+    assert.ok(produced.length > 1, 'a discard logs the draw that follows it');
+    assert.equal(
+      new Set(produced.map((e) => e.at)).size,
+      1,
+      'one move, one timestamp',
+    );
+  } finally {
+    Date.now = realNow;
+  }
+});

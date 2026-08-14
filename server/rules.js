@@ -52,7 +52,9 @@ function drawIfPossible(state, playerIndex) {
 function endGame(state, reason) {
   state.status = 'finished';
   state.endReason = reason;
-  state.endedAt = Date.now();
+  // The move that ended the game is when it ended — same reading the log
+  // entries get, so a resumed game reports the same instant (see pushLog).
+  state.endedAt = actionAt ?? Date.now();
 }
 
 function advanceTurn(state) {
@@ -89,6 +91,20 @@ function advanceTurn(state) {
   state.currentPlayer = next;
 }
 
+// One clock read per action, shared by every log entry that action produces.
+// An action is one move: the save records it as a single event with a single
+// timestamp, and replay stamps every entry that event produced from it. Reading
+// the clock again per entry meant a discard whose draw landed a millisecond
+// later reconstructed with timestamps the live game never had — a resumed log
+// that differed from the log it was resumed from, roughly one run in five.
+// The impurity here is the clock itself, which this module was already reading;
+// `actionAt` only makes one reading serve the whole action.
+let actionAt = null;
+
+function beginAction() {
+  actionAt = Date.now();
+}
+
 function pushLog(state, event) {
   // seq is a monotonic id across the whole game, unlike turn: after an undo,
   // the replacement action re-uses the same turn number as the action it
@@ -97,7 +113,12 @@ function pushLog(state, event) {
   // `at` is wall-clock time, used only for post-game stats (per-player move
   // time). Replay stamps it from the save event's timestamp instead, so a
   // reconstructed game reports the times it was really played at.
-  state.log.push({ turn: state.turn, seq: state.nextLogSeq++, at: Date.now(), ...event });
+  state.log.push({
+    turn: state.turn,
+    seq: state.nextLogSeq++,
+    at: actionAt ?? Date.now(),
+    ...event,
+  });
 }
 
 // The log entries an undone action contributed: everything past the snapshot's
@@ -130,6 +151,7 @@ function chopIndex(hand, { skipGuarded } = {}) {
 }
 
 export function playAction(state, playerIndex, cardIndex) {
+  beginAction();
   requireTurn(state, playerIndex);
   const card = requireCard(state, playerIndex, cardIndex);
   const wasTouched = card.colorClued || card.numberClued;
@@ -180,6 +202,7 @@ export function playAction(state, playerIndex, cardIndex) {
 }
 
 export function discardAction(state, playerIndex, cardIndex) {
+  beginAction();
   requireTurn(state, playerIndex);
   if (state.hintTokens >= MAX_HINT_TOKENS) {
     throw new GameError('Cannot discard at maximum hint tokens', 'tokens_full');
@@ -231,6 +254,7 @@ function cardTouchedByColor(variant, card, hintColor) {
 }
 
 export function hintAction(state, fromIndex, toIndex, hintType, value) {
+  beginAction();
   requireTurn(state, fromIndex);
   if (state.hintTokens <= 0) throw new GameError('No hint tokens left', 'no_tokens');
   if (fromIndex === toIndex) throw new GameError('Cannot hint yourself', 'self_hint');

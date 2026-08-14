@@ -46,7 +46,11 @@ async function withTmpSaveDir(fn) {
   }
 }
 
-async function waitFor(pred, label, timeoutMs = 2000) {
+// The budget is a safety net against a hang, not an assertion about speed:
+// nine test files run at once and a loaded box can starve this process for
+// seconds. No test should depend on how long the wait actually takes — see
+// withRemindWait for the timer windows that used to be raced.
+async function waitFor(pred, label, timeoutMs = 10000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (pred()) return;
@@ -392,36 +396,80 @@ async function alarmSetup(reacted) {
   return { room, bot, human };
 }
 
-test('alarm: the bot nags an unanswered guard before moving again', async () => {
+// Run `fn` with the bot's post-nag hold set to `ms`. Tests pick a window long
+// enough that they never race it: one that checks the bot HOLDS its turn wants
+// a window it cannot outlive, one that checks the bot moves on wants a window
+// that expires immediately. Asserting both across one middling window is what
+// made this file flaky — under load the process can stall past any window a
+// test could pick.
+async function withRemindWait(ms, fn) {
+  const prev = process.env.HANABI_BOT_REMIND_WAIT_MS;
+  process.env.HANABI_BOT_REMIND_WAIT_MS = String(ms);
+  try {
+    return await fn();
+  } finally {
+    if (prev === undefined) delete process.env.HANABI_BOT_REMIND_WAIT_MS;
+    else process.env.HANABI_BOT_REMIND_WAIT_MS = prev;
+  }
+}
+
+// The nag: raised, and the turn held open while it stands. The window is set
+// far longer than the test can take, so "still holding" is never a race.
+test('alarm: the bot nags an unanswered guard and holds its turn', async () => {
   await withTmpSaveDir(async () => {
     purgeRooms();
     resetBots();
-    const reacted = [];
-    const { room, human } = await alarmSetup(reacted);
+    await withRemindWait(600000, async () => {
+      const reacted = [];
+      const { room, human } = await alarmSetup(reacted);
 
-    pokeBots(room);
-    await waitFor(() => room.state.currentPlayer === 1, 'bot took its alarm turn');
-    const alarm = room.state.log.filter((e) => e.type === 'discard').pop();
-    assert.ok(alarm.reasoning?.startsWith('ALARM'), `expected an alarm (got: ${alarm.reasoning})`);
-    assert.deepEqual(reacted, [], 'nothing to nag about yet');
+      pokeBots(room);
+      await waitFor(() => room.state.currentPlayer === 1, 'bot took its alarm turn');
+      const alarm = room.state.log.filter((e) => e.type === 'discard').pop();
+      assert.ok(alarm.reasoning?.startsWith('ALARM'), `expected an alarm (got: ${alarm.reasoning})`);
+      assert.deepEqual(reacted, [], 'nothing to nag about yet');
 
-    // The human answers with a move instead of a guard — exactly the slip the
-    // reminder exists for.
-    await applyAction(room, human.id, {
-      type: 'hint', toPlayerIndex: 0, hintType: 'number', value: 1,
+      // The human answers with a move instead of a guard — exactly the slip the
+      // reminder exists for.
+      await applyAction(room, human.id, {
+        type: 'hint', toPlayerIndex: 0, hintType: 'number', value: 1,
+      });
+      pokeBots(room);
+      await waitFor(() => reacted.length === 2, 'two reminder reactions');
+      assert.deepEqual(reacted.map((r) => r.emoji), ['❗', '❗']);
+      assert.deepEqual(reacted.map((r) => r.playerIndex), [0, 0], 'the bot is the one exclaiming');
+      assert.equal(room.state.currentPlayer, 0, 'the bot holds its turn while it waits');
     });
-    pokeBots(room);
-    await waitFor(() => reacted.length === 2, 'two reminder reactions');
-    assert.deepEqual(reacted.map((r) => r.emoji), ['❗', '❗']);
-    assert.deepEqual(reacted.map((r) => r.playerIndex), [0, 0], 'the bot is the one exclaiming');
-    assert.equal(room.state.currentPlayer, 0, 'the bot holds its turn while it waits');
+    resetBots();
+  });
+});
 
-    // Unanswered, it plays on — and does not nag a second time next turn.
-    await waitFor(() => room.state.currentPlayer === 1, 'bot moved after the wait');
-    await applyAction(room, human.id, { type: 'discard', cardIndex: 4 });
-    pokeBots(room);
-    await waitFor(() => room.state.currentPlayer === 1, 'bot took its next turn');
-    assert.equal(reacted.length, 2, 'one nag per alarm');
+// …and the other half, with a window that expires at once, so "it moved on"
+// needs no guess about how long the wait was.
+test('alarm: an unanswered nag lapses — it plays on, and nags only once', async () => {
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    await withRemindWait(1, async () => {
+      const reacted = [];
+      const { room, human } = await alarmSetup(reacted);
+
+      pokeBots(room);
+      await waitFor(() => room.state.currentPlayer === 1, 'bot took its alarm turn');
+      await applyAction(room, human.id, {
+        type: 'hint', toPlayerIndex: 0, hintType: 'number', value: 1,
+      });
+      pokeBots(room);
+      await waitFor(() => reacted.length === 2, 'two reminder reactions');
+      await waitFor(() => room.state.currentPlayer === 1, 'bot moved after the wait');
+
+      // Next turn it does not nag again: an unanswered nag is dropped, not
+      // repeated every turn that follows.
+      await applyAction(room, human.id, { type: 'discard', cardIndex: 4 });
+      pokeBots(room);
+      await waitFor(() => room.state.currentPlayer === 1, 'bot took its next turn');
+      assert.equal(reacted.length, 2, 'one nag per alarm');
+    });
     resetBots();
   });
 });
@@ -454,9 +502,9 @@ test('alarm: guarding during the nag lets the bot move on at once', async () => 
   await withTmpSaveDir(async () => {
     purgeRooms();
     resetBots();
-    const prevWait = process.env.HANABI_BOT_REMIND_WAIT_MS;
-    process.env.HANABI_BOT_REMIND_WAIT_MS = '5000';
-    try {
+    // Ten minutes of hold: the bot moving on at all is then proof the guard
+    // released it, with no stopwatch to lose a race with.
+    await withRemindWait(600000, async () => {
       const reacted = [];
       const { room, human } = await alarmSetup(reacted);
       pokeBots(room);
@@ -466,21 +514,17 @@ test('alarm: guarding during the nag lets the bot move on at once', async () => 
       });
       pokeBots(room);
       await waitFor(() => reacted.length === 2, 'two reminder reactions');
+      assert.equal(room.state.currentPlayer, 0, 'still holding its turn open');
 
-      // Annotate is turn-free: the human marks their chop mid-nag and the bot
-      // stops waiting out the full 5s.
-      const started = Date.now();
+      // Annotate is turn-free: the human marks their chop mid-nag, and the
+      // broadcast that follows pokes the bot out of its wait.
       await applyAction(room, human.id, {
         type: 'annotate', cardId: room.state.players[1].hand[0].id, guarded: true,
       });
       pokeBots(room);
-      await waitFor(() => room.state.currentPlayer === 1, 'bot moved once guarded', 2000);
-      assert.ok(Date.now() - started < 4000, 'the bot did not sit out the whole wait');
-    } finally {
-      if (prevWait === undefined) delete process.env.HANABI_BOT_REMIND_WAIT_MS;
-      else process.env.HANABI_BOT_REMIND_WAIT_MS = prevWait;
-      resetBots();
-    }
+      await waitFor(() => room.state.currentPlayer === 1, 'bot moved once guarded');
+    });
+    resetBots();
   });
 });
 
@@ -655,6 +699,11 @@ test('adopt: a save and its branch open as two rooms with independent bot seats'
     assert.equal(second.state.currentPlayer, 1);
     pokeBots(second);
     await waitFor(() => second.state.turn === 2, 'second room\'s bot took its turn');
+    // Wait for the announcement itself, not just for the move: botAct applies
+    // the action and only then awaits notify, so the state is already changed
+    // while `notified` is still empty. Polling the state and asserting on the
+    // callback caught that gap about one run in six.
+    await waitFor(() => notified.length > 0, 'the move was announced');
     assert.deepEqual([...new Set(notified)], [second.id], 'broadcast went to the room that moved');
     assert.equal(first.state.turn, 1, 'the other room did not move');
 
