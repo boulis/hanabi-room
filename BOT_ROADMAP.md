@@ -15,7 +15,7 @@ for what hasn't been done.
 1. [Where we are](#where-we-are)
 2. [Small, known, localized](#small-known-localized) — the yield candidate set; the 2-player-only deferral
 3. [A `patient` convention set](#a-patient-convention-set)
-4. [Deferred plays](#deferred-plays) — the big conventions gap
+4. [Deferred plays](#deferred-plays) — the big conventions gap; opportunity measured, worth building at 3–4 players
 5. [Option A — LLM brain](#option-a--llm-brain)
 6. [Option B — reinforcement learning](#option-b--reinforcement-learning)
 7. [Repo shape and the brain seam](#repo-shape-and-the-brain-seam)
@@ -119,8 +119,9 @@ Measure before believing it.
 
 ## Deferred plays
 
-**Status: OPEN.** The largest known gap. Blocked on one table-convention
-decision, then a measurement, then possibly a staged build.
+**Status: OPEN.** The largest known gap. The opportunity has now been measured
+(below): worth building at 3–4 players, not at 2. What remains blocking is one
+table-convention decision.
 
 Raised 2026-08-13 after a live 3-player game: the bot gave a yellow hint meaning
 "keep this", the human read it as "this will be playable once Yannis plays the
@@ -207,11 +208,45 @@ as pending — 2.26's deferral logic depends on it, as do the alarm convention's
 `deadlocked`. The endgame search is unaffected — it already enumerates the future
 exhaustively.
 
+### The opportunity, measured (2026-08-14)
+
+900 bot-vs-bot games — 5 variants × 60 seeds × 3 table sizes — counting, at
+every decision with a token to spend, the hints whose focus card is not playable
+now, *is* playable once the queue of already-obliged plays resolves, and which
+the receiver could **prove** playable when that moment came. Colour hints only:
+a number hint means keep, so it cannot carry a play order today.
+
+| players | turns/game offering one | distinct cards/game | …on a turn that was otherwise a discard or a stall |
+| --- | --- | --- | --- |
+| 2 | 0.23 | **0.17** | 0.10 |
+| 3 | 1.72 | **1.51** | 0.80 |
+| 4 | 3.44 | **2.42** | 1.17 |
+
+Distinct *cards* is the value question — an opportunity standing for three turns
+is one card pre-loaded, not three.
+
+**The verdict is per table size, which the threshold above didn't anticipate.**
+At 2 players there is essentially nothing to win: 0.17 cards a game, and the
+queue of obliged plays is rarely long enough to make anything playable-later. At
+3 and 4 it clears the bar — 1.5 and 2.4 cards a game could have their hint
+before their moment rather than after it, roughly half of them on turns the bot
+currently spends discarding or stalling. So this is a 3–4 player feature, which
+is what our table plays.
+
+Read it as an upper bound on *opportunity*, not on value: a card pre-loaded is
+not a point gained, since most of those cards would get hinted a turn or two
+later anyway. What the measurement settles is that the situation is common
+enough to be worth the blast radius at 3+; only a benchmark of the built thing
+settles what the tempo is worth.
+
+The count is conservative in four places — one round of queue only, no draws
+projected, the giver's model of a teammate's deduction cannot include our own
+hand, and cards already carrying a live colour marker are excluded — so the true
+rate is somewhat higher. It also measures positions *this* bot reaches; a bot
+that pre-loads hints would reach different ones, probably with longer queues.
+
 ### Before building
 
-- **Measure the opportunity**: over a few thousand bot games, how often would a
-  deferred play hint be both legal *and* provable-on-arrival? Under ~1/game,
-  stage 2 is not worth its blast radius. Several per game, build it.
 - **The question for the table**: is "hold until provable" what we actually play?
   If our convention is the human one — trust the sender, play it when the pile
   arrives even with two candidates left — the bot will look sluggish, holding
