@@ -1468,6 +1468,93 @@ test('bot: no empty-hint signal when the room disallows empty hints', () => {
   assert.notEqual(send.action.type, 'hint', `should not hint (got ${send.reason})`);
 });
 
+// From a real game (perfect 35/35, move 61): the receiver's chop was a playable
+// black 4 — the LAST copy — and the bot parked it behind a "4" keep-hint, which
+// also left every card in the hand clued. Black is `hintMatches: 'none'`, so no
+// colour hint reaches it and a number hint means keep: the save path simply had
+// no way to say "play this". The zero-card-hint signal is the way, and it only
+// ever ran as a step-4b fallback that an urgent save returns long before.
+function blackChopSaveState(allowEmptyHints) {
+  let id = 0;
+  const card = (color, number) => ({
+    id: id++, color, number,
+    possibleColors: ['red', 'yellow', 'green', 'blue', 'white', 'rainbow', 'black'],
+    possibleNumbers: [1, 2, 3, 4, 5],
+    colorClued: false, numberClued: false, lastHints: [],
+    annotations: { note: '', guarded: false },
+  });
+  const clued = (color, number) => ({
+    ...card(color, number),
+    possibleColors: [color], possibleNumbers: [number],
+    colorClued: true, numberClued: true,
+  });
+  return {
+    status: 'playing', variantId: 'rainbowCriticalBlackReverse', endRule: 'lax',
+    shareGuarded: true, allowEmptyHints, seed: 1,
+    players: [
+      // Sender: nothing playable, nothing to say by ordinary means.
+      { id: 'a', name: 'Ann', hand: [card('green', 4), card('white', 4), card('rainbow', 2)] },
+      // Receiver: chop is the black 4 (playable — black runs 5→1 and its 5 is
+      // down), everything older is already clued. A "4" hint can't prove it
+      // playable, because the red 4 is playable too.
+      { id: 'b', name: 'Bot', hand: [clued('green', 5), clued('yellow', 5), card('black', 4)] },
+    ],
+    deck: [],
+    // The other black 4 is gone, so the chop is a certain last copy.
+    discard: [card('black', 4)],
+    playedPiles: {
+      red: [1, 2, 3].map((n) => card('red', n)),
+      yellow: [1, 2, 3].map((n) => card('yellow', n)),
+      green: [1, 2].map((n) => card('green', n)),
+      blue: [], white: [], rainbow: [],
+      black: [card('black', 5)],
+    },
+    hintTokens: 1, fuseTokens: 3, currentPlayer: 0, turn: 40, finalTurn: null,
+    log: [], endReason: null, nextHintIndex: 0, nextLogSeq: 0,
+    startedAt: 0, endedAt: null, initialDeckCards: [],
+  };
+}
+
+test('bot: saves a playable black chop by signalling it, not by parking it', () => {
+  const s = blackChopSaveState(true);
+  const send = decide(viewState(s, 0), undefined, {});
+  assert.equal(send.action.type, 'hint', send.reason);
+  assert.equal(send.action.toPlayerIndex, 1);
+  assert.match(send.reason, /save black 4 on chop \(signal\)/);
+  // It really is an empty hint — a "4" would touch the chop and read as keep.
+  const touched = s.players[1].hand.filter((c) => (send.action.hintType === 'number'
+    ? c.number === send.action.value
+    : c.color === send.action.value));
+  assert.equal(touched.length, 0, `${send.action.hintType} ${send.action.value} must touch nothing`);
+
+  // And the receiver plays the black 4 rather than sitting on it.
+  hintAction(s, 0, 1, send.action.hintType, send.action.value);
+  const recv = decide(viewState(s, 1), undefined, {});
+  assert.deepEqual(recv.action, { type: 'play', cardIndex: 2 }, recv.reason);
+});
+
+test('bot: a teammate under a live empty-hint signal needs no save from us', () => {
+  const s = blackChopSaveState(true);
+  s.players.push({ id: 'c', name: 'Cy', hand: [] });
+  s.players[2].hand = s.players[0].hand.map((c, i) => ({ ...c, id: 90 + i }));
+  s.hintTokens = 2;
+  s.currentPlayer = 2;
+  // Cy signals Bot's chop with an empty hint (Bot holds no blue). By the time
+  // it comes round to Ann, Bot is committed to playing that chop — so Ann must
+  // not spend the last token saving a card that is already on its way out.
+  hintAction(s, 2, 1, 'color', 'blue');
+  assert.equal(s.currentPlayer, 0);
+  const send = decide(viewState(s, 0), undefined, {});
+  assert.ok(!(send.action.type === 'hint' && send.action.toPlayerIndex === 1),
+    `should not re-save Bot's signalled chop (got ${send.reason})`);
+});
+
+test('bot: falls back to the keep-hint when the room disallows empty hints', () => {
+  const s = blackChopSaveState(false);
+  const send = decide(viewState(s, 0), undefined, {});
+  assert.deepEqual(send.action, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 4 }, send.reason);
+});
+
 // Bots playing whole games against each other: the strongest regression net —
 // every rule interacts, and the game must actually end without the brain ever
 // proposing an illegal action (rules.js throws on those).

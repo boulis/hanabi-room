@@ -34,7 +34,7 @@ that one seam; transport, seating, reconnects, and the retry-with-safe-fallback
 path stay as they are. Bots also run in-process as ordinary room seats
 (`server/bots.js`), which is how they are normally played with.
 
-**`BOT_VERSION` 2.26** (August 2026). Benchmark, 50 seeds a row, lax:
+**`BOT_VERSION` 2.27** (August 2026). Benchmark, 50 seeds a row, lax:
 
 | variant | 2p | 3p | 4p |
 | --- | --- | --- | --- |
@@ -46,6 +46,12 @@ path stay as they are. Bots also run in-process as ordinary room seats
 
 Over 3000 games (200 seeds × 15 rows): 28.858 mean per row, 1060 perfect games,
 17 fuse-outs. Full tables per version in `bot-performance.md`.
+
+These are the default benchmark, which runs with **empty hints off**. 2.27's
+change (the zero-card-hint signal reachable from a save) is gated on the room
+option, so it does not move this table at all — with `--emptyhints` it is
+29.068 mean per row, 1071 perfect, 25 fuse-outs, against 28.886 / 1010 / 29 at
+2.26. Anything measured only under a room option belongs in that second table.
 
 **What has changed since the first draft of this document (July 2026)**, which
 listed three known limits:

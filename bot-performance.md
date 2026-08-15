@@ -5,6 +5,11 @@ version does, and the full output of `npm run benchmark` at that version
 (50 seeds × all variants × 2/3/4 players, lax end rule, deterministic — the
 same code always reproduces the same numbers). Newest version last.
 
+`npm run benchmark` runs with empty hints **off**, matching a fresh room. A
+version whose change only fires when the host enables `allowEmptyHints` is
+invisible in that table, so it carries a second one from
+`npm run benchmark -- --emptyhints`.
+
 Each table row is one variant × player-count combination; the columns are:
 
 | column | meaning |
@@ -1811,4 +1816,85 @@ rainbowCriticalBlack/35               4 32.42    10   35       12      1        
 rainbowCriticalBlackReverse/35        2 28.86    21   35        1      0           0.42
 rainbowCriticalBlackReverse/35        3 32.58    25   35        7      1           0.56
 rainbowCriticalBlackReverse/35        4 31.98    25   35        8      0           0.44
+```
+
+## 2.27 — the save that could not say "play it"
+
+A real game, move 61: the next player's chop was a **playable black 4**, and the
+last copy of it. The bot gave a "4" keep-hint — parking a card that could have
+scored, and incidentally leaving every card in that hand clued, so its owner
+spent the next two turns unable to discard.
+
+`findSaveHint` does prefer a play hint when the chop is playable. There simply
+wasn't one, and in a black suit there never is: `hintMatches: 'none'` means no
+colour hint ever touches the card, and a bare number hint means *keep* by
+convention. So the save fell through to the keep-hint every time.
+
+The signal that says exactly this already existed — the zero-card-hint "play
+your chop" — but it lived only as step 4b of `decide`, a fallback reached after
+the play-hint loop. The save branch returns hundreds of lines earlier. The two
+never met: the one convention that can reach a black card was unreachable from
+the one place that needed it.
+
+So `findSaveHint` learned it, as a tier between the play hint and the colour
+pin: a real play hint outranks it (the signal carries no information beyond the
+command), and everything else ranks below (they only park the card). It is a
+save for the *actual* chop only — `pickSave`'s look-ahead also asks about the
+card behind it, which the receiver would never play — and like a play-save it
+ends the look-ahead, since the receiver discards nothing.
+
+The other half is modelling. A live signal is a play obligation, and a public
+one: it is read off the log, which everybody can see. `hasPendingPlay` didn't
+know that, so a third player would spend a token "saving" the very chop its
+owner was already committed to playing. Teaching it the signal is worth about as
+much as the fix that made signals common in the first place, and it recovers the
+two rows the first half had cost.
+
+At 200 seeds with empty hints on: 28.886 -> 29.068 mean/row, perfect games
+1010 -> 1071, fuse-outs 29 -> 25. The two black variants gain most — 2-player
+`rainbowCriticalBlack` +0.55 and `rainbowCriticalBlackReverse` +0.42 — which is
+the shape you'd expect from a fix whose whole subject is the suit no colour hint
+can reach. One row is down 0.02; every other row is neutral or better.
+
+The change is fully gated on `allowEmptyHints`, so the default table below is
+byte-identical to 2.26's.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.94    18   25       30      0           0.28
+simple/25                             3 24.34    22   25       31      0           0.34
+simple/25                             4 24.38    21   25       32      0           0.58
+rainbow/30                            2 28.30    22   30       16      0           0.22
+rainbow/30                            3 29.50    27   30       33      0           0.30
+rainbow/30                            4 29.28    26   30       29      0           0.38
+rainbowCritical/30                    2 27.38    22   30       11      0           0.48
+rainbowCritical/30                    3 28.78    21   30       23      0           0.48
+rainbowCritical/30                    4 27.78     4   30       10      1           0.68
+rainbowCriticalBlack/35               2 30.62    21   35        4      0           0.58
+rainbowCriticalBlack/35               3 33.56    28   35       15      0           0.42
+rainbowCriticalBlack/35               4 32.42    10   35       12      1           0.54
+rainbowCriticalBlackReverse/35        2 28.86    21   35        1      0           0.42
+rainbowCriticalBlackReverse/35        3 32.58    25   35        7      1           0.56
+rainbowCriticalBlackReverse/35        4 31.98    25   35        8      0           0.44
+```
+
+And the table that actually exercises it, `npm run benchmark -- --emptyhints`:
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 24.18    20   25       31      0           0.20
+simple/25                             3 24.42    20   25       31      0           0.28
+simple/25                             4 24.58    21   25       38      0           0.48
+rainbow/30                            2 28.24    23   30       17      0           0.18
+rainbow/30                            3 29.18    26   30       25      0           0.28
+rainbow/30                            4 29.30    26   30       29      0           0.42
+rainbowCritical/30                    2 27.94    21   30       16      0           0.50
+rainbowCritical/30                    3 28.76    21   30       23      0           0.46
+rainbowCritical/30                    4 27.16     4   30       12      3           0.72
+rainbowCriticalBlack/35               2 31.08    24   35        2      0           0.48
+rainbowCriticalBlack/35               3 33.54    29   35       21      0           0.40
+rainbowCriticalBlack/35               4 32.54    25   35        9      0           0.48
+rainbowCriticalBlackReverse/35        2 30.26    23   35        3      1           0.40
+rainbowCriticalBlackReverse/35        3 32.60    27   35        9      0           0.48
+rainbowCriticalBlackReverse/35        4 32.14    27   35        6      1           0.54
 ```

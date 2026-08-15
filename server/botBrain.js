@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.26';
+export const BOT_VERSION = '2.27';
 
 // Thresholds for the free gamble (see gambleChance): better-than-even odds,
 // and never on the last fuse. Both were swept — the score plateau runs from
@@ -248,18 +248,22 @@ export function chopIndex(hand) {
 
 // Zero-card-hint convention (only when the room allows empty hints): a hint
 // touching none of the receiver's cards means "play your chop".
-// Receiver side — is such a signal live for us right now? The most recent hint
-// aimed at us was empty, and we haven't taken a turn since (our own play,
-// discard, or hint consumes it; a later non-empty hint to us overrides it).
-// Other players' actions between the signal and our turn are transparent.
-function emptyHintChopSignal(view) {
-  const me = view.viewerIndex;
+// Receiver side — is such a signal live for `seat` right now? The most recent
+// hint aimed at them was empty, and they haven't taken a turn since (their own
+// play, discard, or hint consumes it; a later non-empty hint to them overrides
+// it). Other players' actions in between are transparent.
+//
+// Defaults to our own seat, but it is read for teammates too (`hasPendingPlay`):
+// the log is public, so a signal aimed at anyone is a play obligation everybody
+// at the table can see, and modelling it is what keeps us from "saving" a chop
+// its owner is about to play.
+function emptyHintChopSignal(view, seat = view.viewerIndex) {
   for (let i = view.log.length - 1; i >= 0; i--) {
     const e = view.log[i];
     if (e.undone) continue;
-    if ((e.type === 'play' || e.type === 'discard') && e.playerIndex === me) return false;
-    if (e.type === 'hint' && e.fromIndex === me) return false;
-    if (e.type === 'hint' && e.toIndex === me) return e.touchedIndexes.length === 0;
+    if ((e.type === 'play' || e.type === 'discard') && e.playerIndex === seat) return false;
+    if (e.type === 'hint' && e.fromIndex === seat) return false;
+    if (e.type === 'hint' && e.toIndex === seat) return e.touchedIndexes.length === 0;
   }
   return false;
 }
@@ -664,6 +668,15 @@ function hasPendingPlay(view, seat, conventions = STANDARD_CONVENTIONS, reader =
     : combosFor(view, hand, [seat, reader]);
   if (combos.some((cs) => knownPlayable(view, cs))) return true;
   if (onesPlayOrder(view, seat, hand, combos, conventions).length > 0) return true;
+  // A live zero-card-hint signal is a play obligation like any other, and a
+  // public one — it is read off the log, so no `reader` narrowing applies. The
+  // receiver honours it above everything (step 0a), so a teammate under one is
+  // not going to discard: without this we would spend a token "saving" the very
+  // chop they are about to play. Same gate as step 0a, so the two agree.
+  if (conventions.zeroHintPlaysChop && view.allowEmptyHints && emptyHintChopSignal(view, seat)) {
+    const chop = chopIndex(hand);
+    if (chop >= 0 && possiblyPlayable(view, combos[chop])) return true;
+  }
   // Same reading the receiver uses (target slides past provably-unplayable
   // touched cards), so we never count a "pending play" they won't actually
   // make — that mismatch used to leave a colour-clued card nobody would touch
@@ -913,10 +926,13 @@ function hintWouldLock(view, seat, hint) {
 
 // The best way to protect `chop` in `seat`'s hand. A play hint that gets the
 // card played beats parking it: the card scores AND leaves the hand. Next
-// best, a colour hint that pins it as provably unplayable (informative, and
-// safe: the receiver's target check skips unplayable targets). Fallback is
-// the plain number keep-hint — except a "1" save that play-all-1s would
-// misread as a play order; then no safe save exists.
+// best, when the room allows empty hints, the zero-card-hint signal — it also
+// gets the card played, but carries no information beyond the command, so a
+// real play hint outranks it. Then a colour hint that pins it as provably
+// unplayable (informative, and safe: the receiver's target check skips
+// unplayable targets). Fallback is the plain number keep-hint — except a "1"
+// save that play-all-1s would misread as a play order; then no safe save
+// exists.
 function findSaveHint(view, seat, chop, conventions) {
   const hand = view.players[seat].hand;
   const card = hand[chop];
@@ -933,6 +949,20 @@ function findSaveHint(view, seat, chop, conventions) {
       if (!best || cand.score > best.score) best = cand;
     }
     if (best && ok(best.hint)) return { hint: best.hint, how: 'play' };
+    // No ordinary hint reaches this playable chop — the case a black card makes
+    // permanent, since no colour hint ever touches a `hintMatches: 'none'` suit
+    // and a bare number hint means keep. That is exactly what the zero-card-hint
+    // signal is for, and it was previously unreachable here: the save branch of
+    // `decide` returns long before the step-4b fallback that knows about it, so
+    // a playable black critical on the chop got parked behind a keep-hint (often
+    // locking the receiver's hand) instead of scored. The signal names the chop
+    // itself, so it is only a save for the *actual* chop — `pickSave`'s
+    // look-ahead also asks about the card behind it, which the receiver would
+    // never play.
+    if (conventions.zeroHintPlaysChop && view.allowEmptyHints && chop === chopIndex(hand)) {
+      const empty = findEmptyHint(view, seat);
+      if (empty && ok(empty)) return { hint: empty, how: 'signal' };
+    }
   }
   for (const color of view.hintableColors) {
     const touched = colorHintTouches(view, hand, color);
@@ -1567,8 +1597,10 @@ function pickSave(view, seat, chop, conventions) {
   const hand = view.players[seat].hand;
   const primary = findSaveHint(view, seat, chop, conventions);
   if (!primary) return null;
-  // A play-save gets the card played: the receiver discards nothing.
-  if (primary.how === 'play') return { index: chop, ...primary };
+  // A play-save gets the card played: the receiver discards nothing. The
+  // zero-card-hint signal is a play-save too — it commands the chop played —
+  // so the look-ahead has nothing to look ahead to in either case.
+  if (primary.how === 'play' || primary.how === 'signal') return { index: chop, ...primary };
   // Where the receiver's discard lands after a hint's clue marks are down: the
   // oldest card that is neither clued, guarded, nor touched by this hint. A
   // guarded card is off the chop (the receiver won't discard it), so the slide
@@ -1812,7 +1844,8 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
         // strict alternation guarantee we re-save in time, and only there does
         // tempo dominate enough to beat spending a second token on the deferred
         // save (benchmarks regress slightly at 3-4 players).
-        if (view.players.length === 2 && save && save.how !== 'play' && view.finalTurn === null) {
+        if (view.players.length === 2 && save && save.how !== 'play' && save.how !== 'signal'
+          && view.finalTurn === null) {
           const playHint = findPlayHint(view, idx, conventions);
           if (playHint) {
             urgentSave = {
