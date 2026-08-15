@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.27';
+export const BOT_VERSION = '2.28';
 
 // Thresholds for the free gamble (see gambleChance): better-than-even odds,
 // and never on the last fuse. Both were swept — the score plateau runs from
@@ -933,6 +933,14 @@ function hintWouldLock(view, seat, hint) {
 // unplayable targets). Fallback is the plain number keep-hint — except a "1"
 // save that play-all-1s would misread as a play order; then no safe save
 // exists.
+//
+// Two ways to come up empty, and they are NOT the same answer:
+//   null                     — no hint reaches this card. Nothing was decided.
+//   { hint: null, how:       — a hint reached it and we judged the card not
+//     'declined' }             worth what the hint would cost (see `ok`).
+// Only the caller can act on the difference, and it matters: an alarm discard
+// is dearer than any hint, so a danger we just declined to spend a *token* on
+// must not then cost us a *card*. See the alarm branch in `decide`.
 function findSaveHint(view, seat, chop, conventions) {
   const hand = view.players[seat].hand;
   const card = hand[chop];
@@ -984,7 +992,7 @@ function findSaveHint(view, seat, chop, conventions) {
     }
   }
   const keep = { hintType: 'number', value: card.number };
-  return ok(keep) ? { hint: keep, how: 'keep' } : null;
+  return ok(keep) ? { hint: keep, how: 'keep' } : { hint: null, how: 'declined' };
 }
 
 // The most recent play/discard/hint in the log that wasn't undone.
@@ -1485,7 +1493,30 @@ export function alarmGuards(view, conventions = STANDARD_CONVENTIONS) {
   // routine when a play was there to be made: throwing known trash costs the
   // discarder nothing but the forgone play, which makes it the cheapest alarm
   // there is, not the quietest move there is.
-  const declinedPlay = hasPendingPlay(view, e.playerIndex, conventions);
+  //
+  // Asked of the state they DECIDED in, not the one their discard produced.
+  // Two things changed in between, both their own doing: the card they threw
+  // moved out of their hand — where their own deduction cannot see it — and
+  // into the discard, where it counts against every identity; and they drew a
+  // replacement they had never seen. So the throw itself can PIN a card they
+  // still hold and manufacture the very play it appears to have declined. From
+  // a real game: a bot threw the last white 1 off its chop, which pinned its
+  // colour-clued {white 1, rainbow 4} to a playable rainbow 4, and the partner
+  // read the most routine move in the game as an alarm. This is the same
+  // correction `deadWhenThrown` makes below — ask the question of the right
+  // state. (Past the `deckSize === 0` guard above, a discard always drew, so
+  // the replacement is always the newest card.) We do not put the thrown card
+  // back: the log does not record its hint markers, and whether IT was the
+  // declined play is a reading this convention does not make.
+  const senderHand = view.players[e.playerIndex].hand;
+  const atDecision = {
+    ...view,
+    discard: view.discard.filter((c) => c.id !== e.card.id),
+    players: view.players.map((p, i) => (i === e.playerIndex
+      ? { ...p, hand: senderHand.slice(0, -1) }
+      : p)),
+  };
+  const declinedPlay = hasPendingPlay(atDecision, e.playerIndex, conventions);
   let anomaly = declinedPlay;
   if (!declinedPlay && e.wasTouched) {
     // A deliberate touched-discard alarm burns a USEFUL card — if the card
@@ -1599,8 +1630,12 @@ function pickSave(view, seat, chop, conventions) {
   if (!primary) return null;
   // A play-save gets the card played: the receiver discards nothing. The
   // zero-card-hint signal is a play-save too — it commands the chop played —
-  // so the look-ahead has nothing to look ahead to in either case.
+  // so the look-ahead has nothing to look ahead to in either case. A declined
+  // save has no hint to look ahead past, and nothing behind it is exposed by a
+  // hint we are not giving; it travels up so the caller can tell it from "no
+  // save exists".
   if (primary.how === 'play' || primary.how === 'signal') return { index: chop, ...primary };
+  if (primary.how === 'declined') return { index: chop, ...primary, exposed: 0 };
   // Where the receiver's discard lands after a hint's clue marks are down: the
   // oldest card that is neither clued, guarded, nor touched by this hint. A
   // guarded card is off the chop (the receiver won't discard it), so the slide
@@ -1626,7 +1661,7 @@ function pickSave(view, seat, chop, conventions) {
   let best = { index: chop, ...primary, exposed: cost(primaryExposed) };
   if (best.exposed > 0) {
     const alt = findSaveHint(view, seat, primaryExposed, conventions);
-    if (alt && (alt.how === 'play' || cost(exposedIndex(alt.hint)) < best.exposed)) {
+    if (alt?.hint && (alt.how === 'play' || cost(exposedIndex(alt.hint)) < best.exposed)) {
       best = {
         index: primaryExposed,
         ...alt,
@@ -1709,7 +1744,10 @@ export function protectiveStall(view, conventions = STANDARD_CONVENTIONS) {
     const chop = chopIndex(hand);
     if (chop >= 0 && saveWorthy(view, hand[chop])) {
       const save = findSaveHint(view, idx, chop, conventions);
-      if (save) {
+      // A declined save carries no hint; the token goes to the plain stall
+      // below instead (we were burning it either way, so there is nothing to
+      // reconsider here — the reason it was declined still holds).
+      if (save?.hint) {
         return {
           action: { type: 'hint', toPlayerIndex: idx, ...save.hint },
           reason: `stall-save ${hand[chop].color} ${hand[chop].number} on ${view.players[idx].name}'s chop (${save.how})`,
@@ -1830,6 +1868,17 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
       if (chop >= 0 && saveWorthy(view, hand[chop])) {
         const save = view.hintTokens > 0 ? pickSave(view, idx, chop, conventions) : null;
         const exposed = save ? save.exposed ?? 0 : 0;
+        // A save we DECLINED is not a save we couldn't find, and the alarm
+        // branch below must not confuse the two. `findSaveHint` drops a
+        // lone-2 keep-hint that would lock the receiver's hand, on the
+        // explicit grounds that one 2 down beats locking them — and the alarm
+        // then paid a whole CARD for the very protection we had just priced as
+        // not worth a token. A burnt card is dearer than the lock we refused,
+        // so declining the hint has to decline the alarm with it. (Seen in a
+        // real game: a chop lone 2 with both twins still in the deck — zero
+        // pile points at risk — cost a useful card and clogged two of the
+        // partner's slots with guards.)
+        const declined = save?.how === 'declined';
         // Prefer handing this player a play over parking their chop behind a
         // keep/pin clue. A hinted player plays rather than discards, so the
         // endangered chop survives this turn untouched — and because we strictly
@@ -1844,7 +1893,7 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
         // strict alternation guarantee we re-save in time, and only there does
         // tempo dominate enough to beat spending a second token on the deferred
         // save (benchmarks regress slightly at 3-4 players).
-        if (view.players.length === 2 && save && save.how !== 'play' && save.how !== 'signal'
+        if (view.players.length === 2 && save?.hint && save.how !== 'play' && save.how !== 'signal'
           && view.finalTurn === null) {
           const playHint = findPlayHint(view, idx, conventions);
           if (playHint) {
@@ -1877,7 +1926,8 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
         }
         // Discard alarm (fallback when no sweep exists): the next player guards
         // their endangered cards after an out-of-the-ordinary discard.
-        if (!urgentSave && conventions.alarmDiscards && idx === nextIndex && (!save || exposed > 0)) {
+        if (!urgentSave && conventions.alarmDiscards && idx === nextIndex && !declined
+          && (!save || exposed > 0)) {
           const chopCost = Math.max(1, discardCost(view, hand[chop].color, hand[chop].number));
           const alarm = findAlarmMove(view, myHand, myCombos, Math.max(chopCost, exposed), conventions);
           if (alarm) {
@@ -1890,7 +1940,7 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
             }
           }
         }
-        if (!urgentSave && save) {
+        if (!urgentSave && save?.hint) {
           urgentSave = {
             action: { type: 'hint', toPlayerIndex: idx, ...save.hint },
             reason: `save ${hand[save.index].color} ${hand[save.index].number} on chop (${save.how})`,

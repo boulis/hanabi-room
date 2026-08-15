@@ -1898,3 +1898,94 @@ rainbowCriticalBlackReverse/35        2 30.26    23   35        3      1        
 rainbowCriticalBlackReverse/35        3 32.60    27   35        9      0           0.48
 rainbowCriticalBlackReverse/35        4 32.14    27   35        6      1           0.54
 ```
+
+## 2.28 — two ways the alarm convention argued with itself
+
+Both found by watching a real 3-player game, and both are the same failure: two
+halves of the code answering the same question in different terms.
+
+**A save declined is not a save missing.** `findSaveHint` drops a lone-2
+keep-hint that would lock the receiver's hand, on explicit grounds — one 2 down
+beats locking them into stalling or throwing a card the team just paid a token
+to keep. It signalled that by returning `null`, and the alarm branch reads
+`null` as "no save exists" and burns a **card** on the danger the hint path had
+just priced as not worth a **token**. An alarm is the dearer of the two, so
+declining the cheap one has to decline the expensive one with it. In the game
+that surfaced it, the chop was a lone 2 with its twin still in the deck — zero
+pile points at risk — and it cost a useful card plus two of the partner's slots,
+clogged with guards for the rest of the game. `findSaveHint` now returns
+`{ hint: null, how: 'declined' }`, which is a different answer from `null`, and
+the alarm branch is the caller that cares.
+
+**Ask about the state they decided in.** `alarmGuards` reads "did they decline a
+play?" off the state the discard *produced*. But a discard changes two things,
+both the discarder's own doing: the thrown card leaves their hand — where their
+own deduction cannot see it — for the discard pile, where it counts against
+every identity; and they draw a card they have never seen. So a throw can pin a
+card they still hold and manufacture the very play it appears to have declined.
+A bot threw the last unseen white 1 off its chop, which pinned its colour-clued
+`{white 1, rainbow 4}` to a playable rainbow 4, and its partner read the most
+routine move in the game as an alarm. The fix is the same correction
+`deadWhenThrown` already makes one screen below: put the card back and drop the
+draw before asking.
+
+Sender/receiver agreement, measured over 4500 bot-vs-bot games (100 seeds × 15
+rows) by comparing every discard's recorded reason against the next player's
+`alarmGuards` read:
+
+| | 2.27 | 2.28 |
+| --- | --- | --- |
+| discards seen by the next player | 34412 | 34397 |
+| guards raised | 1385 | 1315 |
+| **misread** (guards raised, no alarm meant) | **112** | **76** |
+| missed (alarm meant, no guards) | 217 | 216 |
+
+A third of the false alarms gone, with the misses flat — no error traded for
+another. The 76 that remain are a different residue and are not this fix.
+
+Score is close to neutral, which is the honest expectation: between bots a
+spurious guard mostly just clogs a hand, and the declined-save case is rare in
+self-play. Both bugs cost most with a human at the table, who cannot audit the
+signal and simply believes it. At 200 seeds, default: 28.858 -> 28.861 mean/row,
+perfect 1060 -> 1069, fuse-outs 17 -> 17. With `--emptyhints`: 29.068 -> 29.082,
+perfect 1071 -> 1075, fuse-outs 25 -> 25.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.94    18   25       30      0           0.30
+simple/25                             3 24.34    22   25       31      0           0.34
+simple/25                             4 24.38    21   25       32      0           0.58
+rainbow/30                            2 28.34    22   30       16      0           0.22
+rainbow/30                            3 29.52    27   30       34      0           0.30
+rainbow/30                            4 29.26    26   30       28      0           0.38
+rainbowCritical/30                    2 27.34    22   30       11      0           0.48
+rainbowCritical/30                    3 28.78    21   30       23      0           0.50
+rainbowCritical/30                    4 27.78     4   30       10      1           0.68
+rainbowCriticalBlack/35               2 30.16    21   35        4      0           0.62
+rainbowCriticalBlack/35               3 33.60    28   35       16      0           0.42
+rainbowCriticalBlack/35               4 32.46    10   35       13      1           0.56
+rainbowCriticalBlackReverse/35        2 28.80    21   35        1      0           0.38
+rainbowCriticalBlackReverse/35        3 32.34    24   35        7      1           0.56
+rainbowCriticalBlackReverse/35        4 32.00    25   35        8      0           0.42
+```
+
+And `npm run benchmark -- --emptyhints`:
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 24.16    20   25       31      0           0.22
+simple/25                             3 24.42    20   25       31      0           0.28
+simple/25                             4 24.58    21   25       38      0           0.48
+rainbow/30                            2 28.26    23   30       17      0           0.18
+rainbow/30                            3 29.18    26   30       25      0           0.28
+rainbow/30                            4 29.30    26   30       29      0           0.42
+rainbowCritical/30                    2 27.92    21   30       16      0           0.48
+rainbowCritical/30                    3 28.74    21   30       23      0           0.46
+rainbowCritical/30                    4 27.16     4   30       12      3           0.74
+rainbowCriticalBlack/35               2 30.96    24   35        2      0           0.46
+rainbowCriticalBlack/35               3 33.68    29   35       23      0           0.36
+rainbowCriticalBlack/35               4 32.58    25   35       11      0           0.50
+rainbowCriticalBlackReverse/35        2 30.26    23   35        3      1           0.40
+rainbowCriticalBlackReverse/35        3 32.62    27   35        9      0           0.48
+rainbowCriticalBlackReverse/35        4 32.14    27   35        6      1           0.52
+```

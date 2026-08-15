@@ -1555,6 +1555,114 @@ test('bot: falls back to the keep-hint when the room disallows empty hints', () 
   assert.deepEqual(send.action, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 4 }, send.reason);
 });
 
+// Cards for the hand-rolled states below (5-colour variants).
+function plainCard(id, color, number, opts = {}) {
+  return {
+    id, color, number,
+    possibleColors: opts.possibleColors ?? COLORS.slice(),
+    possibleNumbers: opts.possibleNumbers ?? [1, 2, 3, 4, 5],
+    colorClued: !!opts.colorClued, numberClued: !!opts.numberClued,
+    lastHints: opts.lastHints ?? [],
+    annotations: { note: '', guarded: false },
+  };
+}
+
+// From a real game (turn 14): the receiver's chop was a lone 2 with its twin
+// still in the deck — worth ZERO pile points if thrown — and the only save, a
+// "2", touched every unclued card in the hand, locking it. findSaveHint
+// correctly declines that (one 2 down beats a locked hand), and the alarm
+// branch then read the resulting null as "no save exists" and burned a card on
+// the very danger the hint path had just priced as not worth a token.
+function declinedSaveState({ chopCritical = false } = {}) {
+  let id = 0;
+  const c = (color, number, opts) => plainCard(id++, color, number, opts);
+  const clued = { numberClued: true, possibleNumbers: [3] };
+  return {
+    status: 'playing', variantId: 'simple', endRule: 'lax',
+    shareGuarded: true, allowEmptyHints: false, seed: 1,
+    players: [
+      // Sender: a number-clued 3 — useful whatever it is, not provably playable,
+      // no candidate critical — which is exactly the card alarm type 1 burns,
+      // plus an unclued chop so an alarm is a choice she could make at all.
+      { id: 'a', name: 'Ann', hand: [c('red', 3, { numberClued: true, possibleNumbers: [3] }), c('red', 4)] },
+      // Receiver: two number-clued 3s, then three unclued 2s. A "2" hint touches
+      // all three, so every card ends up clued — a locked hand.
+      { id: 'b', name: 'Bot', hand: [c('red', 3, clued), c('yellow', 3, clued), c('blue', 2), c('yellow', 2), c('white', 2)] },
+    ],
+    deck: [c('white', 4), c('red', 1)],
+    // The blue 2's twin is still out (precaution) unless the test asks for a
+    // genuine last copy, which is worth the lock and must still be saved.
+    discard: chopCritical ? [c('blue', 2)] : [],
+    playedPiles: { red: [], yellow: [], green: [c('green', 1), c('green', 2)], blue: [], white: [] },
+    hintTokens: 3, fuseTokens: 3, currentPlayer: 0, turn: 14, finalTurn: null,
+    log: [], endReason: null, nextHintIndex: 0, nextLogSeq: 0,
+    startedAt: 0, endedAt: null, initialDeckCards: [],
+  };
+}
+
+test('bot: a save declined as not worth a token is not worth a card either', () => {
+  const s = declinedSaveState();
+  const { action, reason } = decide(viewState(s, 0), undefined, {});
+  assert.ok(!/ALARM/.test(reason),
+    `must not alarm over a save it declined to spend a hint on (got ${reason})`);
+  // And it does not silently give the locking hint either — the decision that
+  // the lock is not worth it still stands.
+  assert.ok(!(action.type === 'hint' && action.hintType === 'number' && action.value === 2),
+    `must not give the locking "2" hint either (got ${reason})`);
+});
+
+test('bot: a chop worth locking a hand for is still saved', () => {
+  const s = declinedSaveState({ chopCritical: true });
+  const { action, reason } = decide(viewState(s, 0), undefined, {});
+  assert.deepEqual(action, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 2 }, reason);
+});
+
+// From the same game (turn 58): a bot threw the last unseen white 1 off its
+// chop — the most routine move there is — and its partner guarded two cards.
+// The throw itself was what pinned the bot's colour-clued {white 1, white 4} to
+// the playable white 4, so alarmGuards, reading the post-discard state, saw a
+// play the discarder had "declined". It had no such play when it decided.
+function pinningDiscardState() {
+  let id = 0;
+  const c = (color, number, opts) => plainCard(id++, color, number, opts);
+  const white = { colorClued: true, possibleColors: ['white'] };
+  return {
+    status: 'playing', variantId: 'simple', endRule: 'lax',
+    shareGuarded: true, allowEmptyHints: false, seed: 1,
+    players: [
+      // Ann's slot 0 reads {white 1, white 4}: every other white is accounted
+      // for in the piles and the discard. Not playable yet — the white 1
+      // candidate is dead, the white 4 is not. Slot 1 is her chop, and it holds
+      // the third and last white 1.
+      { id: 'a', name: 'Ann', hand: [c('white', 4, white), c('white', 1)] },
+      { id: 'b', name: 'Bot', hand: [c('blue', 3), c('red', 2), c('green', 4)] },
+    ],
+    deck: [c('red', 1), c('green', 1)],
+    discard: [c('white', 1), c('white', 2), c('white', 3), c('white', 4), c('white', 5)],
+    playedPiles: {
+      red: [], yellow: [], green: [], blue: [],
+      white: [c('white', 1), c('white', 2), c('white', 3)],
+    },
+    hintTokens: 0, fuseTokens: 3, currentPlayer: 0, turn: 30, finalTurn: null,
+    log: [], endReason: null, nextHintIndex: 0, nextLogSeq: 0,
+    startedAt: 0, endedAt: null, initialDeckCards: [],
+  };
+}
+
+test('bot: a discard that pins its own hand is not thereby an alarm', () => {
+  const s = pinningDiscardState();
+  const before = handCombos(viewState(s, 1), 0);
+  assert.equal(before[0].length, 2, 'slot 0 must be ambiguous before the throw');
+  assert.ok(!knownPlayable(viewState(s, 1), before[0]), 'and not yet a play');
+
+  discardAction(s, 0, 1); // Ann throws her chop, the last unseen white 1
+  const v = viewState(s, 1);
+  assert.ok(knownPlayable(v, handCombos(v, 0)[0]),
+    'the throw pins slot 0 to the playable white 4 — the drift this test is about');
+  assert.deepEqual(alarmGuards(v), [],
+    'but she had no play when she decided, so a routine chop discard is no alarm');
+});
+
 // Bots playing whole games against each other: the strongest regression net —
 // every rule interacts, and the game must actually end without the brain ever
 // proposing an illegal action (rules.js throws on those).
