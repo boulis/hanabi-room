@@ -1500,6 +1500,30 @@ function botPaceControl(v) {
   return wrap;
 }
 
+// Is the seat on turn a bot we may release? One predicate for the Play now
+// button and its keyboard shortcut, so the two can't come to disagree about
+// when the release is on offer.
+function botOnTurnReleasable() {
+  const v = view;
+  if (!v || v.kind !== 'in-room' || v.status !== 'playing' || v.isSpectator) return false;
+  return !!v.players?.[v.currentPlayer]?.isBot;
+}
+
+// "p" is the keyboard twin of Play now, and it's what makes the Manual pace
+// comfortable: a bench of bots steps forward one turn per keypress, with no
+// hunting for a button that moves down the table between turns. Ignored while
+// typing (the note box, a name field) or with a modifier held, so text editing
+// and browser shortcuts keep working.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'p' && e.key !== 'P') return;
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  if (!botOnTurnReleasable()) return;
+  e.preventDefault();
+  send({ type: 'botNow' });
+});
+
 function renderLobby() {
   const listEl = document.getElementById('lobby-players');
   listEl.innerHTML = '';
@@ -1888,12 +1912,12 @@ function renderPlayerRow(player, index, isMyTurn) {
     // A bot on turn is waiting out its pace (or, on Manual, waiting for this
     // button). Anyone at the table may release it — it only brings forward a
     // move the bot was going to make anyway.
-    if (player.isBot && view.kind === 'in-room' && !view.isSpectator) {
+    if (player.isBot && botOnTurnReleasable()) {
       const now = document.createElement('button');
       now.type = 'button';
       now.className = 'bot-now-button';
       now.textContent = '▶ Play now';
-      now.title = 'Stop waiting and let this bot take its turn';
+      now.title = 'Stop waiting and let this bot take its turn (shortcut: P)';
       now.addEventListener('click', () => send({ type: 'botNow' }));
       head.append(now);
     }
