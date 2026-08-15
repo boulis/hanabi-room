@@ -26,6 +26,7 @@ import {
   viewFor,
   voteAbandon,
 } from './room.js';
+import { BOT_SCORE_VERSION } from './botScore.js';
 import { addRoom, allRooms, createRoom, deleteRoom, getRoom, isRoomIdle, listRooms } from './rooms.js';
 import {
   MAX_TOTAL_BOTS,
@@ -39,7 +40,6 @@ import {
   totalBots,
 } from './bots.js';
 import {
-  backfillBotScores,
   botScoreFor,
   branchSave,
   deckExportFromSave,
@@ -51,6 +51,7 @@ import {
   loadSave,
   savedDir,
   setSaveTags,
+  staleBotScoreCount,
 } from './savedGame.js';
 import { aggregateStats } from './stats.js';
 import { viewState } from './view.js';
@@ -782,28 +783,29 @@ wss.on('connection', async (ws) => {
 // No top-level await here: some hosts (e.g. Phusion Passenger) load this
 // ESM file via require(), which Node refuses for a module with top-level
 // await. Keeping the await inside main() avoids that restriction.
-// Give every save a bot par, in the background: a game is ~25ms to simulate,
-// but a library of hundreds shouldn't hold up the port. Runs after the server
-// is listening and re-broadcasts the lobby once, so the library picks up the
-// numbers without a reload. Nothing here is fatal — a par that fails to
-// compute is simply not shown.
-function fillBotScoresInBackground() {
+// Boot housekeeping, off the critical path. Deliberately does NOT compute bot
+// pars: simulating a game is synchronous, so a library of hundreds spends
+// seconds hitching the event loop right when players are connecting, and it
+// redoes the whole library every time `BOT_VERSION` moves. That work belongs to
+// `npm run bot-scores`, where nobody is waiting on it; here we only count what
+// is missing and say so. Pars for games finished in THIS session are still
+// recorded as they end (recordBotScore), and opening a game's info modal
+// computes that one on demand, so nothing is stuck at a stale number.
+function warmLibraryInBackground() {
   setTimeout(() => {
-    // Warm the library cache first. Summarizing every save replays it through
-    // the rules engine, so on a cold cache the first player to open the lobby
-    // waits seconds for it; doing it here moves that cost to boot, where
-    // nobody is watching. Scans are serialized (see cachedLibraryEntries), so
-    // a client connecting mid-warm queues behind this one instead of racing
-    // it with a second full scan.
+    // Summarizing every save replays it through the rules engine, so on a cold
+    // cache the first player to open the lobby waits seconds for it; doing it
+    // here moves that cost to boot. Scans are serialized (see
+    // cachedLibraryEntries), so a client connecting mid-warm queues behind this
+    // one instead of racing it with a second full scan.
     listLibrary()
-      .catch((err) => console.error('Library warm-up failed:', err))
-      .then(() => backfillBotScores())
-      .then(async ({ computed, total }) => {
-        if (!computed) return;
-        console.log(`Bot par computed for ${computed} of ${total} saved games.`);
-        await broadcastServerLobby();
+      .then(() => staleBotScoreCount())
+      .then((stale) => {
+        if (!stale) return;
+        console.log(`${stale} saved game(s) have no bot par for brain ${BOT_SCORE_VERSION}.`
+          + ' Run `npm run bot-scores` to compute them.');
       })
-      .catch((err) => console.error('Bot par backfill failed:', err));
+      .catch((err) => console.error('Library warm-up failed:', err));
   }, 100).unref?.();
 }
 
@@ -813,7 +815,7 @@ async function main() {
 
   server.listen(PORT, HOST, () => {
     console.log(`hanabi-room listening on http://${HOST}:${PORT}`);
-    fillBotScoresInBackground();
+    warmLibraryInBackground();
   });
 }
 

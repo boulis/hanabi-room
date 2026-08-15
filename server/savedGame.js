@@ -414,6 +414,25 @@ function botScoreIsCurrent(entry) {
   return !!entry && entry.version === BOT_SCORE_VERSION;
 }
 
+// The sidecar is a cache keyed by the brain version, so an entry from an older
+// `BOT_SCORE_VERSION` is a MISS, not a value. Serving it anyway would print a
+// number the current bots never scored — and disagree with the game-info modal,
+// which recomputes on demand. Listings therefore show a stale par as no par
+// until `npm run bot-scores` refreshes it.
+function currentBotScore(pars, basename) {
+  const entry = pars[basename];
+  return botScoreIsCurrent(entry) ? entry : null;
+}
+
+// How many saves have no par the current brain would stand behind. Cheap — a
+// directory listing and one JSON read, no simulation — so the server can say so
+// at boot without doing the work (see `npm run bot-scores`).
+export async function staleBotScoreCount() {
+  const names = await listSaves();
+  const known = await readAllBotScores();
+  return names.filter((basename) => !botScoreIsCurrent(known[basename])).length;
+}
+
 // The stored par for one save, simulating it first if there is none or the
 // brain has moved on since. `known` lets a caller that already read the whole
 // sidecar (the backfill loop) skip re-reading it per file.
@@ -581,7 +600,7 @@ export async function listLibrary() {
     // Par is derived from the deck, so it's known from move 0 — but it's
     // withheld while the game is unfinished for the same reason the seed is:
     // both say something about a deck that is still being played.
-    botScore: rest.status !== 'in-progress' ? pars[rest.basename] ?? null : null,
+    botScore: rest.status !== 'in-progress' ? currentBotScore(pars, rest.basename) : null,
   }));
 }
 
@@ -638,7 +657,7 @@ export async function gameDetail(basename) {
       playerNames: e.playerNames,
       playerBots: e.playerBots,
       tags: tags[e.basename] || [],
-      botScore: pars[e.basename] ?? null,
+      botScore: currentBotScore(pars, e.basename),
     }));
   return {
     ...publicEntry(entry),

@@ -14,6 +14,7 @@ import {
   listLibrary,
   readAllBotScores,
   setBotScore,
+  staleBotScoreCount,
 } from './savedGame.js';
 
 async function withTmpSaveDir(fn) {
@@ -142,6 +143,43 @@ test('par: backfill scores every save once and skips them on a second pass', asy
     const second = await backfillBotScores();
     assert.equal(second.computed, 0, 'nothing left to do');
     assert.equal(Object.keys(await readAllBotScores()).length, 2);
+  });
+});
+
+// `npm start` no longer sweeps the library (a synchronous simulation per save
+// hitches the event loop exactly as players connect, and every BOT_VERSION bump
+// makes it redo the lot). Bulk computation is `npm run bot-scores` alone, so
+// listings must not pass off a par from an older brain as the current one —
+// otherwise the row and the info modal, which recomputes on demand, disagree.
+test('par: a stale entry is a cache miss — listings show no par, not an old one', async () => {
+  await withTmpSaveDir(async () => {
+    const { room, alice, bob } = await setupRoom();
+    const basename = path.basename(room.savePath);
+    await voteAbandon(room, alice.id); // par is withheld until the game is over
+    await voteAbandon(room, bob.id);
+    const current = await botScoreFor(basename);
+    assert.equal((await listLibrary())[0].botScore.version, BOT_SCORE_VERSION);
+    assert.equal(await staleBotScoreCount(), 0);
+
+    await setBotScore(basename, { ...current, version: '0.0-old', score: 999 });
+    assert.equal((await listLibrary())[0].botScore, null,
+      'a par from another brain is withheld rather than shown');
+    assert.equal(await staleBotScoreCount(), 1, 'and it is counted, so boot can say so');
+
+    // The info modal still answers, by computing that one save on demand.
+    const detail = await gameDetail(basename);
+    assert.equal(detail.botScore.version, BOT_SCORE_VERSION);
+    assert.notEqual(detail.botScore.score, 999);
+    assert.equal(await staleBotScoreCount(), 0, 'and that recompute stored the fresh one');
+  });
+});
+
+test('par: a save with no entry at all counts as needing one', async () => {
+  await withTmpSaveDir(async () => {
+    await setupRoom({ seed: 7 });
+    assert.equal(await staleBotScoreCount(), 1);
+    await backfillBotScores();
+    assert.equal(await staleBotScoreCount(), 0);
   });
 });
 
