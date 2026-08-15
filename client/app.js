@@ -1447,6 +1447,59 @@ function renderBotOptions(p) {
   return det;
 }
 
+// How long the room's bots pause before moving. Auto is 1.2s with a single
+// bot and 4s from two upward — bots play back-to-back, and at the solo pace a
+// bench of them blurs past faster than anyone can read the table. Manual holds
+// each bot turn until someone presses Play now.
+const BOT_PACE_CHOICES = [
+  ['auto', 'Auto'],
+  ['500', '0.5s'],
+  ['1200', '1.2s'],
+  ['2000', '2s'],
+  ['4000', '4s'],
+  ['6000', '6s'],
+  ['10000', '10s'],
+  ['manual', 'Manual'],
+];
+
+// The pace picker, shared by the lobby and the game screen. Returns null when
+// there's nothing to pace (no bots) or nobody who may set it (spectators,
+// replays).
+function botPaceControl(v) {
+  if (!v.hasBots || v.kind !== 'in-room' || v.isSpectator) return null;
+  const wrap = document.createElement('label');
+  wrap.className = 'meta-item meta-select';
+  const label = document.createElement('strong');
+  label.textContent = 'Bot pace';
+  wrap.append(label);
+  const sel = document.createElement('select');
+  const current = v.botPaceMs == null ? 'auto' : String(v.botPaceMs);
+  // The server accepts any millisecond value, so a pace set outside this list
+  // still has to be selectable — otherwise the picker would quietly show Auto
+  // while the room ran on something else.
+  const choices = BOT_PACE_CHOICES.some(([value]) => value === current)
+    ? BOT_PACE_CHOICES
+    : [...BOT_PACE_CHOICES, [current, `${Number(current) / 1000}s`]];
+  for (const [value, text] of choices) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    // Auto reads as "auto", but say what it currently comes to — the number
+    // is what the reader is actually asking about.
+    opt.textContent = value === 'auto' && v.botDelayMs != null
+      ? `Auto (${(v.botDelayMs / 1000).toFixed(1).replace(/\.0$/, '')}s)`
+      : text;
+    if (value === current) opt.selected = true;
+    sel.append(opt);
+  }
+  sel.title = 'How long each bot waits before taking its turn';
+  sel.addEventListener('change', () => {
+    const val = sel.value;
+    send({ type: 'botPace', pace: val === 'auto' || val === 'manual' ? val : Number(val) });
+  });
+  wrap.append(sel);
+  return wrap;
+}
+
 function renderLobby() {
   const listEl = document.getElementById('lobby-players');
   listEl.innerHTML = '';
@@ -1503,6 +1556,11 @@ function renderLobby() {
   addBotBtn.textContent = slotsFree > 0
     ? '+ Add bot'
     : '+ Add bot (server bot limit reached)';
+  const paceEl = document.getElementById('lobby-bot-pace');
+  paceEl.innerHTML = '';
+  const pace = botPaceControl(view);
+  paceEl.hidden = !pace;
+  if (pace) paceEl.append(pace);
   document.getElementById('opt-variant').disabled = !isHost;
   document.getElementById('opt-endRule').disabled = !isHost;
   document.getElementById('opt-shareGuarded').disabled = !isHost;
@@ -1617,6 +1675,9 @@ function renderGame() {
   });
   tapItem.append(tapBox);
   meta.append(tapItem);
+
+  const paceItem = botPaceControl(v);
+  if (paceItem) meta.append(paceItem);
 
   if (v.status === 'finished') {
     const banner = document.createElement('div');
@@ -1824,6 +1885,18 @@ function renderPlayerRow(player, index, isMyTurn) {
     marker.className = 'turn-marker';
     marker.textContent = 'turn';
     head.append(marker);
+    // A bot on turn is waiting out its pace (or, on Manual, waiting for this
+    // button). Anyone at the table may release it — it only brings forward a
+    // move the bot was going to make anyway.
+    if (player.isBot && view.kind === 'in-room' && !view.isSpectator) {
+      const now = document.createElement('button');
+      now.type = 'button';
+      now.className = 'bot-now-button';
+      now.textContent = '▶ Play now';
+      now.title = 'Stop waiting and let this bot take its turn';
+      now.addEventListener('click', () => send({ type: 'botNow' }));
+      head.append(now);
+    }
   }
   const latest = latestActionEntry(view.log);
   if (latest && bubbleTargetIndex(latest) === index) {

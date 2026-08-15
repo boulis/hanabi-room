@@ -6,14 +6,24 @@ import {
   alarmGuardTargets, alarmGuards, conventionsFromOptions, decide, defaultBotOptions,
   sanitizeBotOptions,
 } from './botBrain.js';
-import { applyAction, joinRoom, leaveRoom, undoLast, viewFor } from './room.js';
+import {
+  BOT_PACE_SOLO_MS, applyAction, botDelayFor, joinRoom, leaveRoom, undoLast, viewFor,
+} from './room.js';
 import { GameError } from './rules.js';
 
 export const MAX_TOTAL_BOTS = 10; // across all rooms
 
 const BOT_NAMES = ['Robo', 'Hal', 'Data', 'Marvin', 'Gerty', 'Kitt', 'Eve', 'Chip', 'Astro', 'Tik-Tok'];
-// Overridable so tests don't wait out human-feeling pauses.
-const BOT_DELAY_MS = Number(process.env.HANABI_BOT_DELAY_MS ?? 1200);
+// How long this room's bots pause before moving is botDelayFor (room.js:
+// per-room setting, HANABI_BOT_DELAY_MS, then the auto default), where null
+// means 'manual' — no turn taken until someone presses Play now.
+//
+// replyDelay covers everything that isn't the bot taking its turn: honouring
+// an undo request,
+// and the lead-in to a guard reminder. Those are answers the table is waiting
+// on rather than moves to read, so 'manual' must not park them forever — it
+// paces play, not correctness.
+const replyDelay = (room) => botDelayFor(room) ?? BOT_PACE_SOLO_MS;
 // After a bot honors an undo request, it waits before re-acting so the
 // requester has time to chain their own undo. Read per use, so a test can
 // widen the window around the moment it wants to exercise.
@@ -190,7 +200,7 @@ export function pokeBots(room) {
         b.timer = null;
         b.pending = null;
         botUndo(room, top.playerId).catch((err) => console.error('bot undo failed:', err));
-      }, BOT_DELAY_MS);
+      }, replyDelay(room));
     }
     return;
   }
@@ -210,16 +220,44 @@ export function pokeBots(room) {
   if (b.timer) return;
   if (guardReminderDue(room, b)) {
     b.pending = 'remind';
-    b.timer = setTimeout(() => remindGuards(room, current.id), BOT_DELAY_MS);
+    b.timer = setTimeout(() => remindGuards(room, current.id), replyDelay(room));
     return;
   }
-  const delay = Math.max(BOT_DELAY_MS, b.graceUntil - Date.now());
+  const pace = botDelayFor(room);
+  // Manual pace: the bot is on turn and simply waits to be released. Nothing
+  // is scheduled, so a Play now (hurryBot) is the only thing that moves it —
+  // which is the point, and why pending is still marked: the client shows the
+  // button off the seat being a bot's, and hurryBot needs a bot to release.
+  if (pace === null) {
+    b.pending = 'act';
+    return;
+  }
+  const delay = Math.max(pace, b.graceUntil - Date.now());
   b.pending = 'act';
   b.timer = setTimeout(() => {
     b.timer = null;
     b.pending = null;
     botAct(room, current.id).catch((err) => console.error('bot action failed:', err));
   }, delay);
+}
+
+// "Play now": stop waiting out the pause (or the manual hold, or the tail of a
+// guard reminder) and take the turn. Anyone at the table may press it — it
+// only ever brings forward a move the bot was already going to make.
+export function hurryBot(room) {
+  if (!room || room.phase !== 'playing' || room.state?.status !== 'playing') return false;
+  const current = room.state.players[room.state.currentPlayer];
+  const b = current ? bots.get(seatKey(room.id, current.id)) : undefined;
+  if (!b || b.pending === 'undo') return false;
+  if (b.timer) clearTimeout(b.timer);
+  b.timer = null;
+  b.pending = null;
+  // Whatever the bot was waiting on, someone has now said go: the post-undo
+  // grace ends here, and a guard reminder in flight is settled the ordinary
+  // way by the move itself (whoever pressed has seen the ❗s).
+  b.graceUntil = 0;
+  botAct(room, current.id).catch((err) => console.error('bot action failed:', err));
+  return true;
 }
 
 async function botUndo(room, playerId) {

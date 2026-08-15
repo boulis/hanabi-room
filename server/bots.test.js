@@ -15,6 +15,7 @@ const {
   addBot,
   adoptRoomBots,
   configureBot,
+  hurryBot,
   initBots,
   isBotSeat,
   pokeBots,
@@ -24,7 +25,10 @@ const {
   totalBots,
 } = await import('./bots.js');
 const { conventionsFromOptions } = await import('./botBrain.js');
-const { applyAction, joinRoom, requestUndo, resumeRoom, startGame, undoLast } = await import('./room.js');
+const {
+  applyAction, autoBotDelay, botDelayFor, joinRoom, requestUndo, resumeRoom, setBotPace, startGame,
+  undoLast, viewFor,
+} = await import('./room.js');
 const { branchSave } = await import('./savedGame.js');
 const { GameError } = await import('./rules.js');
 const { createRoom, deleteRoom, allRooms, isRoomIdle } = await import('./rooms.js');
@@ -713,6 +717,99 @@ test('adopt: a save and its branch open as two rooms with independent bot seats'
     const botId = second.players[1].id;
     assert.equal(isBotSeat(second.id, botId), true, 'the surviving room keeps its bot');
     assert.equal(isBotSeat(first.id, botId), false, 'the closed room released its own');
+    resetBots();
+  });
+});
+
+test('bot pace: auto slows down as soon as a second bot is seated', () => {
+  purgeRooms();
+  resetBots();
+  const room = createRoom('Pace');
+  joinRoom(room, { name: 'Ann' });
+  addBot(room);
+  assert.equal(autoBotDelay(room), 1200, 'one bot keeps the brisk pace');
+  addBot(room);
+  assert.equal(autoBotDelay(room), 4000, 'two bots play back-to-back, so slower');
+  resetBots();
+});
+
+test('bot pace: an explicit setting outranks HANABI_BOT_DELAY_MS, auto defers to it', () => {
+  purgeRooms();
+  resetBots();
+  const room = createRoom('Pace');
+  joinRoom(room, { name: 'Ann' });
+  addBot(room);
+  // The env var is the default for 'auto' only — which is exactly what lets
+  // this suite run every other test at 10ms.
+  assert.equal(botDelayFor(room), 10, 'auto takes the env override');
+  setBotPace(room, 2500);
+  assert.equal(botDelayFor(room), 2500);
+  setBotPace(room, 'manual');
+  assert.equal(botDelayFor(room), null, 'manual is "no timer at all"');
+  setBotPace(room, 'auto');
+  assert.equal(botDelayFor(room), 10, 'back to the default');
+  assert.throws(() => setBotPace(room, -1), GameError);
+  assert.throws(() => setBotPace(room, 60001), GameError);
+  assert.throws(() => setBotPace(room, 'quick'), GameError);
+  // The view carries both halves: the raw setting and what it comes to.
+  setBotPace(room, 3000);
+  const v = viewFor(room, room.players[0].id);
+  assert.equal(v.botPaceMs, 3000);
+  assert.equal(v.botDelayMs, 3000);
+  assert.equal(v.hasBots, true);
+  resetBots();
+});
+
+test('bot pace manual: the bot holds its turn until hurryBot releases it', async () => {
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    const room = createRoom('Manual');
+    const human = joinRoom(room, { name: 'Ann' });
+    addBot(room);
+    initBots(async () => pokeBots(room));
+    await startGame(room, human.id, { seed: 5 });
+    setBotPace(room, 'manual');
+
+    const botHand = room.state.players[1].hand;
+    await applyAction(room, human.id, {
+      type: 'hint', toPlayerIndex: 1, hintType: 'number', value: botHand[0].number,
+    });
+    assert.equal(room.state.currentPlayer, 1);
+    pokeBots(room);
+    // Everything else in this file runs at a 10ms pace, so a move would have
+    // landed many times over by now.
+    await sleep(120);
+    assert.equal(room.state.turn, 1, 'the bot is still waiting to be released');
+
+    assert.equal(hurryBot(room), true);
+    await waitFor(() => room.state.turn === 2, 'released bot took its turn');
+    assert.equal(room.state.currentPlayer, 0, 'turn came back to the human');
+    // Nothing on turn to hurry now that it's the human's move.
+    assert.equal(hurryBot(room), false);
+    resetBots();
+  });
+});
+
+test('bot pace: hurryBot skips the remaining wait at a slow pace', async () => {
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    const room = createRoom('Hurry');
+    const human = joinRoom(room, { name: 'Ann' });
+    addBot(room);
+    initBots(async () => pokeBots(room));
+    await startGame(room, human.id, { seed: 5 });
+    setBotPace(room, 30000); // far longer than this test may take
+
+    const botHand = room.state.players[1].hand;
+    await applyAction(room, human.id, {
+      type: 'hint', toPlayerIndex: 1, hintType: 'number', value: botHand[0].number,
+    });
+    pokeBots(room);
+    assert.equal(room.state.turn, 1, 'nothing happens on its own at 30s');
+    hurryBot(room);
+    await waitFor(() => room.state.turn === 2, 'hurried bot took its turn');
     resetBots();
   });
 });

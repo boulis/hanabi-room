@@ -21,6 +21,7 @@ import {
   requestUndo,
   resumeRoom,
   returnToLobby,
+  setBotPace,
   startGame,
   undoLast,
   viewFor,
@@ -33,6 +34,7 @@ import {
   addBot,
   adoptRoomBots,
   configureBot,
+  hurryBot,
   initBots,
   pokeBots,
   removeBot,
@@ -454,6 +456,21 @@ wss.on('connection', async (ws) => {
           const room = requireSeat(conn);
           configureBot(room, msg.playerId, msg.options || {});
           await broadcastRoomAndLobby(room.id);
+          break;
+        }
+        case 'botPace': {
+          // Any seated player, in either phase — see setBotPace.
+          const room = requireSeat(conn);
+          setBotPace(room, msg.pace);
+          broadcastRoom(room.id);
+          break;
+        }
+        case 'botNow': {
+          const room = requireSeat(conn);
+          // No-op when the seat on turn isn't a waiting bot: the button races
+          // the move it's trying to hurry, and losing that race is not an
+          // error. No broadcast either — the released move makes its own.
+          hurryBot(room);
           break;
         }
         case 'deleteRoom': {

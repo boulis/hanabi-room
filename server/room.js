@@ -44,6 +44,11 @@ export function createRoom() {
     // What a table of bots scores on this game's deck; filled in once the game
     // ends (see recordBotScore).
     botScore: null,
+    // How long resident bots pause before moving: null = auto (see
+    // autoBotDelay), a number of ms, or 'manual'. Not part of options — it's a
+    // watching comfort, not a game rule, so it isn't host-gated, isn't
+    // lobby-only, and never reaches a save.
+    botPaceMs: null,
     // Spectators get an omniscient, read-only view — never part of
     // state.players, so game logic (rules.js) never has to know about them.
     spectators: new Map(),
@@ -237,6 +242,53 @@ export function configureRoom(room, playerId, partial) {
     throw new GameError('allowSpectators must be boolean', 'bad_allow_spectators');
   }
   room.options = next;
+}
+
+// --- Bot pacing ---
+// A lone bot at ~1.2s reads fine: a human moves between every one of its
+// turns, so there is always a pause to read the table in. Two or more bots
+// play back-to-back, and at that speed the moves blur into one another before
+// a watching human can follow what happened — hence a slower default as soon
+// as a second bot is seated.
+export const BOT_PACE_SOLO_MS = 1200;
+export const BOT_PACE_CROWD_MS = 4000;
+export const BOT_PACE_MAX_MS = 60000;
+
+export function autoBotDelay(room) {
+  const bots = room.players.filter((p) => p.isBot).length;
+  return bots >= 2 ? BOT_PACE_CROWD_MS : BOT_PACE_SOLO_MS;
+}
+
+// The effective pause before a bot's move, or null for 'manual' (the bot holds
+// its turn until someone presses Play now). An explicit room pace outranks
+// HANABI_BOT_DELAY_MS, which is only the default for 'auto': that ordering is
+// what lets the test suite drive the whole bot loop at 10ms while a test that
+// cares about pacing still gets the pace it asked for.
+export function botDelayFor(room) {
+  const pace = room?.botPaceMs;
+  if (pace === 'manual') return null;
+  if (typeof pace === 'number') return pace;
+  const env = process.env.HANABI_BOT_DELAY_MS;
+  if (env !== undefined && env !== '' && Number.isFinite(Number(env))) return Number(env);
+  return autoBotDelay(room);
+}
+
+// Any seated player, in either phase: pacing is about keeping up with the
+// table, so whoever can't keep up is exactly who should be able to change it.
+export function setBotPace(room, pace) {
+  if (pace === null || pace === 'auto') {
+    room.botPaceMs = null;
+    return;
+  }
+  if (pace === 'manual') {
+    room.botPaceMs = 'manual';
+    return;
+  }
+  const ms = Number(pace);
+  if (!Number.isFinite(ms) || ms < 0 || ms > BOT_PACE_MAX_MS) {
+    throw new GameError('Bot pace must be auto, manual, or 0–60000 ms', 'bad_bot_pace');
+  }
+  room.botPaceMs = Math.round(ms);
 }
 
 export async function startGame(room, playerId, { seed } = {}) {
@@ -438,11 +490,21 @@ function spectatorList(room) {
   return [...room.spectators.values()].map((s) => ({ id: s.id, name: s.name }));
 }
 
+// The pace control needs both halves: the raw setting (so the picker can show
+// "auto" as auto rather than as whatever it currently resolves to) and what
+// that setting actually comes to right now.
+function attachBotPace(room, v) {
+  v.botPaceMs = room.botPaceMs ?? null;
+  v.botDelayMs = botDelayFor(room);
+  v.hasBots = room.players.some((p) => p.isBot);
+}
+
 export function viewFor(room, playerId) {
   if (room.phase === 'lobby') {
     const v = lobbyView(room);
     v.spectators = spectatorList(room);
     v.isSpectator = room.spectators.has(playerId);
+    attachBotPace(room, v);
     return v;
   }
   const idx = playerIndex(room, playerId);
@@ -457,6 +519,7 @@ export function viewFor(room, playerId) {
   v.botScore = room.state.status === 'finished' ? room.botScore ?? null : null;
   v.hostId = room.hostId;
   v.options = room.options;
+  attachBotPace(room, v);
   v.spectators = spectatorList(room);
   v.isSpectator = room.spectators.has(playerId);
   v.abandonVotes = {
