@@ -375,6 +375,39 @@ function remindGuards(room, playerId) {
   }, remindGapMs());
 }
 
+// --- Rollback reconciliation ---
+// The driver memory decide() writes into is a cache of what the log said
+// happened, and an undo unsays it. The colour-target rescue
+// (rememberColorTargets in botBrain.js) knows only two ways a play marker can
+// vanish from our hand — a sibling was PLAYED, which retires the target, or a
+// sibling was DISCARDED, which is the case the rescue exists for — and a hint
+// that was UNDONE is a third it has no case for. So the remembered target
+// outlives the hint that created it, and because a colour target outranks
+// every hint in decide's ordering, the bot plays a card nobody ever pointed
+// at. Seen in a real game: a blue hint slid its target onto a rainbow 3, the
+// table undid the hint, and three turns later the bot played the rainbow 3 for
+// a fuse while a save and a play hint went unsaid.
+//
+// The repair is to trust state over memory whenever state moved backwards.
+// Nothing needs rebuilding by hand: colorPlays is re-recorded from this turn's
+// live markers by decide itself, and inferredGuards by the next alarm. The
+// forced-play pointer is left alone — it already carries its own rollback
+// guard, keyed on memory.fpTurn, which clearing would disarm.
+//
+// Struck log entries only accumulate: an undo re-appends the undone action's
+// entries flagged, and the snapshot it restores already holds every entry
+// struck before it. So a count that has risen since our last turn means
+// exactly "someone undid something in between".
+const undoneCount = (state) => state.log.reduce((n, e) => n + (e.undone ? 1 : 0), 0);
+
+function forgetRolledBack(b, state) {
+  const undone = undoneCount(state);
+  if (undone === b.undoneSeen) return;
+  b.undoneSeen = undone;
+  delete b.memory.colorPlays;
+  delete b.memory.inferredGuards;
+}
+
 async function botAct(room, playerId) {
   const b = bots.get(seatKey(room.id, playerId));
   if (!b) return;
@@ -394,6 +427,7 @@ async function botAct(room, playerId) {
     }
     if (guards.length > 0) view = viewFor(room, playerId);
     b.memory ??= {};
+    forgetRolledBack(b, room.state);
     const { action, reason } = decide(view, conventions, b.memory);
     await applyAction(room, playerId, action, reason);
     // Recorded off the pre-action view, which is the right one: our own discard

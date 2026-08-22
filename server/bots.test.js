@@ -366,6 +366,61 @@ function craftedDeck(hands, next = []) {
   return order;
 }
 
+// An undo unsays what the driver memory remembers. A colour hint's play target
+// is recorded in memory (rememberColorTargets) so it survives an unrelated
+// discard wiping the hand's markers — but that rescue has no case for the hint
+// itself being undone, so the obligation used to outlive it, and a colour
+// target outranks every hint decide can give. Seen in a real game: the table
+// walked a blue hint back, and three turns later the bot played the card it had
+// pointed at for a fuse instead of the save and the play hint it owed.
+test('undo: a colour target does not outlive the hint that was walked back', async () => {
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    const room = createRoom('Ghost');
+    const human = joinRoom(room, { name: 'Ann' });
+    const bot = addBot(room);
+    room.options.endRule = 'lax';
+    room.importedDeck = craftedDeck([
+      ['green_4', 'green_3', 'blue_4', 'blue_3', 'yellow_4'], // human, seat 0
+      ['white_1', 'red_4', 'white_2', 'white_3', 'red_5'],    // bot, seat 1
+    ]);
+    initBots(async () => pokeBots(room));
+    await startGame(room, human.id, {});
+    const ghost = room.state.players[1].hand[1]; // red 4
+
+    // A "5" first, so the red hint's newest touch (the red 5) is provably dead
+    // and the play target slides back onto the red 4. Applied directly, so the
+    // bot doesn't start playing mid-setup.
+    await applyAction(room, human.id, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 5 });
+    await applyAction(room, bot.id, { type: 'hint', toPlayerIndex: 0, hintType: 'number', value: 4 });
+    await applyAction(room, human.id, { type: 'hint', toPlayerIndex: 1, hintType: 'color', value: 'red' });
+    assert.equal(room.state.currentPlayer, 1);
+    pokeBots(room);
+    await waitFor(() => room.state.currentPlayer === 0, 'bot played the colour target');
+    assert.equal(room.state.fuseTokens, 2, 'the red 4 was a misplay, as the table then saw');
+
+    // Walk it all back: the bot's play, then the hint that asked for it.
+    requestUndo(room, human.id);
+    pokeBots(room);
+    await waitFor(() => room.undoStack[room.undoStack.length - 1]?.playerId === human.id,
+      'bot undid its play');
+    await undoLast(room, human.id);
+    assert.equal(room.state.fuseTokens, 3, 'back to before the hint');
+    assert.equal(room.state.currentPlayer, 0, 'back on the human');
+    assert.ok(!room.state.players[1].hand[1].colorClued, 'nothing points at the red 4 any more');
+
+    // The human says something else, and the bot is on turn again with no
+    // colour target anyone can see — so it must not play one it remembers.
+    await applyAction(room, human.id, { type: 'discard', cardIndex: 1 });
+    pokeBots(room);
+    await waitFor(() => room.state.currentPlayer === 0, 'bot took its next turn');
+    assert.equal(room.state.fuseTokens, 3, 'no ghost misplay');
+    assert.ok(room.state.players[1].hand.some((c) => c.id === ghost.id), 'the red 4 is still in hand');
+    resetBots();
+  });
+});
+
 // Seat a bot (index 0, host) and a human (index 1) on a deck where the bot's
 // next decision is an alarm discard, and run the game up to that point. Guards
 // are shared, so the bot can see whether the human answers.
