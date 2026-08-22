@@ -34,21 +34,21 @@ that one seam; transport, seating, reconnects, and the retry-with-safe-fallback
 path stay as they are. Bots also run in-process as ordinary room seats
 (`server/bots.js`), which is how they are normally played with.
 
-**`BOT_VERSION` 2.28** (August 2026). Benchmark, 50 seeds a row, lax:
+**`BOT_VERSION` 2.29** (August 2026). Benchmark, 50 seeds a row, lax:
 
 | variant | 2p | 3p | 4p |
 | --- | --- | --- | --- |
-| `simple` /25 | 23.94 | 24.34 | 24.38 |
-| `rainbow` /30 | 28.34 | 29.52 | 29.26 |
-| `rainbowCritical` /30 | 27.34 | 28.78 | 27.78 |
-| `rainbowCriticalBlack` /35 | 30.16 | 33.60 | 32.46 |
-| `rainbowCriticalBlackReverse` /35 | 28.80 | 32.34 | 32.00 |
+| `simple` /25 | 23.80 | 24.46 | 24.34 |
+| `rainbow` /30 | 28.50 | 29.32 | 29.22 |
+| `rainbowCritical` /30 | 27.28 | 29.18 | 28.56 |
+| `rainbowCriticalBlack` /35 | 30.22 | 33.30 | 32.58 |
+| `rainbowCriticalBlackReverse` /35 | 28.70 | 32.70 | 32.00 |
 
-Over 3000 games (200 seeds × 15 rows): 28.861 mean per row, 1069 perfect games,
-17 fuse-outs. Full tables per version in `bot-performance.md`.
+Over 3000 games (200 seeds × 15 rows): 28.900 mean per row, 1103 perfect games,
+23 fuse-outs. Full tables per version in `bot-performance.md`.
 
 These are the default benchmark, which runs with **empty hints off**; with
-`--emptyhints` it is 29.082 mean per row, 1075 perfect, 25 fuse-outs. Anything
+`--emptyhints` it is 29.133 mean per row, 1123 perfect, 25 fuse-outs. Anything
 measured only under a room option belongs in that second table — 2.27's change
 (the zero-card-hint signal reachable from a save) is gated on `allowEmptyHints`
 and does not move the default table at all.
@@ -378,6 +378,18 @@ node bot.mjs --brain onnx:model.onnx  # trained policy
 ---
 
 ## Decisions on record
+
+- **2026-08-22 — a save is a hint that TOUCHES the card, not one that targets it
+  (2.29).** `findSaveHint` had four tiers and every one of them pointed the hint
+  *at* the endangered card. But the keep-hint achieves nothing except taking the
+  card off the chop, and any touch does that — so a play hint that brushes the
+  chop on its way to a different playable card is a strictly better keep-hint.
+  Found by a real game where a critical yellow 4 on the chop sat one slot ahead
+  of a playable yellow 1 in the same hand; the bot spent its token on "4". The
+  new `combo` tier is worth +0.04 a row and 34 perfect games per 3000. Generalise
+  the lesson before looking for more: ask what a tier actually *accomplishes*,
+  then find every move that accomplishes it, rather than enumerating moves of the
+  expected shape.
 
 - **2026-08-14 — no finesses.** Layer 3 of deferred plays is declined for now.
   It needs a blind play on faith, and one mismatch between two people's reading

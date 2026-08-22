@@ -10,7 +10,7 @@ import { viewState } from './view.js';
 
 // Bumped on every change to the decision logic; bot-performance.md records
 // what each version does and the benchmark numbers it achieves.
-export const BOT_VERSION = '2.28';
+export const BOT_VERSION = '2.29';
 
 // Thresholds for the free gamble (see gambleChance): better-than-even odds,
 // and never on the last fuse. Both were swept — the score plateau runs from
@@ -917,22 +917,42 @@ function loneTwoWorthSaving(view, card) {
 // than one 2 down. (A last copy is worth locking a hand for; a lone 2 isn't.)
 function hintWouldLock(view, seat, hint) {
   const hand = view.players[seat].hand;
-  const touched = new Set((hint.hintType === 'color'
-    ? colorHintTouches(view, hand, hint.value).map(({ i }) => i)
-    : hand.map((c, i) => (c.number === hint.value ? i : -1)).filter((i) => i >= 0)));
+  const touched = hintTouchedSet(view, hand, hint);
   return !hand.some((c, i) => !c.colorClued && !c.numberClued
     && !c.annotations?.guarded && !touched.has(i));
+}
+
+// Which slots a hint touches, either kind of hint.
+function hintTouchedSet(view, hand, hint) {
+  return new Set(hint.hintType === 'color'
+    ? colorHintTouches(view, hand, hint.value).map(({ i }) => i)
+    : hand.map((c, i) => (c.number === hint.value ? i : -1)).filter((i) => i >= 0));
+}
+
+// The slot a colour hint's own marker would point at from the receiver's side:
+// the newest touched card their post-hint constraints don't already rule out
+// (the slide of colorPlayTargets). -1 when every touch is provably dead.
+function colorTargetAfter(view, seat, color) {
+  const hand = view.players[seat].hand;
+  const touched = colorHintTouches(view, hand, color);
+  const after = combosFor(view, afterColorHint(view, hand, color), [seat, view.viewerIndex]);
+  for (let k = touched.length - 1; k >= 0; k--) {
+    if (possiblyPlayable(view, after[touched[k].i])) return touched[k].i;
+  }
+  return -1;
 }
 
 // The best way to protect `chop` in `seat`'s hand. A play hint that gets the
 // card played beats parking it: the card scores AND leaves the hand. Next
 // best, when the room allows empty hints, the zero-card-hint signal — it also
 // gets the card played, but carries no information beyond the command, so a
-// real play hint outranks it. Then a colour hint that pins it as provably
-// unplayable (informative, and safe: the receiver's target check skips
-// unplayable targets). Fallback is the plain number keep-hint — except a "1"
-// save that play-all-1s would misread as a play order; then no safe save
-// exists.
+// real play hint outranks it. Then the combo save: a play hint aimed at a
+// DIFFERENT card that touches this one on its way past, protecting it exactly
+// as a keep-hint would while scoring a card for the same token. Then a colour
+// hint that pins it as provably unplayable (informative, and safe: the
+// receiver's target check skips unplayable targets). Fallback is the plain
+// number keep-hint — except a "1" save that play-all-1s would misread as a
+// play order; then no safe save exists.
 //
 // Two ways to come up empty, and they are NOT the same answer:
 //   null                     — no hint reaches this card. Nothing was decided.
@@ -971,6 +991,34 @@ function findSaveHint(view, seat, chop, conventions) {
       const empty = findEmptyHint(view, seat);
       if (empty && ok(empty)) return { hint: empty, how: 'signal' };
     }
+  }
+  // A hint can do both jobs at once. Taking the chop off the chop is all a
+  // keep-hint ever achieves, and ANY hint that touches the card achieves it —
+  // so a play hint that happens to touch the chop while pointing the receiver
+  // at a different, genuinely playable card buys the same protection AND a
+  // card scored, for the same token. (Seen in a real game: a chop yellow 4
+  // with a playable yellow 1 behind it in the same hand got a bare "4"
+  // keep-hint, when the yellow hint saved the 4 and played the 1.)
+  //
+  // Ranked below a play-save (which gets the endangered card itself played)
+  // but above the pin and the keep, both of which only park it.
+  //
+  // `playHintCandidates` has already worked out what the receiver would act
+  // on, from their side, so the target is theirs to choose and not ours to
+  // assume. Two things still have to be checked here: the chop must not be
+  // among the cards the hint sends them to play (it isn't playable, so that
+  // would be a misfire we caused), and — for a colour hint read as a reveal,
+  // where the slide never ran — the chop must not be left standing as the
+  // hint's colour target either.
+  {
+    let best = null;
+    for (const cand of playHintCandidates(view, seat, conventions)) {
+      if (cand.playIdxs.includes(chop)) continue;
+      if (!hintTouchedSet(view, hand, cand.hint).has(chop)) continue;
+      if (cand.hint.hintType === 'color' && colorTargetAfter(view, seat, cand.hint.value) === chop) continue;
+      if (!best || cand.score > best.score) best = cand;
+    }
+    if (best && ok(best.hint)) return { hint: best.hint, how: 'combo' };
   }
   for (const color of view.hintableColors) {
     const touched = colorHintTouches(view, hand, color);
@@ -1635,6 +1683,12 @@ function pickSave(view, seat, chop, conventions) {
   // hint we are not giving; it travels up so the caller can tell it from "no
   // save exists".
   if (primary.how === 'play' || primary.how === 'signal') return { index: chop, ...primary };
+  // A combo save parks the chop AND hands them a play, so their next turn is a
+  // play, not a discard — and we get a turn of our own before the turn after
+  // that. The card the slide exposes is therefore still ours to save in time,
+  // exactly as with the 2-player play-hint deferral, so it isn't an exposure
+  // this hint has to answer for.
+  if (primary.how === 'combo') return { index: chop, ...primary, exposed: 0 };
   if (primary.how === 'declined') return { index: chop, ...primary, exposed: 0 };
   // Where the receiver's discard lands after a hint's clue marks are down: the
   // oldest card that is neither clued, guarded, nor touched by this hint. A
@@ -1893,8 +1947,11 @@ function decideCore(view, conventions = STANDARD_CONVENTIONS, memory = null) {
         // strict alternation guarantee we re-save in time, and only there does
         // tempo dominate enough to beat spending a second token on the deferred
         // save (benchmarks regress slightly at 3-4 players).
+        // A combo save is already a play hint that protects the chop, so there
+        // is nothing to defer — swapping it for `findPlayHint`'s pick would
+        // trade the protection away for a hint that may point elsewhere.
         if (view.players.length === 2 && save?.hint && save.how !== 'play' && save.how !== 'signal'
-          && view.finalTurn === null) {
+          && save.how !== 'combo' && view.finalTurn === null) {
           const playHint = findPlayHint(view, idx, conventions);
           if (playHint) {
             urgentSave = {

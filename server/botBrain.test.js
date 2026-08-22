@@ -1786,3 +1786,87 @@ test('bot (3p): a save that can wait yields to our own play — but never over a
   assert.equal(b.action.type, 'hint', `the green 5 cannot wait: ${b.reason}`);
   assert.equal(b.action.toPlayerIndex, 1, b.reason);
 });
+
+// From a real game (21 Aug, turn 32): the next player's chop was a critical
+// yellow 4 with a playable yellow 1 further along the same hand. One yellow
+// hint takes the 4 off the chop — which is all a keep-hint ever does — and
+// points them at the 1. The bot gave a bare "4" instead: findSaveHint only
+// ever looked for hints that TARGET the endangered card, so a play hint that
+// merely touches it on the way past was invisible to it.
+function comboSaveState() {
+  let id = 0;
+  const c = (color, number, opts) => plainCard(id++, color, number, opts);
+  return {
+    status: 'playing', variantId: 'simple', endRule: 'lax',
+    shareGuarded: true, allowEmptyHints: false, seed: 1,
+    players: [
+      // Sender: nothing playable, nothing else worth saying.
+      { id: 'a', name: 'Ann', hand: [c('white', 4), c('blue', 4), c('red', 3)] },
+      // Receiver: a parked green 5, then the chop (yellow 4, last copy), then
+      // a playable yellow 1. A yellow hint touches slots 1 and 2 and targets
+      // the newest of them — the 1.
+      {
+        id: 'b',
+        name: 'Bot',
+        hand: [
+          c('green', 5, { colorClued: true, numberClued: true, possibleColors: ['green'], possibleNumbers: [5] }),
+          c('yellow', 4),
+          c('yellow', 1),
+        ],
+      },
+    ],
+    deck: [c('red', 1), c('blue', 1)],
+    discard: [c('yellow', 4)], // the twin is gone: the chop is a last copy
+    playedPiles: { red: [], yellow: [], green: [], blue: [], white: [] },
+    hintTokens: 3, fuseTokens: 3, currentPlayer: 0, turn: 32, finalTurn: null,
+    log: [], endReason: null, nextHintIndex: 0, nextLogSeq: 0,
+    startedAt: 0, endedAt: null, initialDeckCards: [],
+  };
+}
+
+test('bot: a save that is also a play hint beats the bare keep-hint', () => {
+  const s = comboSaveState();
+  const { action, reason } = decide(viewState(s, 0), undefined, {});
+  assert.deepEqual(action, { type: 'hint', toPlayerIndex: 1, hintType: 'color', value: 'yellow' }, reason);
+  assert.match(reason, /save yellow 4 on chop \(combo\)/);
+
+  // The chop is off the chop, and the receiver plays the 1 it pointed at.
+  hintAction(s, 0, 1, 'color', 'yellow');
+  assert.equal(chopIndex(viewState(s, 1).players[1].hand), -1, 'the yellow 4 is no longer the chop');
+  const recv = decide(viewState(s, 1), undefined, {});
+  assert.deepEqual(recv.action, { type: 'play', cardIndex: 2 }, recv.reason);
+});
+
+// The guard on that: a colour hint read as a *reveal* (some touched card is
+// pinned playable outright) never runs the newest-touched slide, so the chop
+// can be left standing as the hint's colour target — a misfire on the very card
+// we were protecting. Here a yellow hint pins the number-clued 2 as the yellow 2
+// (playable), and the chop yellow 4 behind it is the newest yellow they cannot
+// rule out, so it is what the slide would point at.
+function comboMisfireState() {
+  let id = 0;
+  const c = (color, number, opts) => plainCard(id++, color, number, opts);
+  return {
+    status: 'playing', variantId: 'simple', endRule: 'lax',
+    shareGuarded: true, allowEmptyHints: false, seed: 1,
+    players: [
+      { id: 'a', name: 'Ann', hand: [c('white', 4), c('blue', 4), c('red', 3)] },
+      { id: 'b', name: 'Bot', hand: [c('yellow', 2, { numberClued: true, possibleNumbers: [2] }), c('yellow', 4)] },
+      { id: 'c', name: 'Cy', hand: [c('white', 3), c('blue', 3), c('red', 4)] },
+    ],
+    deck: [c('red', 1), c('blue', 1)],
+    discard: [c('yellow', 4)],
+    playedPiles: { red: [], yellow: [c('yellow', 1)], green: [], blue: [], white: [] },
+    hintTokens: 3, fuseTokens: 3, currentPlayer: 0, turn: 32, finalTurn: null,
+    log: [], endReason: null, nextHintIndex: 0, nextLogSeq: 0,
+    startedAt: 0, endedAt: null, initialDeckCards: [],
+  };
+}
+
+test('bot: a combo save never leaves the endangered card as the colour target', () => {
+  const s = comboMisfireState();
+  const { action, reason } = decide(viewState(s, 0), undefined, {});
+  assert.ok(!(action.type === 'hint' && action.hintType === 'color' && action.value === 'yellow'),
+    `the yellow hint would target the chop itself (got ${reason})`);
+  assert.deepEqual(action, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 4 }, reason);
+});

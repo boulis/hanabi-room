@@ -1989,3 +1989,79 @@ rainbowCriticalBlackReverse/35        2 30.26    23   35        3      1        
 rainbowCriticalBlackReverse/35        3 32.62    27   35        9      0           0.48
 rainbowCriticalBlackReverse/35        4 32.14    27   35        6      1           0.52
 ```
+
+## 2.29 — a save can also be a play hint
+
+`findSaveHint` only ever looked for hints that **target** the endangered card:
+a play hint that gets the chop itself played, the zero-card-hint signal, a
+colour hint that pins the chop unplayable, and otherwise the bare number
+keep-hint. But taking the card off the chop is all a keep-hint ever achieves,
+and *any* hint that touches the card achieves it — so a play hint that happens
+to touch the chop on its way past buys the same protection **and** a card
+scored, for the same token.
+
+Seen in a real game (21 Aug, turn 32, 3p reverse): the next player's chop was a
+critical yellow 4 with a playable yellow 1 further along the same hand. One
+yellow hint touches both and targets the newest — the 1. The bot gave a bare
+"4".
+
+New tier `how: 'combo'`, ranked below the play-save and the signal (which get
+the endangered card itself played) and above the pin and the keep (which only
+park it). The candidate has to come from `playHintCandidates`, so what the
+receiver acts on is read from their side, not assumed; two things are checked
+on top. The chop must not be among the cards the hint sends them to play — it
+isn't playable, so that would be a misfire we caused — and, for a colour hint
+read as a *reveal* (where the newest-touched slide never ran), the chop must
+not be left standing as the hint's colour target either.
+
+In `pickSave` a combo save reports `exposed: 0`. It hands the receiver a play,
+so their next turn is a play and not a discard, and we get a turn of our own
+before the turn after that — the card the slide exposes is still ours to save
+in time, the same reasoning as the 2-player play-hint deferral. (Measured both
+ways at 200 seeds: `exposed: 0` +0.21 total, 1103 perfect games against 1097.)
+The 2-player deferral itself skips a combo save — it is already a play hint
+that protects the chop, so swapping it for `findPlayHint`'s pick would trade
+the protection away.
+
+At 200 seeds against 2.28: **+0.59 total (+0.04/row)**, perfect games
+**1069 → 1103**, misplays flat.
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 23.80    18   25       27      0           0.28
+simple/25                             3 24.46    22   25       33      0           0.28
+simple/25                             4 24.34    21   25       31      0           0.48
+rainbow/30                            2 28.50    23   30       19      0           0.14
+rainbow/30                            3 29.32    26   30       30      0           0.28
+rainbow/30                            4 29.22    26   30       25      1           0.48
+rainbowCritical/30                    2 27.28    22   30       13      0           0.46
+rainbowCritical/30                    3 29.18    25   30       28      1           0.42
+rainbowCritical/30                    4 28.56    24   30       13      0           0.52
+rainbowCriticalBlack/35               2 30.22    21   35        5      0           0.54
+rainbowCriticalBlack/35               3 33.30    29   35       14      1           0.62
+rainbowCriticalBlack/35               4 32.58    10   35       12      2           0.66
+rainbowCriticalBlackReverse/35        2 28.70    21   35        1      0           0.40
+rainbowCriticalBlackReverse/35        3 32.70    24   35       12      0           0.44
+rainbowCriticalBlackReverse/35        4 32.00    25   35        9      0           0.32
+```
+
+And `npm run benchmark -- --emptyhints`:
+
+```
+variant                         players   avg   min  max  perfect  fused  misplays/game
+simple/25                             2 24.08    20   25       30      0           0.20
+simple/25                             3 24.48    20   25       34      0           0.30
+simple/25                             4 24.46    21   25       36      0           0.42
+rainbow/30                            2 28.52    23   30       22      0           0.08
+rainbow/30                            3 29.30    26   30       30      0           0.26
+rainbow/30                            4 29.18    26   30       25      0           0.48
+rainbowCritical/30                    2 27.70    23   30       16      0           0.48
+rainbowCritical/30                    3 29.08    25   30       29      0           0.42
+rainbowCritical/30                    4 28.64    24   30       18      0           0.66
+rainbowCriticalBlack/35               2 30.98    24   35        3      0           0.48
+rainbowCriticalBlack/35               3 33.56    29   35       19      0           0.40
+rainbowCriticalBlack/35               4 32.48     9   35       10      1           0.60
+rainbowCriticalBlackReverse/35        2 30.32    24   35        3      1           0.46
+rainbowCriticalBlackReverse/35        3 32.88    27   35        9      2           0.58
+rainbowCriticalBlackReverse/35        4 32.26    27   35        6      1           0.52
+```
