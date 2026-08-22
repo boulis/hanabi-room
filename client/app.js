@@ -13,11 +13,14 @@ const NAME_KEY = 'hanabi-room.name';
 // `bots` is a parallel boolean array (from a save summary's playerBots); a
 // missing array just renders plain names.
 // A bot seat is only as good as the brain of the day, so a name list prints
-// the version that sat there — `🤖 Robo (2.29)`. Saves written before the
-// header carried one leave it null and render as a bare 🤖.
-function joinPlayerNames(names, bots, versions) {
+// the version that sat there — `🤖 Robo (2.29)`. Games older than the header
+// field get theirs from the date they were played (`botVersions.js`), and a
+// tilde says so: `🤖 Robo (~2.28)`. Older still than versioning itself, and
+// there's nothing to print — a bare 🤖.
+function joinPlayerNames(names, bots, versions, inferred) {
+  const tilde = inferred ? '~' : '';
   return (names || []).map((n, i) => (
-    bots?.[i] ? `🤖 ${n}${versions?.[i] ? ` (${versions[i]})` : ''}` : n
+    bots?.[i] ? `🤖 ${n}${versions?.[i] ? ` (${tilde}${versions[i]})` : ''}` : n
   )).join(', ');
 }
 
@@ -715,7 +718,7 @@ function renderServerLobby(v) {
     label.append(title);
     const meta = document.createElement('div');
     meta.className = 'save-meta';
-    meta.textContent = `${s.variantId} · ${s.moves} moves · ${joinPlayerNames(s.playerNames, s.playerBots, s.playerBotVersions)}`;
+    meta.textContent = `${s.variantId} · ${s.moves} moves · ${joinPlayerNames(s.playerNames, s.playerBots, s.playerBotVersions, s.botVersionInferred)}`;
     label.append(meta);
     row.append(label);
     const resume = document.createElement('button');
@@ -798,7 +801,7 @@ function renderLibrary(entries) {
     meta.className = 'save-meta';
     const metaText = document.createElement('span');
     metaText.className = 'save-meta-text';
-    metaText.textContent = `${e.variantId ?? ''}${e.playerNames ? ' · ' + joinPlayerNames(e.playerNames, e.playerBots, e.playerBotVersions) : ''}`;
+    metaText.textContent = `${e.variantId ?? ''}${e.playerNames ? ' · ' + joinPlayerNames(e.playerNames, e.playerBots, e.playerBotVersions, e.botVersionInferred) : ''}`;
     meta.append(metaText);
     // Par for the same deck, so a row says whether the score was the deck's
     // doing or the players'.
@@ -1230,7 +1233,15 @@ function renderGameDetail(d) {
   facts.append(factRow('Result', inProgress
     ? `in progress — ${d.score}/${d.maxScore} so far, ${d.moves} moves`
     : `${d.status} — ${d.score}/${d.maxScore}`));
-  facts.append(factRow('Players', joinPlayerNames(d.playerNames, d.playerBots, d.playerBotVersions)));
+  const who = document.createElement('span');
+  who.textContent = joinPlayerNames(d.playerNames, d.playerBots, d.playerBotVersions, d.botVersionInferred);
+  if (d.botVersionInferred) {
+    const why = document.createElement('span');
+    why.className = 'detail-par-note';
+    why.textContent = ' (bot version inferred from when the game was played)';
+    who.append(why);
+  }
+  facts.append(factRow('Players', who));
   facts.append(factRow('Game type', `${d.variantId} · ${d.endRule} end rule` +
     (d.allowEmptyHints ? ' · empty hints allowed' : '') +
     (d.shareGuarded ? ' · guards shared' : '')));
@@ -1290,7 +1301,7 @@ function renderGameDetail(d) {
       if (s.botScore) res.append(' ', parDeltaChip(s.botScore, s.score));
       const who = document.createElement('span');
       who.className = 'detail-deck-who';
-      who.textContent = joinPlayerNames(s.playerNames, s.playerBots, s.playerBotVersions);
+      who.textContent = joinPlayerNames(s.playerNames, s.playerBots, s.playerBotVersions, s.botVersionInferred);
       row.append(when, res, who);
       row.addEventListener('click', () => {
         detailTrail.push(d.basename);

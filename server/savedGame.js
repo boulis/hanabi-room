@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createInitialState, deckExportPayload, maxPossibleScore, score } from './game.js';
 import { BOT_SCORE_VERSION, botScoreForSaveHeader } from './botScore.js';
 import { BOT_VERSION } from './botBrain.js';
+import { inferBotVersion } from './botVersions.js';
 import { gameStats } from './stats.js';
 import {
   annotateAction,
@@ -292,6 +293,21 @@ export async function deckExportFromSave(filePath) {
   return deckExportPayload(state);
 }
 
+// The version each seat's bot ran. Recorded per seat since the header gained
+// `botVersion`; for older saves the whole table ran one brain, the one live on
+// the day, so the inference is per-GAME and every bot seat gets it. Returns the
+// flag too, because a guess printed as a fact is worse than no guess.
+function botVersionsOf(header) {
+  const exact = header.players.some((p) => p.botVersion);
+  const inferred = exact ? null : inferBotVersion(header.startedAt);
+  return {
+    playerBotVersions: header.players.map((p) => (
+      exact ? p.botVersion ?? null : (p.isBot ? inferred : null)
+    )),
+    botVersionInferred: !exact && inferred != null,
+  };
+}
+
 export async function summarizeSave(filePath) {
   const lines = await readLines(filePath);
   if (lines.length === 0) return null;
@@ -317,7 +333,7 @@ export async function summarizeSave(filePath) {
     seed: header.seed,
     playerNames: header.players.map((p) => p.name),
     playerBots: header.players.map((p) => !!p.isBot),
-    playerBotVersions: header.players.map((p) => p.botVersion ?? null),
+    ...botVersionsOf(header),
     moves,
     complete,
     lastEventAt: lastEvent?.t ?? header.startedAt,
@@ -528,7 +544,7 @@ async function summarizeForLibrary(filePath) {
       allowEmptyHints: !!header.allowEmptyHints,
       playerNames: header.players.map((p) => p.name),
       playerBots: header.players.map((p) => !!p.isBot),
-      playerBotVersions: header.players.map((p) => p.botVersion ?? null),
+      ...botVersionsOf(header),
       playerCount: header.players.length,
       moves: events.filter((e) => e.kind === 'action').length,
       totalEvents,
@@ -664,6 +680,7 @@ export async function gameDetail(basename) {
       playerNames: e.playerNames,
       playerBots: e.playerBots,
       playerBotVersions: e.playerBotVersions,
+      botVersionInferred: e.botVersionInferred,
       tags: tags[e.basename] || [],
       botScore: currentBotScore(pars, e.basename),
     }));
