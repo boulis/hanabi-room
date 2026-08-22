@@ -187,6 +187,38 @@ Flags: `--server URL` (default localhost:3000), `--room ID` or `--create [--room
 
 Testing: `server/botBrain.test.js` crafts exact decks (dealing is round-robin: player 0 gets draws 0,2,4,…) to pin each convention, plus bot-vs-bot full games on every variant that must end legally — `rules.js` throws on any illegal action, so a completed game doubles as a legality proof. Typical scores: ~20–22/25 on `simple`, perfect games on good seeds.
 
+## Diagnosing a bot move
+
+Reports arrive as "the bot did X on turn N". Reproduce before theorising:
+`loadSave(file, { maxEvents: N })` rebuilds the state the bot decided in,
+`viewState(state, seat)` gives its exact view, and `decide(view, conventions, {})`
+re-runs the decision. The save also records the bot's own `reasoning` string, which
+names the branch it took — match it against the code before assuming which rule
+fired. A decision that reproduces from a *fresh* memory object but not from the
+driver's is itself the diagnosis (see below).
+
+Then classify. Only the first two are defects:
+
+- **Brain misfire** — `decide` reaches a wrong conclusion from a correct view. Fix
+  in `botBrain.js`, bump `BOT_VERSION`, run `npm run benchmark` before and after,
+  and update `BOT_ROADMAP.md` in the same commit.
+- **Driver staleness** — `decide` is correct given its inputs, but the driver fed
+  it a stale one. The driver memory is a cache of what the log said happened, and
+  card ids are per-deal, so a belief that outlives what made it names a real,
+  different card rather than nothing; `reconcileMemory` documents the boundaries
+  that invalidate it. Fix in `bots.js` / `bot.mjs`, no version bump, and the
+  benchmark is unchanged by construction (it drives `decide` directly, with its own
+  per-player memory objects, and never undoes).
+- **A human missing what the convention assumes they'd see** — the rule fired
+  correctly, on a move a human made by mistake. Not a defect. Report it and stop;
+  do not soften the convention to absorb it. The conventions are a standard the
+  table plays up to, not a model of how humans actually play, and bending one for a
+  human slip makes the bot play two conventions at once — the same objection that
+  declined human-seat special-casing of the colour pin in `BOT_ROADMAP.md`. The
+  table's recourse is undo. (From a real game: a human discarded a provably dead
+  rainbow 4 while holding a 5 their own deduction could prove playable, and the bot
+  read the free trash alarm exactly as designed.)
+
 ## Card art
 
 User-provided card images go in `client/cards/` with the naming convention `{color}-{number}.{ext}` (e.g. `red-3.png`, `rainbow-5.webp`, `black-1.svg`). The client always requests `/cards/{color}-{number}` (no extension); the server probes for `.png`, `.webp`, `.jpg`, `.jpeg`, `.avif`, `.svg`, and `.gif` in that order and serves whichever it finds, so the host can drop any supported format without touching code.
