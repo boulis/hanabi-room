@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createInitialState, deckExportPayload, maxPossibleScore, score } from './game.js';
 import { BOT_SCORE_VERSION, botScoreForSaveHeader } from './botScore.js';
+import { BOT_VERSION } from './botBrain.js';
 import { gameStats } from './stats.js';
 import {
   annotateAction,
@@ -72,11 +73,15 @@ export async function openSave(state, hostId, botIds = new Set()) {
     shareGuarded: state.shareGuarded,
     allowEmptyHints: state.allowEmptyHints,
     hostId,
-    // isBot marks seats a resume/branch should re-staff with server bots.
+    // isBot marks seats a resume/branch should re-staff with server bots, and
+    // botVersion pins WHICH brain sat there — a bot seat is only as good as the
+    // brain of the day, so a score from a table with a bot in it is unreadable
+    // without it. Recorded at the deal, never updated: saves written before
+    // this simply have no version, which the clients render as a bare 🤖.
     players: state.players.map((p) => ({
       id: p.id,
       name: p.name,
-      ...(botIds.has(p.id) ? { isBot: true } : {}),
+      ...(botIds.has(p.id) ? { isBot: true, botVersion: BOT_VERSION } : {}),
     })),
     deck: state.initialDeckCards,
   };
@@ -312,6 +317,7 @@ export async function summarizeSave(filePath) {
     seed: header.seed,
     playerNames: header.players.map((p) => p.name),
     playerBots: header.players.map((p) => !!p.isBot),
+    playerBotVersions: header.players.map((p) => p.botVersion ?? null),
     moves,
     complete,
     lastEventAt: lastEvent?.t ?? header.startedAt,
@@ -522,6 +528,7 @@ async function summarizeForLibrary(filePath) {
       allowEmptyHints: !!header.allowEmptyHints,
       playerNames: header.players.map((p) => p.name),
       playerBots: header.players.map((p) => !!p.isBot),
+      playerBotVersions: header.players.map((p) => p.botVersion ?? null),
       playerCount: header.players.length,
       moves: events.filter((e) => e.kind === 'action').length,
       totalEvents,
@@ -656,6 +663,7 @@ export async function gameDetail(basename) {
       maxScore: e.maxScore,
       playerNames: e.playerNames,
       playerBots: e.playerBots,
+      playerBotVersions: e.playerBotVersions,
       tags: tags[e.basename] || [],
       botScore: currentBotScore(pars, e.basename),
     }));

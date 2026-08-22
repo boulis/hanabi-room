@@ -11,6 +11,7 @@ import {
 } from './rules.js';
 import { lobbyView, viewState } from './view.js';
 import { botScoreForState } from './botScore.js';
+import { BOT_VERSION } from './botBrain.js';
 import {
   appendEvent,
   loadSave,
@@ -511,7 +512,10 @@ export function viewFor(room, playerId) {
   const v = viewState(room.state, idx);
   // Game-state players don't carry the bot flag; the room roster does.
   const botIds = new Set(room.players.filter((p) => p.isBot).map((p) => p.id));
-  for (const p of v.players) p.isBot = botIds.has(p.id);
+  for (const p of v.players) {
+    p.isBot = botIds.has(p.id);
+    if (p.isBot) p.botVersion = BOT_VERSION;
+  }
   // Same for the post-game stats rows (seat order matches v.players).
   for (const row of v.stats?.players ?? []) row.isBot = !!v.players[row.index]?.isBot;
   // Par for this deck, shown next to the final score. Same gate as the seed:

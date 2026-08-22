@@ -1,6 +1,7 @@
 import { getVariant, VARIANTS } from './variants.js';
 import { hintableColors, maxAchievableScore, maxPossibleScore, pileCap, pileTop, score } from './game.js';
 import { gameStats } from './stats.js';
+import { BOT_VERSION } from './botBrain.js';
 
 function viewCard(card, { revealIdentity, isOwner, shareGuarded }) {
   const out = {
@@ -99,7 +100,9 @@ export function lobbyView(lobby) {
     variants: Object.values(VARIANTS).map((v) => ({ id: v.id, name: v.name })),
     players: lobby.players.map((p) => ({
       id: p.id, name: p.name, online: p.online, isBot: !!p.isBot,
-      ...(p.isBot ? { botOptions: { ...p.botOptions } } : {}),
+      // The live brain, not a stored one: a resumed bot seat is re-staffed by
+      // whatever `botBrain.js` says today, and that is what will play.
+      ...(p.isBot ? { botVersion: BOT_VERSION, botOptions: { ...p.botOptions } } : {}),
     })),
     hostId: lobby.hostId,
     importedDeck: lobby.importedDeck ? { count: lobby.importedDeck.length } : null,

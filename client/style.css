@@ -638,7 +638,9 @@ input, select {
 .save-meta { opacity: 1; }
 .save-meta-text { opacity: 0.75; }
 
-/* "[all bot score +2]" — the gap between this deck's par and what was scored. */
+/* "[all bots score +2]" — the gap between this deck's par and what was scored.
+   Only the signed number is coloured; the words around it are label. */
+.par-chip-label { opacity: 0.75; }
 .par-delta { font-weight: 600; white-space: nowrap; }
 .par-delta.par-up { color: var(--par-up); }
 .par-delta.par-down { color: var(--par-down); }

@@ -12,8 +12,13 @@ const NAME_KEY = 'hanabi-room.name';
 // Player names joined for display, each bot prefixed with the robot badge.
 // `bots` is a parallel boolean array (from a save summary's playerBots); a
 // missing array just renders plain names.
-function joinPlayerNames(names, bots) {
-  return (names || []).map((n, i) => (bots?.[i] ? `🤖 ${n}` : n)).join(', ');
+// A bot seat is only as good as the brain of the day, so a name list prints
+// the version that sat there — `🤖 Robo (2.29)`. Saves written before the
+// header carried one leave it null and render as a bare 🤖.
+function joinPlayerNames(names, bots, versions) {
+  return (names || []).map((n, i) => (
+    bots?.[i] ? `🤖 ${n}${versions?.[i] ? ` (${versions[i]})` : ''}` : n
+  )).join(', ');
 }
 
 // Bot ids whose convention-options panel is expanded, so it survives the full
@@ -710,7 +715,7 @@ function renderServerLobby(v) {
     label.append(title);
     const meta = document.createElement('div');
     meta.className = 'save-meta';
-    meta.textContent = `${s.variantId} · ${s.moves} moves · ${joinPlayerNames(s.playerNames, s.playerBots)}`;
+    meta.textContent = `${s.variantId} · ${s.moves} moves · ${joinPlayerNames(s.playerNames, s.playerBots, s.playerBotVersions)}`;
     label.append(meta);
     row.append(label);
     const resume = document.createElement('button');
@@ -793,12 +798,12 @@ function renderLibrary(entries) {
     meta.className = 'save-meta';
     const metaText = document.createElement('span');
     metaText.className = 'save-meta-text';
-    metaText.textContent = `${e.variantId ?? ''}${e.playerNames ? ' · ' + joinPlayerNames(e.playerNames, e.playerBots) : ''}`;
+    metaText.textContent = `${e.variantId ?? ''}${e.playerNames ? ' · ' + joinPlayerNames(e.playerNames, e.playerBots, e.playerBotVersions) : ''}`;
     meta.append(metaText);
     // Par for the same deck, so a row says whether the score was the deck's
     // doing or the players'.
     // (An unreadable save has no score to compare a stored par against.)
-    if (e.botScore && typeof e.score === 'number') meta.append(' · ', parDelta(e.botScore, e.score));
+    if (e.botScore && typeof e.score === 'number') meta.append(' · ', parDeltaChip(e.botScore, e.score));
     label.append(meta);
 
     if (e.tags && e.tags.length) {
@@ -1152,21 +1157,50 @@ function onGameDetailView(detail) {
   renderGameDetail(detail);
 }
 
-// The par as the eye reads it: not the bots' absolute score but the gap, and
-// from the bots' side of it — "[all bot score +2]" says a bench of bots took
-// two more points off this deck than the players did. Green when the bots came
-// out ahead, red when they fell short, grey on a tie.
-function parDelta(par, score) {
-  const delta = par.score - score;
+// The signed gap on its own, coloured: green when the bots came out ahead of
+// the table, red when they fell short, grey on a tie. Only the number is
+// coloured — the words around it are label, not signal.
+function parDeltaNumber(delta) {
+  const n = document.createElement('span');
+  n.className = 'par-delta ' + (delta > 0 ? 'par-up' : delta < 0 ? 'par-down' : 'par-even');
+  n.textContent = `${delta > 0 ? '+' : ''}${delta}`;
+  return n;
+}
+
+// The par as the eye reads it in a list: not the bots' absolute score but the
+// gap, read from the bots' side — "[all bots score +2]" says a bench of bots
+// took two more points off this deck than the players did.
+function parDeltaChip(par, score) {
   const el = document.createElement('span');
-  el.className = 'par-delta ' + (delta > 0 ? 'par-up' : delta < 0 ? 'par-down' : 'par-even');
-  el.textContent = `[all bot score ${delta > 0 ? '+' : ''}${delta}]`;
+  // The bracketed words are label and sit at the same weight as whatever line
+  // they're in; only the number is meant to catch the eye. They're a sibling
+  // span rather than a wrapper because opacity multiplies down a subtree — a
+  // child cannot undo a parent's dimming.
+  const open = document.createElement('span');
+  open.className = 'par-chip-label';
+  open.textContent = '[all bots score ';
+  const close = document.createElement('span');
+  close.className = 'par-chip-label';
+  close.textContent = ']';
+  el.append(open, parDeltaNumber(par.score - score), close);
   return el;
 }
 
+// The same gap said the other way round — from the table's side, where a plus
+// means the players came out ahead. Deliberately UNcoloured: the chip's green
+// means "the bots did better", and this number's plus means the opposite, so
+// carrying the colour across would have one hue mean two things.
+function vsAllBots(delta) {
+  return [` — you ${delta === 0 ? 'matched' : `${delta > 0 ? '+' : ''}${delta} vs`} all bots score`];
+}
+
 // "24/30" plus the fine print — which brain produced it and how its game ended.
+// The version here is the brain that SIMULATED the par — always the current
+// one, since a stale entry is recomputed on demand — never the brain that
+// played the game. On a game from months ago the two differ, so the wording
+// has to say which it is.
 function parNote(par) {
-  const bits = [`bot ${par.version}`];
+  const bits = [`scored by bot ${par.version}`];
   if (par.endReason) bits.push(par.endReason);
   if (par.misplays) bits.push(`${par.misplays} misplay${par.misplays === 1 ? '' : 's'}`);
   return bits.join(' · ');
@@ -1196,7 +1230,7 @@ function renderGameDetail(d) {
   facts.append(factRow('Result', inProgress
     ? `in progress — ${d.score}/${d.maxScore} so far, ${d.moves} moves`
     : `${d.status} — ${d.score}/${d.maxScore}`));
-  facts.append(factRow('Players', joinPlayerNames(d.playerNames, d.playerBots)));
+  facts.append(factRow('Players', joinPlayerNames(d.playerNames, d.playerBots, d.playerBotVersions)));
   facts.append(factRow('Game type', `${d.variantId} · ${d.endRule} end rule` +
     (d.allowEmptyHints ? ' · empty hints allowed' : '') +
     (d.shareGuarded ? ' · guards shared' : '')));
@@ -1208,7 +1242,7 @@ function renderGameDetail(d) {
   if (d.botScore) {
     const par = document.createElement('span');
     par.textContent = `🤖 ${d.botScore.score}/${d.botScore.maxScore}`;
-    if (!inProgress) par.append(' ', parDelta(d.botScore, d.score));
+    if (!inProgress) par.append(...vsAllBots(d.score - d.botScore.score));
     const note = document.createElement('span');
     note.className = 'detail-par-note';
     note.textContent = ` (${parNote(d.botScore)})`;
@@ -1253,10 +1287,10 @@ function renderGameDetail(d) {
       const res = document.createElement('span');
       res.className = 'detail-deck-score';
       res.textContent = `${s.score}/${s.maxScore}`;
-      if (s.botScore) res.append(' ', parDelta(s.botScore, s.score));
+      if (s.botScore) res.append(' ', parDeltaChip(s.botScore, s.score));
       const who = document.createElement('span');
       who.className = 'detail-deck-who';
-      who.textContent = joinPlayerNames(s.playerNames, s.playerBots);
+      who.textContent = joinPlayerNames(s.playerNames, s.playerBots, s.playerBotVersions);
       row.append(when, res, who);
       row.addEventListener('click', () => {
         detailTrail.push(d.basename);
@@ -1554,7 +1588,8 @@ function renderLobby() {
     else if (!p.online) tags.push('offline');
     const tagStr = tags.length ? ` (${tags.join(', ')})` : '';
     const label = document.createElement('span');
-    label.textContent = `${i + 1}. ${p.isBot ? '🤖 ' : ''}${p.name} [${p.id}]${tagStr}`;
+    label.textContent = `${i + 1}. ${p.isBot ? '🤖 ' : ''}${p.name}` +
+      `${p.isBot && p.botVersion ? ` (${p.botVersion})` : ''} [${p.id}]${tagStr}`;
     li.append(label);
     if (p.isBot && !isSpectator) {
       // Anyone seated may configure or remove a bot — spectators aren't seated.
@@ -1760,8 +1795,8 @@ function renderGame() {
     if (v.botScore) {
       const par = document.createElement('div');
       par.className = 'banner-par';
-      par.textContent = `🤖 Bots on this deck: ${v.botScore.score}/${v.botScore.maxScore} `;
-      par.append(parDelta(v.botScore, v.score), ` (${parNote(v.botScore)})`);
+      par.textContent = `🤖 Bots on this deck: ${v.botScore.score}/${v.botScore.maxScore}`;
+      par.append(...vsAllBots(v.score - v.botScore.score), ` (${parNote(v.botScore)})`);
       banner.append(par);
     }
     if (v.stats) banner.append(renderGameStats(v.stats));
