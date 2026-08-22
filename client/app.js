@@ -791,10 +791,14 @@ function renderLibrary(entries) {
 
     const meta = document.createElement('div');
     meta.className = 'save-meta';
+    const metaText = document.createElement('span');
+    metaText.className = 'save-meta-text';
+    metaText.textContent = `${e.variantId ?? ''}${e.playerNames ? ' · ' + joinPlayerNames(e.playerNames, e.playerBots) : ''}`;
+    meta.append(metaText);
     // Par for the same deck, so a row says whether the score was the deck's
     // doing or the players'.
-    const par = e.botScore ? ` · 🤖 ${e.botScore.score}/${e.botScore.maxScore}` : '';
-    meta.textContent = `${e.variantId ?? ''}${e.playerNames ? ' · ' + joinPlayerNames(e.playerNames, e.playerBots) : ''}${par}`;
+    // (An unreadable save has no score to compare a stored par against.)
+    if (e.botScore && typeof e.score === 'number') meta.append(' · ', parDelta(e.botScore, e.score));
     label.append(meta);
 
     if (e.tags && e.tags.length) {
@@ -1148,6 +1152,18 @@ function onGameDetailView(detail) {
   renderGameDetail(detail);
 }
 
+// The par as the eye reads it: not the bots' absolute score but the gap, and
+// from the bots' side of it — "[all bot score +2]" says a bench of bots took
+// two more points off this deck than the players did. Green when the bots came
+// out ahead, red when they fell short, grey on a tie.
+function parDelta(par, score) {
+  const delta = par.score - score;
+  const el = document.createElement('span');
+  el.className = 'par-delta ' + (delta > 0 ? 'par-up' : delta < 0 ? 'par-down' : 'par-even');
+  el.textContent = `[all bot score ${delta > 0 ? '+' : ''}${delta}]`;
+  return el;
+}
+
 // "24/30" plus the fine print — which brain produced it and how its game ended.
 function parNote(par) {
   const bits = [`bot ${par.version}`];
@@ -1191,10 +1207,8 @@ function renderGameDetail(d) {
   // was the deck's doing or the players'.
   if (d.botScore) {
     const par = document.createElement('span');
-    const delta = d.score - d.botScore.score;
-    const sign = delta > 0 ? `+${delta}` : `${delta}`;
-    par.textContent = `🤖 ${d.botScore.score}/${d.botScore.maxScore}` +
-      (inProgress ? '' : ` — you ${delta === 0 ? 'matched par' : `${sign} vs par`}`);
+    par.textContent = `🤖 ${d.botScore.score}/${d.botScore.maxScore}`;
+    if (!inProgress) par.append(' ', parDelta(d.botScore, d.score));
     const note = document.createElement('span');
     note.className = 'detail-par-note';
     note.textContent = ` (${parNote(d.botScore)})`;
@@ -1238,7 +1252,8 @@ function renderGameDetail(d) {
       when.textContent = s.startedAt ? new Date(s.startedAt).toLocaleString() : s.basename;
       const res = document.createElement('span');
       res.className = 'detail-deck-score';
-      res.textContent = `${s.score}/${s.maxScore}` + (s.botScore ? ` (🤖 ${s.botScore.score})` : '');
+      res.textContent = `${s.score}/${s.maxScore}`;
+      if (s.botScore) res.append(' ', parDelta(s.botScore, s.score));
       const who = document.createElement('span');
       who.className = 'detail-deck-who';
       who.textContent = joinPlayerNames(s.playerNames, s.playerBots);
@@ -1743,12 +1758,10 @@ function renderGame() {
     // the context the bare score lacks — 22/25 means one thing on a deck the
     // bots take 25 from and another on one they can only get 20 out of.
     if (v.botScore) {
-      const delta = v.score - v.botScore.score;
       const par = document.createElement('div');
       par.className = 'banner-par';
-      par.textContent = `🤖 Bots on this deck: ${v.botScore.score}/${v.botScore.maxScore}` +
-        ` — you ${delta === 0 ? 'matched par' : `${delta > 0 ? '+' : ''}${delta} vs par`}` +
-        ` (${parNote(v.botScore)})`;
+      par.textContent = `🤖 Bots on this deck: ${v.botScore.score}/${v.botScore.maxScore} `;
+      par.append(parDelta(v.botScore, v.score), ` (${parNote(v.botScore)})`);
       banner.append(par);
     }
     if (v.stats) banner.append(renderGameStats(v.stats));
