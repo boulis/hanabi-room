@@ -14,8 +14,10 @@
 import WebSocket from 'ws';
 import { alarmGuards, decide, CONVENTION_SETS } from './server/botBrain.js';
 
-// Cross-turn state for the memory-based conventions (forced-play pointer).
-const brainMemory = {};
+// Cross-turn state for the memory-based conventions (colour-target rescue,
+// inferred guards, forced-play pointer). It is a cache of what the log said
+// happened, and both an undo and a new game unsay it — see reconcileMemory.
+let brainMemory = {};
 
 function parseArgs(argv) {
   const args = {
@@ -72,6 +74,8 @@ let actedTurn = -1;    // last turn we sent an action for
 let fallbackTurn = -1; // turn we already retried with a safe fallback
 let startRequested = false;
 let announcedGameOver = false;
+let gameStartedAt = null; // identity of the deal we last acted in
+let maxStruckSeq = -1;    // highest seq we have seen struck by an undo
 let stopping = false;
 
 function send(payload) {
@@ -184,11 +188,43 @@ function onSync(view) {
 
   if (view.status !== 'playing') return;
   announcedGameOver = false;
+  reconcileMemory(view);
   if (view.viewerIndex < 0 || view.currentPlayer !== view.viewerIndex) return;
   if (view.turn === actedTurn) return; // already acted for this turn
   actedTurn = view.turn;
   clearTimeout(actTimer);
   actTimer = setTimeout(() => act(view), args.delay);
+}
+
+// The brain's memory holds card ids, and card ids are per-deal: they restart at
+// 0 every game and are reused within one whenever the log is walked back. Two
+// things therefore make a remembered belief name a *different* card rather than
+// no card at all, and both have been seen to make the bot play something nobody
+// pointed at:
+//   - a NEW GAME (the room can start another without the bot reconnecting), and
+//   - an UNDO, which the colour-target rescue in botBrain.js has no case for:
+//     it reads a vanished play marker as a sibling played or a sibling
+//     discarded, never as the hint itself being taken back.
+// `startedAt` is the deal's identity. For the undo we track the highest seq the
+// log shows struck: undo always takes back the most recent action, so the seqs
+// it strikes are the highest live ones, and the entries it re-appends land at
+// the tail — well inside the 50-entry window a view carries. Both facts hold
+// for a client, which is the point: the CLI bot sees only what a human sees.
+function reconcileMemory(view) {
+  if (gameStartedAt !== view.startedAt) {
+    gameStartedAt = view.startedAt;
+    maxStruckSeq = -1;
+    brainMemory = {};
+    actedTurn = -1;    // turn numbers restart, so last game's is not this one's
+    fallbackTurn = -1;
+    lastRejected = -1;
+    return;
+  }
+  let struck = maxStruckSeq;
+  for (const e of view.log) if (e.undone && e.seq > struck) struck = e.seq;
+  if (struck === maxStruckSeq) return;
+  maxStruckSeq = struck;
+  brainMemory = {};
 }
 
 function act(view) {

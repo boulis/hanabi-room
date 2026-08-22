@@ -208,6 +208,9 @@ export function pokeBots(room) {
   const current = room.state.players[room.state.currentPlayer];
   const b = current ? bots.get(seatKey(room.id, current.id)) : undefined;
   if (!b) return;
+  // Before anything reads what this bot remembers — the reminder check below
+  // reads awaitingGuards, and it runs long before botAct would.
+  reconcileMemory(b, room.state);
   // Mid-reminder and the marks have appeared: stop waiting and play on. (An
   // annotate broadcasts like any other action, so this poke is how the bot
   // hears the answer.)
@@ -375,37 +378,58 @@ function remindGuards(room, playerId) {
   }, remindGapMs());
 }
 
-// --- Rollback reconciliation ---
+// --- Memory reconciliation ---
 // The driver memory decide() writes into is a cache of what the log said
-// happened, and an undo unsays it. The colour-target rescue
-// (rememberColorTargets in botBrain.js) knows only two ways a play marker can
-// vanish from our hand — a sibling was PLAYED, which retires the target, or a
-// sibling was DISCARDED, which is the case the rescue exists for — and a hint
-// that was UNDONE is a third it has no case for. So the remembered target
-// outlives the hint that created it, and because a colour target outranks
-// every hint in decide's ordering, the bot plays a card nobody ever pointed
-// at. Seen in a real game: a blue hint slid its target onto a rainbow 3, the
-// table undid the hint, and three turns later the bot played the rainbow 3 for
-// a fuse while a save and a play hint went unsaid.
+// happened, and two things unsay it. Card ids are per-deal and restart at 0
+// every game, so a belief that outlives its game doesn't go inert — it names a
+// real, different card.
 //
-// The repair is to trust state over memory whenever state moved backwards.
-// Nothing needs rebuilding by hand: colorPlays is re-recorded from this turn's
-// live markers by decide itself, and inferredGuards by the next alarm. The
-// forced-play pointer is left alone — it already carries its own rollback
-// guard, keyed on memory.fpTurn, which clearing would disarm.
+//   - An UNDO. The colour-target rescue (rememberColorTargets in botBrain.js)
+//     classifies a vanished play marker two ways — a sibling was PLAYED, which
+//     retires the target, or a sibling was DISCARDED, which is the case the
+//     rescue exists for — and a hint that was UNDONE is a third it has no case
+//     for. So the target outlived the hint, and a colour target outranks every
+//     hint in decide's ordering. Seen in a real game: a blue hint slid its
+//     target onto a rainbow 3, the table walked the hint back, and the bot
+//     played the rainbow 3 for a fuse three turns later.
+//   - A NEW GAME in the same room (start from the game-over screen). The bot
+//     registry is untouched by startGame, so every belief carried over. A game
+//     that ends while the bot holds a live colour hint leaves that target in
+//     memory — nothing prunes it, since pruning happens on the bot's next turn
+//     and there isn't one — and on move 1 of the next game the bot plays
+//     whatever card now wears that id. Reproduced: an unclued white 4 played
+//     for a fuse on turn 1, reasoning "colour hint marks touched card",
+//     `wasTouched: false`.
+//
+// Nothing needs rebuilding by hand: decide re-records colour targets from this
+// turn's live markers, the next alarm re-records inferred guards, and the
+// forced-play pointer re-derives (its own guard clears exactly what a wipe
+// already cleared). The alarm reminder is treated differently on purpose — it
+// SURVIVES an undo, because the move it warned about is being replayed and the
+// warning is owed again (see remindGuards) — but never a new game.
 //
 // Struck log entries only accumulate: an undo re-appends the undone action's
 // entries flagged, and the snapshot it restores already holds every entry
 // struck before it. So a count that has risen since our last turn means
-// exactly "someone undid something in between".
+// exactly "someone undid something in between". `startedAt` is stamped once per
+// createInitialState and cloned into every undo snapshot, which makes it the
+// identity of the deal rather than of the state object.
 const undoneCount = (state) => state.log.reduce((n, e) => n + (e.undone ? 1 : 0), 0);
 
-function forgetRolledBack(b, state) {
+function reconcileMemory(b, state) {
   const undone = undoneCount(state);
-  if (undone === b.undoneSeen) return;
-  b.undoneSeen = undone;
-  delete b.memory.colorPlays;
-  delete b.memory.inferredGuards;
+  if (b.gameStartedAt !== state.startedAt) {
+    b.gameStartedAt = state.startedAt;
+    b.undoneSeen = undone;
+    b.memory = {};
+    b.awaitingGuards = null;
+    b.graceUntil = 0; // a pause owed in the last game is not owed in this one
+    return;
+  }
+  if (undone !== b.undoneSeen) {
+    b.undoneSeen = undone;
+    b.memory = {};
+  }
 }
 
 async function botAct(room, playerId) {
@@ -426,8 +450,8 @@ async function botAct(room, playerId) {
       await applyAction(room, playerId, { type: 'annotate', cardId, guarded: true }, 'alarm received: guarding');
     }
     if (guards.length > 0) view = viewFor(room, playerId);
+    reconcileMemory(b, room.state);
     b.memory ??= {};
-    forgetRolledBack(b, room.state);
     const { action, reason } = decide(view, conventions, b.memory);
     await applyAction(room, playerId, action, reason);
     // Recorded off the pre-action view, which is the right one: our own discard

@@ -27,7 +27,7 @@ const {
 const { conventionsFromOptions } = await import('./botBrain.js');
 const {
   applyAction, autoBotDelay, botDelayFor, joinRoom, requestUndo, resumeRoom, setBotPace, startGame,
-  undoLast, viewFor,
+  undoLast, viewFor, voteAbandon,
 } = await import('./room.js');
 const { branchSave } = await import('./savedGame.js');
 const { GameError } = await import('./rules.js');
@@ -417,6 +417,53 @@ test('undo: a colour target does not outlive the hint that was walked back', asy
     await waitFor(() => room.state.currentPlayer === 0, 'bot took its next turn');
     assert.equal(room.state.fuseTokens, 3, 'no ghost misplay');
     assert.ok(room.state.players[1].hand.some((c) => c.id === ghost.id), 'the red 4 is still in hand');
+    resetBots();
+  });
+});
+
+// The other way a remembered belief outlives what made it: a new game in the
+// same room. startGame leaves the bot registry alone, and card ids restart at 0
+// every deal — so a colour target still in memory when the game ended names a
+// real, different card in the next one, and the bot plays it on move 1 with no
+// hint on the table at all.
+test('new game: the bot does not carry last game\'s colour target into this one', async () => {
+  await withTmpSaveDir(async () => {
+    purgeRooms();
+    resetBots();
+    const room = createRoom('Rematch');
+    const human = joinRoom(room, { name: 'Ann' });
+    const bot = addBot(room);
+    room.options.endRule = 'lax';
+    const deck = (slot1) => craftedDeck([
+      ['green_4', 'green_3', 'blue_4', 'blue_3', 'yellow_4'], // human, seat 0
+      ['white_1', slot1, 'white_2', 'white_3', 'red_5'],      // bot, seat 1
+    ]);
+
+    // Game one: the colour target slides onto the bot's red 4, which it plays.
+    // The game then ends before the bot's next turn, so nothing prunes the id.
+    room.importedDeck = deck('red_4');
+    initBots(async () => pokeBots(room));
+    await startGame(room, human.id, {});
+    const ghostId = room.state.players[1].hand[1].id;
+    await applyAction(room, human.id, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 5 });
+    await applyAction(room, bot.id, { type: 'hint', toPlayerIndex: 0, hintType: 'number', value: 4 });
+    await applyAction(room, human.id, { type: 'hint', toPlayerIndex: 1, hintType: 'color', value: 'red' });
+    pokeBots(room);
+    await waitFor(() => room.state.currentPlayer === 0, 'bot played the colour target');
+    await voteAbandon(room, human.id);
+    await voteAbandon(room, bot.id);
+    assert.equal(room.state.status, 'finished');
+
+    // Game two, same room, same seats — and the same id now on an unclued
+    // white 4. Ids are assigned by draw position, so slot 1 is ghostId again.
+    room.importedDeck = deck('white_4');
+    await startGame(room, human.id, {});
+    assert.equal(room.state.players[1].hand[1].id, ghostId, 'the id came round again');
+    await applyAction(room, human.id, { type: 'hint', toPlayerIndex: 1, hintType: 'number', value: 5 });
+    pokeBots(room);
+    await waitFor(() => room.state.currentPlayer === 0, 'bot took the first move of the new game');
+    assert.equal(room.state.fuseTokens, 3, 'no ghost misplay on move 1');
+    assert.ok(room.state.players[1].hand.some((c) => c.id === ghostId), 'the white 4 is still in hand');
     resetBots();
   });
 });

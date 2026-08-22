@@ -379,16 +379,22 @@ node bot.mjs --brain onnx:model.onnx  # trained policy
 
 ## Decisions on record
 
-- **2026-08-22 — driver memory is a cache; an undo invalidates it.** The
+- **2026-08-22 — driver memory is a cache; reconcile it against state.** The
+  memory `decide` writes into holds *card ids*, and ids are per-deal: they
+  restart at 0 every game and are reused within one whenever the log is walked
+  back. So a belief that outlives what made it does not go inert — it names a
+  real, different card. Two boundaries were unguarded. An **undo**: the
   colour-target rescue (`rememberColorTargets`) classifies a vanished play
-  marker two ways — sibling played, sibling discarded — and an undone hint is a
-  third. The remembered target outlived the hint, and a colour target outranks
-  every hint `decide` can give, so the bot played a card nobody had pointed at.
-  Fixed in the driver (`bots.js` `forgetRolledBack`), not the brain: the brain
-  is pure and correct given its inputs, and the stale input was the memory the
-  driver owns. The general rule: any memory the driver carries across turns
-  must be reconciled against state after a rollback, because every convention
-  that remembers something has the same shape of bug waiting in it.
+  marker two ways, sibling played or sibling discarded, and an undone hint is a
+  third; the target outlived the hint and the bot played a card nobody had
+  pointed at. A **new game in the same room**: `startGame` never touched the bot
+  registry, so a target still remembered when the game ended fired on move 1 of
+  the next one, `wasTouched: false`. Fixed in the drivers (`bots.js`
+  `reconcileMemory`, and the same two checks in `bot.mjs`), not the brain: the
+  brain is pure and correct given its inputs, and the stale input is memory the
+  driver owns. The general rule, and the thing to check first the next time a
+  convention learns to remember something: enumerate every way the state it
+  refers to can be replaced under it, and reconcile at each one.
 
 - **2026-08-22 — a save is a hint that TOUCHES the card, not one that targets it
   (2.29).** `findSaveHint` had four tiers and every one of them pointed the hint
